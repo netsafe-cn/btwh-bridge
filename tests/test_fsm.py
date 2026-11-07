@@ -187,7 +187,7 @@ class TestPairAxis(unittest.TestCase):
         self.f.request_pairing(now=0)
         self.assertEqual(self.f.tick(now=59), PairState.WINDOW_WAIT)
         self.assertEqual(self.f.tick(now=61), PairState.FAILED)
-        self.assertIn("超时", self.f.last_error)
+        self.assertIn("expired", self.f.last_error)
 
     def test_expired_pin_rejected(self):
         self.f.request_pairing(now=0)

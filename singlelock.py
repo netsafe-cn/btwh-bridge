@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
-"""singlelock.py —— 进程级单实例锁（本地端口占位）
+"""singlelock.py - process-level single-instance lock (a local port reservation)
 
-为什么需要：两个进程同时连同一个热水器会互相把对方踢下线，同时连同一个
-巴法云账号还会把对方上报的值当指令收回来，表现是"一直连接中/扫描不到"，
-极难排查。界面和后台桥接共用同一把锁，保证同一时刻只有一个进程在跑。
+Why this exists: two processes talking to the same heater evict each other, and two
+processes sharing one Bemfa account feed each other's reports back as commands. The
+symptom is "connecting forever" or "the device is not advertising", which is close to
+impossible to diagnose. The desktop console and the headless bridge share this lock, so
+only one of them runs at a time.
 
-用法：
+Usage:
     from singlelock import acquire, release
     if not acquire():
-        sys.exit("已有实例在运行")
+        sys.exit("another instance is already running")
 """
 import socket
 
@@ -17,7 +19,7 @@ _sock = None
 
 
 def acquire(port: int = PORT) -> bool:
-    """占用本地端口作为锁。True=拿到锁，False=已有实例。"""
+    """Bind a local port as the lock. True = acquired, False = another instance exists."""
     global _sock
     if _sock is not None:
         return True
@@ -25,7 +27,7 @@ def acquire(port: int = PORT) -> bool:
     try:
         s.bind(("127.0.0.1", port))
         s.listen(1)
-        _sock = s          # 保持引用，进程退出时自动释放
+        _sock = s          # hold the reference; the OS releases the port on exit
         return True
     except OSError:
         s.close()
@@ -33,7 +35,7 @@ def acquire(port: int = PORT) -> bool:
 
 
 def release():
-    """显式释放（一般不需要，进程退出即释放）。"""
+    """Release explicitly (usually unnecessary - process exit is enough)."""
     global _sock
     if _sock is not None:
         try:

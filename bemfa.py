@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
-"""bemfa.py —— 巴法云 TCP 客户端（不依赖 BLE，可单独复用）
+"""bemfa.py - Bemfa cloud TCP client (independent of BLE, reusable on its own)
 
-作用：把本地数据同步到米家 / 小爱，并接收下发指令。
+Purpose: mirror local state to Mi Home / Xiaoai and receive commands back.
 
-主题名规则（决定米家里的设备类型，必须注意）：
-    001 插座 / 002 灯泡 / 003 风扇 / 004 传感器 / 005 空调 / 006 开关 / 009 窗帘
-    010 温控器 / 011 热水器 / 012 电视 / 013 空气净化器
-其中**只有 001~009 会同步到米家**，010 及之后只是普通主题节点。
+Topic name rules (they decide the device type in Mi Home, so they matter):
+    001 socket / 002 bulb / 003 fan / 004 sensor / 005 air conditioner / 006 switch
+    009 curtain / 010 thermostat / 011 water heater / 012 TV / 013 air purifier
+**Only 001-009 sync to Mi Home**; 010 and above are plain topic nodes.
 
-传感器(004) 报文格式： `#温度#湿度#开关#`（只报温度就 `#25.4`）
+Sensor (004) payload format: `#temperature#humidity#switch#` (temperature only: `#25.4`)
 
-用法:
+Usage:
     cli = BemfaClient(uid, ["boschset004", "boschup006"])
     cli.on_command = lambda topic, msg: print(topic, msg)
     cli.start()
@@ -25,7 +25,7 @@ import threading
 import time
 from typing import Callable, Optional, Sequence
 
-ECHO_WINDOW = 8.0       # 自己发出的消息在这么多秒内视为回环，忽略
+ECHO_WINDOW = 8.0       # a message we sent ourselves within this window is a loopback
 PING_INTERVAL = 25.0
 
 
@@ -38,7 +38,7 @@ class BemfaClient:
 
         self.on_command: Optional[Callable[[str, str], None]] = None
         self.on_log: Optional[Callable[[str], None]] = None
-        self.status = "未启动"
+        self.status = "not started"
 
         self._sock: Optional[socket.socket] = None
         self._send_q: "queue.Queue[tuple]" = queue.Queue()
@@ -47,10 +47,10 @@ class BemfaClient:
         self._stop = False
         self._thread: Optional[threading.Thread] = None
 
-    # ---- 生命周期
+    # ---- lifecycle
     def start(self):
         if not self.uid:
-            self.status = "未配置"
+            self.status = "not configured"
             return
         if self._thread and self._thread.is_alive():
             return
@@ -74,13 +74,13 @@ class BemfaClient:
     def running(self) -> bool:
         return bool(self._thread and self._thread.is_alive())
 
-    # ---- 对外
+    # ---- public
     def push(self, topic: str, msg):
-        """异步发送一条消息（进队列，由后台线程写出）"""
+        """Queue a message for the background thread to write out."""
         if self.uid and topic:
             self._send_q.put((topic, str(msg)))
 
-    # ---- 内部
+    # ---- internal
     def _log(self, s):
         if self.on_log:
             self.on_log(s)
@@ -91,8 +91,8 @@ class BemfaClient:
                 self._connect()
                 self._loop()
             except Exception as e:
-                self._log("巴法云断开: %s" % type(e).__name__)
-            self.status = "断开"
+                self._log("Bemfa disconnected: %s" % type(e).__name__)
+            self.status = "disconnected"
             self._sock = None
             for _ in range(50):
                 if self._stop:
@@ -106,20 +106,20 @@ class BemfaClient:
             sock.sendall(("cmd=1&uid=%s&topic=%s\r\n" % (self.uid, t)).encode())
         self._sock = sock
         self._buf = ""
-        self.status = "已连接"
-        self._log("巴法云已连接，订阅 %s" % ", ".join(self.topics))
+        self.status = "connected"
+        self._log("Bemfa connected, subscribed to %s" % ", ".join(self.topics))
 
     def _loop(self):
         last_ping = time.time()
         while not self._stop and self._sock:
-            # 1) 发送队列
+            # 1) outgoing queue
             try:
                 topic, msg = self._send_q.get(timeout=0.2)
                 self._write(topic, msg)
             except queue.Empty:
                 pass
 
-            # 2) 接收
+            # 2) incoming
             try:
                 data = self._sock.recv(4096)
                 if not data:
@@ -131,7 +131,7 @@ class BemfaClient:
             except socket.timeout:
                 pass
 
-            # 3) 心跳
+            # 3) keepalive
             if time.time() - last_ping > PING_INTERVAL:
                 try:
                     self._sock.sendall(b"ping\r\n")
@@ -146,7 +146,7 @@ class BemfaClient:
             self._sock.sendall(("cmd=2&uid=%s&topic=%s&msg=%s\r\n"
                                 % (self.uid, topic, msg)).encode())
             self._echo[(topic, msg)] = time.time()
-            self._log("→ %s = %s" % (topic, msg))
+            self._log("-> %s = %s" % (topic, msg))
         except Exception:
             self._sock = None
 
@@ -160,9 +160,9 @@ class BemfaClient:
         key = (topic, msg)
         t = self._echo.get(key)
         if t is not None and time.time() - t < ECHO_WINDOW:
-            self._echo.pop(key, None)      # 自己刚发的回环，忽略
+            self._echo.pop(key, None)      # our own message looping back; ignore
             return
-        self._log("← %s = %s" % (topic, msg))
+        self._log("<- %s = %s" % (topic, msg))
         if self.on_command:
             try:
                 self.on_command(topic, msg)

@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
-"""run_tests.py —— 回归测试入口
+"""run_tests.py - regression entry point
 
-一条命令跑全部单元测试（全离线，不碰硬件、不连网络）：
-    python run_tests.py           # 简洁汇总
-    python run_tests.py -v        # 逐条列出
+One command runs the whole suite, fully offline (no hardware, no network):
+    python run_tests.py           # summary only
+    python run_tests.py -v        # list every test
 
-约定：
-  * 所有 test_*.py 自动纳入回归，新增测试无需改本文件；
-  * 连真实硬件的探针脚本不得用 test_ 前缀（本项目为 probe_login_matrix.py）；
-  * 测试必须能在无 WinRT / 无蓝牙的 CI（Linux / macOS）上跑通或显式 skip。
+Conventions:
+  * every test_*.py is discovered automatically; adding a test needs no edit here
+  * scripts that talk to real hardware must not use the test_ prefix (this project uses
+    probe_* names)
+  * tests must pass, or explicitly skip, on CI without WinRT or Bluetooth (Linux / macOS)
 
-任何改动（代码 / 文档 / 配置）之后都应先跑这个，全绿再提交。
+Run this after any change (code, docs, configuration) and commit only when it is green.
 """
 import pathlib
 import sys
@@ -21,7 +22,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 
 
 def _walk(suite):
-    """展开嵌套 TestSuite，取出最底层用例。"""
+    """Flatten nested TestSuites down to individual cases."""
     for item in suite:
         if isinstance(item, unittest.TestSuite):
             yield from _walk(item)
@@ -35,17 +36,17 @@ def main():
     suite = loader.discover(start_dir=str(HERE / "tests"), pattern="test_*.py",
                             top_level_dir=str(HERE))
 
-    # 空跑保护：目录搬错 / pattern 写错时不能"假通过"
+    # Guard against a false pass when the directory or pattern is wrong
     if suite.countTestCases() == 0:
-        print("未发现任何测试用例，请检查目录与 pattern")
+        print("No test cases discovered - check the directory and the pattern")
         return 1
 
-    # 分模块统计，CI 里一眼看出哪个模块挂了
+    # Per-module counts, so CI shows at a glance which module broke
     mods = {}
     for case in _walk(suite):
         m = case.__class__.__module__
         mods[m] = mods.get(m, 0) + 1
-    print("纳入回归：%s" %
+    print("Included in this run: %s" %
           ", ".join("%s(%d)" % (k, v) for k, v in sorted(mods.items())))
     print()
 
@@ -56,9 +57,10 @@ def main():
     print()
     print("=" * 56)
     if bad == 0:
-        print("回归通过：%d 项全部成功（跳过 %d 项平台相关）" % (total, skipped))
+        print("Regression passed: %d tests, %d skipped as platform-specific"
+              % (total, skipped))
     else:
-        print("回归失败：%d 项中 %d 项异常" % (total, bad))
+        print("Regression FAILED: %d of %d tests" % (bad, total))
         for case, _ in result.failures + result.errors:
             print("  - %s" % case)
     print("=" * 56)

@@ -1,21 +1,22 @@
 # -*- coding: utf-8 -*-
-"""boschlog.py —— 统一日志模块
+"""boschlog.py - shared logging setup
 
-三级输出：
-  1. 轮转文件 bosch_api.log    DEBUG 起，含全部帧级细节（调试主入口）
-  2. 内存环形缓冲（500 条）    INFO 起，UI / take_logs 直接取用
-  3. 控制台                    WARN 起（后台脚本跑批时看关键问题）
+Three destinations:
 
-日志标签约定（写日志时统一前缀，便于 grep）：
-  [CONN]  连接 / 断开 / GATT
-  [PAIR]  系统配对
-  [AUTH]  登录 / 配对码 / 授权应答
-  [TX]    发出的帧（DEBUG 级）
-  [RX]    收到的帧（DEBUG 级）
-  [CMD]   业务命令（设温等）
-  [STATE] 解析后的设备状态
-  [CLOUD] 巴法云
-  [SVC]   服务生命周期（启动/停止/重连计划）
+  1. Rotating file bosch_api.log   DEBUG and up, frame-level detail (the primary debugging entry)
+  2. In-memory ring buffer (500)   INFO and up, read by the UI / take_logs
+  3. Console                       WARN and up, so batch scripts show the important problems
+
+Tag convention (every log call starts with one, so the file stays greppable):
+  [CONN]  connect / disconnect / GATT
+  [PAIR]  OS-level pairing
+  [AUTH]  login, pairing code, authorisation replies
+  [TX]    frames sent (DEBUG)
+  [RX]    frames received (DEBUG)
+  [CMD]   business commands (setpoint and friends)
+  [STATE] parsed device state
+  [CLOUD] Bemfa cloud
+  [SVC]   service lifecycle (start / stop / reconnect plan)
 """
 import logging
 import logging.handlers
@@ -27,7 +28,7 @@ logger = logging.getLogger("bosch")
 
 
 class _RingHandler(logging.Handler):
-    """写入内存环形缓冲，供 UI 即时取用。"""
+    """Append formatted records to the in-memory ring buffer for the UI."""
 
     def emit(self, record):
         try:
@@ -37,7 +38,7 @@ class _RingHandler(logging.Handler):
 
 
 def setup(logfile="bosch_api.log", file_level=logging.DEBUG):
-    """初始化日志。重复调用安全（幂等）。"""
+    """Configure logging. Safe to call more than once (idempotent)."""
     if logger.handlers:
         return logger
     logger.setLevel(logging.DEBUG)
@@ -62,7 +63,7 @@ def setup(logfile="bosch_api.log", file_level=logging.DEBUG):
 
 
 def tail(n=200):
-    """取最近 n 条内存日志（INFO 以上）。"""
+    """Return the last n buffered records (INFO and above)."""
     return list(_buf)[-n:]
 
 
