@@ -167,7 +167,7 @@ static void dumpA0(const uint8_t* d, size_t n) {
   int   fan   = t1 ? (b(15) * 100 + b(16)) : b(14);
 
   Serial.printf("[A0] T%d out%.1f in%.1f chamber%.1f chassis%.1f set%d "
-                "power%d%% flow%.1fL/min fan%drpm flame%s fault%s\n",
+                "power%d%% flow%.1fL/min fan %drpm flame %s fault %s\n",
                 ftype, tOut, tIn, tChm, tBox, setp, power, flow, fan,
                 ion ? "yes" : "no", fault ? String(fault, HEX).c_str() : "none");
 
@@ -381,7 +381,7 @@ static bool connectAndPair() {
   Serial.printf("[SMP ] starting pairing (IOCap=KeyboardOnly, PIN=%06u)... [2/5]\n",
                 (unsigned)gPinNum);
   bool sec = gClient->secureConnection();
-  Serial.printf("[SMP ] secureConnection() = %s，encrypted=%s\n",
+  Serial.printf("[SMP ] secureConnection() = %s, encrypted=%s\n",
                 sec ? "true" : "false", gEncrypted ? "true" : "false");
 
   NimBLERemoteService* svc = gClient->getService(SVC_UUID);
