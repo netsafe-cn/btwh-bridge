@@ -1,4 +1,10 @@
 # -*- coding: utf-8 -*-
+
+# tools/ sits one level below the library modules; make the repo root importable.
+import pathlib as _pathlib
+import sys as _sys
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent))
+
 """bosch_ui.py —— 博世热水器桌面控制台（界面层）
 
 只负责显示与交互，所有蓝牙逻辑都在 bosch_api.BoschService 里。

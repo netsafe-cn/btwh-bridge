@@ -45,7 +45,7 @@ limit that cannot be worked around.
 
 | Your change | You must also |
 |---|---|
-| Add or modify a public API | Update `API.md`, then run `python test_contract.py --update` to refresh the signature snapshot |
+| Add or modify a public API | Update `API.md`, then run `python tests/test_contract.py --update` to refresh the signature snapshot |
 | Change protocol encoding/decoding | Update `protocol_vectors.json` and make the ESP32-side vector tests pass with the same data |
 | Change the state machine | Update `device_fsm.py` and `API.md §9` first, then the C++ implementation |
 | Fix a bug | Add a test that reproduces it (red first, then green) |
@@ -63,7 +63,7 @@ This project has actually hit that.
 
 Unit tests must not open real Bluetooth connections, touch the network, or read/write
 files outside the repository. Model BLE interaction with the `FakeClient` pattern in
-`test_session.py`, and inject time via the `now` parameter (see `device_fsm.py`) rather
+`tests/test_session.py`, and inject time via the `now` parameter (see `device_fsm.py`) rather
 than sleeping inside tests.
 
 ---
@@ -72,7 +72,7 @@ than sleeping inside tests.
 
 ```
 1. Change the Python reference implementation + tests   ← this is the source of truth
-2. python test_contract.py --update                     ← regenerate golden vectors
+2. python tests/test_contract.py --update                     ← regenerate golden vectors
 3. Change the ESP32 C++ implementation, run the same vectors
 4. Both sides green → open a PR
 ```
@@ -123,7 +123,7 @@ SemVer here is judged from the **published API contract**, not from how many lin
 | **MINOR** | New public function or constant with a default; new optional trailing parameter; extra parsed field; new firmware command | adding `pair_summary()` |
 | **PATCH** | Bug fix that keeps signature and wire format; docs; internal refactor | raising `ValueError` instead of `AttributeError` |
 
-Rows 1 and 2 are enforced mechanically: `python test_contract.py` fails if you break the
+Rows 1 and 2 are enforced mechanically: `python tests/test_contract.py` fails if you break the
 contract without refreshing the snapshot. So "did I break the API?" is answered by the
 build, not by opinion — but **deciding the bump number is still your call**, and it goes
 in the PR description.

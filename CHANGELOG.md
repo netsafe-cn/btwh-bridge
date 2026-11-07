@@ -7,6 +7,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Runnable helpers moved into `tools/` and the test suite into `tests/`. Invoke them as
+  `python tools/bosch_ui.py`, `python tools/bosch_bridge.py`, `python tools/bosch_read.py`,
+  and refresh the contract with `python tests/test_contract.py --update`. `python
+  run_tests.py` is unchanged. Library modules stay at the repository root, so
+  `import bosch_api` is unaffected.
+
 ### Planned
 
 - MQTT Discovery integration for Home Assistant

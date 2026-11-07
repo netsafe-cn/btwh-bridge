@@ -32,7 +32,7 @@ def _walk(suite):
 def main():
     verbosity = 2 if "-v" in sys.argv else 1
     loader = unittest.TestLoader()
-    suite = loader.discover(start_dir=str(HERE), pattern="test_*.py",
+    suite = loader.discover(start_dir=str(HERE / "tests"), pattern="test_*.py",
                             top_level_dir=str(HERE))
 
     # 空跑保护：目录搬错 / pattern 写错时不能"假通过"

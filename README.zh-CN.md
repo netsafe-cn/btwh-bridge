@@ -108,9 +108,9 @@ export BOSCH_LOGIN_MAC=AABBCCDDEEFF
 ## 使用
 
 ```bash
-python bosch_ui.py        # 桌面控制台（Windows 双击 start_ui.bat）
-python bosch_bridge.py    # 无界面后台桥接（双击 start_bridge.bat）
-python bosch_read.py      # 单次读取
+python tools/bosch_ui.py        # 桌面控制台（Windows 双击 tools/start_ui.bat）
+python tools/bosch_bridge.py    # 无界面后台桥接（双击 tools/start_bridge.bat）
+python tools/bosch_read.py      # 单次读取
 ```
 
 ### 作为库使用
@@ -130,7 +130,7 @@ svc.stop()
 ```
 
 接口契约见 [`API.md`](API.md)。**原则是只增不改**：已发布签名冻结，由
-`test_contract.py` + `api_contract.json` 在 CI 上强制校验，任何 breaking change 会让回归变红。
+`tests/test_contract.py` + `api_contract.json` 在 CI 上强制校验，任何 breaking change 会让回归变红。
 
 ---
 
@@ -194,7 +194,7 @@ python run_tests.py -v       # 逐条列出
 
 三条纪律：
 
-- 新增公开 API → 必须同时更新 `API.md`，再 `python test_contract.py --update`
+- 新增公开 API → 必须同时更新 `API.md`，再 `python tests/test_contract.py --update`
 - 改协议层 → 必须同步 `protocol_vectors.json`，并让 ESP32 侧向量测试同样通过
 - 连硬件的探针脚本 → 一律 `probe_` 前缀（`test_` 前缀会被自动纳入回归，CI 会挂）
 
@@ -218,11 +218,11 @@ CI 覆盖 Linux + Windows × Python 3.11/3.12，另有一个 job 检查 `config.
 ├── boschlog.py             统一日志（轮转文件 + 内存环形缓冲）
 ├── bemfa.py                巴法云 TCP 客户端（米家通道）
 ├── device_fsm.py           ★ 配网 / 配对状态机（框架无关的可执行规范）
-├── bosch_ui.py             桌面控制台
-├── bosch_bridge.py         无界面后台桥接
-├── collector.py            数据采集（逐帧写 CSV，用于协议分析）
-├── test_*.py               ★ 单元测试，自动纳入回归
-├── api_contract.json       ★ 签名冻结快照（由 test_contract.py 生成）
+├── singlelock.py           后台桥接的单实例锁
+├── run_tests.py            回归入口（全离线，不碰硬件）
+├── tests/                  ★ 单元测试，自动纳入回归
+├── tools/                  可运行的工具：控制台、桥接、采集、Windows 启动器
+├── api_contract.json       ★ 签名冻结快照（由 tests/test_contract.py 生成）
 ├── protocol_vectors.json   ★ 跨端黄金向量（Python ↔ ESP32 逐字节对照）
 ├── API.md                  接口契约（只增不改）
 ├── BLE_PROTOCOL.md         协议笔记：帧格式、字段表、待挖掘能力

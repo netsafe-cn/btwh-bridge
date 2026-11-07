@@ -126,7 +126,7 @@ Python 侧同构：
 
 **决策**：
 
-- `api_contract.json` 存签名快照，`test_contract.py` 比对。删除符号、改参数名、
+- `api_contract.json` 存签名快照，`tests/test_contract.py` 比对。删除符号、改参数名、
   改默认值、把可选改成必填 → 回归变红；末尾追加带默认值的可选参数 → 允许
 - `protocol_vectors.json` 存关键帧的十六进制，Python 与 C++ 双向验证
 

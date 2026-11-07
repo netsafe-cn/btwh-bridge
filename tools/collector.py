@@ -1,4 +1,10 @@
 # -*- coding: utf-8 -*-
+
+# tools/ sits one level below the library modules; make the repo root importable.
+import pathlib as _pathlib
+import sys as _sys
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent))
+
 """collector.py —— 连续采集 A0 广播，逐帧写 CSV
 
 用途：长时间工况（如开启热水循环泵，进水温度缓慢上升）下的报文采集，

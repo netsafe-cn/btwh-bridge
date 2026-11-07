@@ -1,4 +1,10 @@
 # -*- coding: utf-8 -*-
+
+# tools/ sits one level below the library modules; make the repo root importable.
+import pathlib as _pathlib
+import sys as _sys
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent))
+
 """bosch_bridge.py —— 无界面的后台桥接（BLE ↔ 巴法云）
 
 适合挂在开机自启/服务里跑，不需要窗口。

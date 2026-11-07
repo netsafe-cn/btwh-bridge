@@ -1,4 +1,10 @@
 # -*- coding: utf-8 -*-
+
+# tools/ sits one level below the library modules; make the repo root importable.
+import pathlib as _pathlib
+import sys as _sys
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent))
+
 """analyze_collect.py —— 分析 collector.py 产出的 CSV
 
 输出：

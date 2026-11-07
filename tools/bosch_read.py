@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+
+# tools/ sits one level below the library modules; make the repo root importable.
+import pathlib as _pathlib
+import sys as _sys
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent))
+
 """bosch_read.py —— 博世 Therm 4800i 燃气热水器 BLE 读取器（已验证可用）
 
 关键流程（缺一不可）：

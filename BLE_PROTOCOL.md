@@ -410,9 +410,9 @@ D8 | 参数(0~2)
 
 | 文件 | 用途 |
 |---|---|
-| `bosch_ui.py` | 桌面控制台（BLE + 巴法云 + 配置 + 配对码登录） |
-| `bosch_bridge.py` | 无界面的巴法云桥接 |
-| `bosch_read.py` | 单次读取，协议常量与编解码都在这里 |
+| `tools/bosch_ui.py` | 桌面控制台（BLE + 巴法云 + 配置 + 配对码登录） |
+| `tools/bosch_bridge.py` | 无界面的巴法云桥接 |
+| `tools/bosch_read.py` | 单次读取，协议常量与编解码都在这里 |
 | `ble_set_temp.py` | 单独设置温度 |
 | `ble_param_probe.py` | D2 参数全量探测 |
 | `analyze_frames.py` | 逐字节统计 A0 各位置的取值范围 |

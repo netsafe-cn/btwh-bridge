@@ -12,7 +12,7 @@ from unittest import mock
 
 import bosch_api
 from bosch_api import BoschDevice
-from test_session import SessionBase
+from tests.test_session import SessionBase
 
 
 class TestPairFailReasons(SessionBase):

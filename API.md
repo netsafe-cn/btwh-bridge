@@ -178,7 +178,7 @@ elif state == "paired":            # 但设备不认（链路层失败）→ 清
 ### 7.4 数据采集
 
 ```python
-from collector import main      # 见 collector.py，逐帧写 CSV
+from collector import main      # 见 tools/collector.py，逐帧写 CSV
 ```
 
 ---
@@ -194,7 +194,7 @@ from collector import main      # 见 collector.py，逐帧写 CSV
 
 ## 9. 设备侧状态机契约（ESP32 桥接器）
 
-**规范实现**：`device_fsm.py`（框架无关、可单测），回归用例 `test_fsm.py`。
+**规范实现**：`device_fsm.py`（框架无关、可单测），回归用例 `tests/test_fsm.py`。
 C++ 固件必须与本文同构；改状态机要先改这里的规范并跑回归。
 
 ### 9.1 配网与配对正交
