@@ -192,7 +192,7 @@ class TestAuthState(SessionBase):
         self.reply({(0xA2, 0x07): bytes([0x07, 0x00]),
                     (0xA2, 0x08): bytes([0x08, 0x00])})
         await self.dev.login()
-        self.assertIn("窗口", self.dev.pair_fail_hint())
+        self.assertIn("Window", self.dev.pair_fail_hint())
 
 
 if __name__ == "__main__":

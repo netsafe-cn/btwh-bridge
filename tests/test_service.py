@@ -167,12 +167,12 @@ class TestServicePairFailure(unittest.TestCase):
     def test_hint_for_window_closed(self):
         from bosch_api import PAIR_FAIL_WINDOW_CLOSED
         self.svc.pair_fail_reason = PAIR_FAIL_WINDOW_CLOSED
-        self.assertIn("窗口", self.svc.pair_fail_hint())
+        self.assertIn("Window", self.svc.pair_fail_hint())
 
     def test_hint_for_cooldown(self):
         from bosch_api import PAIR_FAIL_COOLDOWN
         self.svc.pair_fail_reason = PAIR_FAIL_COOLDOWN
-        self.assertIn("频率", self.svc.pair_fail_hint())
+        self.assertIn("rate limit", self.svc.pair_fail_hint())
 
     def test_hint_empty_for_unknown_reason(self):
         self.svc.pair_fail_reason = "not_a_real_reason"

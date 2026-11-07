@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-"""bosch_api.py —— 博世燃气热水器 BLE 客户端库
+"""bosch_api.py - Bosch gas water heater BLE client library
 
-无界面依赖，可被 GUI、命令行工具、云桥接程序复用。
+No UI dependency: reusable from a GUI, a command-line tool or a cloud bridge.
 
-分层设计
-    BoschProtocol   纯协议编解码（无 IO，可单元测试）
-    BoschDevice     异步单次会话（连接 / 登录 / 收发 / 断开）
-    BoschService    常驻服务（后台线程 + 自动重连 + 状态缓存 + 命令队列）
+Layers
+    BoschProtocol   pure codec (no I/O, unit-testable)
+    BoschDevice     one asynchronous session (connect / login / send / receive / close)
+    BoschService    resident service (worker thread + auto-reconnect + state cache + queue)
 
-推荐用法
+Typical use
     from bosch_api import Config, BoschService
 
     cfg = Config.load()
@@ -16,16 +16,16 @@
     svc.start()
 
     svc.state                     # DeviceState | None
-    svc.status                    # 连接状态文案
-    svc.login_state               # 登录状态文案
-    svc.set_temperature(42)       # 入队，异步执行
-    svc.take_logs()               # 取走日志（列表）
+    svc.status                    # connection status text
+    svc.login_state               # login status text
+    svc.set_temperature(42)       # queued, executed asynchronously
+    svc.take_logs()               # drain the log queue (list)
 
-    svc.stop()                    # 优雅退出，会先断开蓝牙
+    svc.stop()                    # graceful shutdown, disconnects Bluetooth first
 
-线程模型
-    BoschService 内部起一个 daemon 线程跑 asyncio；对外全部是线程安全的同步调用。
-    state / status 是"整体替换"式赋值，读取无需加锁。
+Threading model
+    BoschService runs asyncio on one daemon thread; everything it exposes is thread-safe
+    and synchronous. state / status are replaced wholesale, so readers need no lock.
 """
 from __future__ import annotations
 
@@ -45,74 +45,74 @@ from bleak import BleakClient
 
 from boschlog import logger as LOG
 
-# ------------------------------------------------------------------ 协议常量
+# ------------------------------------------------------------------ protocol constants
 SERVICE_BASE = "ff4396a6-50a8-4fc0-bcf6-228e82dfed"
-CHAR_MODE = SERVICE_BASE + "b1"        # 读写，出厂 ff，不要动
-CHAR_FIFO = SERVICE_BASE + "b2"        # 收发主通道
-CHAR_CREDITS = SERVICE_BASE + "b3"     # 只需订阅
-CHAR_COUNTER = SERVICE_BASE + "d1"     # 运行秒数
+CHAR_MODE = SERVICE_BASE + "b1"        # read/write, factory value ff - leave it alone
+CHAR_FIFO = SERVICE_BASE + "b2"        # the main send/receive channel
+CHAR_CREDITS = SERVICE_BASE + "b3"     # subscribe only, no need to write
+CHAR_COUNTER = SERVICE_BASE + "d1"     # uptime in seconds
 
-XOR_KEY = b"1ag3.-fs7"                 # 9 字节
+XOR_KEY = b"1ag3.-fs7"                 # 9 bytes
 FRAME_START = b"\x7b\x7b"
 FRAME_END = b"\x7d\x7d"
 
-SENDER = 0x21                          # 中央设备固定
-RECV_BIZ = 0x00                        # 业务帧地址
-RECV_LOGIN = 0xAB                      # 登录/配置帧地址
+SENDER = 0x21                          # always the central
+RECV_BIZ = 0x00                        # business frame address
+RECV_LOGIN = 0xAB                      # login / configuration frame address
 
-CMD_STATE = 0xA0                       # 设备主动推送的状态广播
-CMD_BCAST_CFG = 0xA1                   # 配置广播周期 [type, sec]
-CMD_LOGIN = 0xA2                       # 07=提交MAC 08=提交配对码
+CMD_STATE = 0xA0                       # device-initiated state broadcast
+CMD_BCAST_CFG = 0xA1                   # set broadcast interval [type, sec]
+CMD_LOGIN = 0xA2                       # 07 = submit MAC, 08 = submit pairing code
 CMD_READ_PARAM = 0xD2
 CMD_WRITE_PARAM = 0xD3
-CMD_HISTORY = 0xB0                     # 历史数据：data=[type] 2=运行统计 3=洗浴记录
-CMD_READ_ERROR = 0xD7                  # 故障列表：data=[条数]
+CMD_HISTORY = 0xB0                     # history: data=[type] 2=run stats 3=bathing
+CMD_READ_ERROR = 0xD7                  # fault list: data=[count]
 PARAM_TYPE_SETPOINT = 0x02
 PARAM_ID_SETPOINT = 0x55
 
-CHUNK = 20                             # 单包最大负载（MTU 23 时）
+CHUNK = 20                             # max payload per packet (MTU 23)
 TEMP_MIN, TEMP_MAX = 35, 60
-IDLE_TIMEOUT = 25.0                    # 无数据多久判定链路假活
-RECONNECT_BASE = 8.0                   # 会话失败后首次等待秒数（之后翻倍）
-RECONNECT_MAX = 60.0                   # 重连等待上限
-SESSION_STABLE_SEC = 15.0              # 会话持续多久才算"稳定"，才重置退避
-SESSION_MIN_FRAMES = 2                 # 一次会话至少收到几帧 A0 才算有效
+IDLE_TIMEOUT = 25.0                    # no data for this long means the link is dead
+RECONNECT_BASE = 8.0                   # first wait after a failed session (then doubles)
+RECONNECT_MAX = 60.0                   # reconnect wait ceiling
+SESSION_STABLE_SEC = 15.0              # a session must last this long to count as stable
+SESSION_MIN_FRAMES = 2                 # A0 frames needed before a session counts as useful
 
-# ------------------------------------------------------ 配对/登录失败原因码
-# 2026-11-07 ESP32 真机实测确认：A2/07 的应答位是「配对窗口状态」，不是「MAC 授权状态」——
-#   02 = 窗口开着，要求提交码；01 = 免密授权；00 = 窗口未打开或已超时关闭。
-# 把 00 当成「MAC 未授权」会误导用户去改 login_mac，实际该做的是回面板重新取码。
-# 失败时优先用原因码判读，不要匹配 login_state 的中文文案（文案会改，原因码是契约）。
+# ------------------------------------------------------ pairing/login failure reasons
+# Confirmed on ESP32 hardware, 2026-11-07: the A2/07 reply byte reports the PAIRING WINDOW,
+# not the MAC state - 02 = open, code required; 01 = passwordless; 00 = closed or expired.
+# Treating 00 as "MAC not authorised" sends users off to edit login_mac, when what they
+# actually need is a fresh code from the panel. Prefer the reason code over display text.
 PAIR_FAIL_WINDOW_CLOSED = "window_closed"    # A2/07 = 00
-PAIR_FAIL_CODE_REJECTED = "code_rejected"    # A2/08 = 00（窗口开着但码失效）
+PAIR_FAIL_CODE_REJECTED = "code_rejected"    # A2/08 = 00 (window open, code invalid)
 PAIR_FAIL_CODE_MISMATCH = "code_mismatch"    # A2/08 = 02
-PAIR_FAIL_NO_RESPONSE = "no_response"        # 6s × 5 次重发耗尽
-PAIR_FAIL_COOLDOWN = "cooldown"              # A2/07 = 3C / 5A 设备频率保护
-PAIR_FAIL_LINK = "link_failed"               # 链路未建立
+PAIR_FAIL_NO_RESPONSE = "no_response"        # 6 s x 5 resends exhausted
+PAIR_FAIL_COOLDOWN = "cooldown"              # A2/07 = 3C / 5A, device rate limit
+PAIR_FAIL_LINK = "link_failed"               # link never came up
 
 PAIR_HINTS = {
     PAIR_FAIL_WINDOW_CLOSED:
-        "配对窗口未打开或已超时：面板『清除配对』→ 立刻『连接/配对』取码 → 30 秒内输入",
+        "Window closed or expired: panel 'clear pairing' -> 'connect/pair' -> enter code",
     PAIR_FAIL_CODE_REJECTED:
-        "配对码已失效：重新取码后立即输入，取码到输码别超过 30 秒，中途不要退出配对界面",
+        "Code expired: read a new one and enter it within 30 s, staying on that screen",
     PAIR_FAIL_CODE_MISMATCH:
-        "配对码不匹配：核对是否为当前面板显示的 6 位码（不是铭牌 S/N）",
+        "Code mismatch: check it is the six digits on the panel, not the nameplate S/N",
     PAIR_FAIL_NO_RESPONSE:
-        "设备无应答：确认还停留在配对界面；必要时给热水器断电重启",
+        "No response: stay on the pairing screen; power-cycle the heater if necessary",
     PAIR_FAIL_COOLDOWN:
-        "设备连接频率保护：等 30~90 秒再试，不要连续重连",
+        "Device rate limit: wait 30-90 s, do not retry back to back",
     PAIR_FAIL_LINK:
-        "链路未建立：靠近设备、按一下面板唤醒、关掉手机 App 再试",
+        "Link not established: move closer, tap the panel to wake it, close the phone app",
 }
 
 
-# ------------------------------------------------------------------ 系统配对
-# 背景（2026-11-01 血泪教训）：Windows 里删除配对后，设备侧仍记着本机地址
-# 的旧链路密钥，此时以明文链路连接，设备会静默丢弃一切业务帧——
-# 症状是"能连接、能读 GATT 静态值、登录零应答"。必须保持系统级配对。
-# 设备走 Just Works（CONFIRM_ONLY，无需 PIN），程序可自动完成。
+# ------------------------------------------------------------------ OS-level pairing
+# Background (learned the hard way, 2026-11-01): after removing the pairing in Windows, the
+# device still holds the old link key for this address. Connecting in plaintext then makes it
+# silently drop every business frame - link up, GATT reads work, login gets nothing at all.
+# Keep OS-level pairing. The device uses Just Works (CONFIRM_ONLY, no PIN), so we automate it.
 
-try:                                   # 仅 Windows 有 WinRT
+try:                                   # WinRT exists on Windows only
     from winrt.windows.devices.bluetooth import BluetoothLEDevice
     from winrt.windows.devices.enumeration import (
         DevicePairingKinds, DevicePairingResultStatus,
@@ -129,11 +129,11 @@ def parse_mac(address: str) -> int:
 
 
 async def unpair_device(address: str) -> bool:
-    """删除本机与设备的系统配对（配对自愈第一步）。
+    """Remove the OS-level pairing between this host and the device (self-heal, step one).
 
-    场景：设备侧"清除配对/配对菜单超时"会作废链路密钥，而 Windows 侧
-    仍显示 paired=True，导致带旧密钥的加密链路被设备在 GATT 层直接拒绝
-    （服务枚举失败）。此时必须先删本机配对，再由 ensure_paired 重建。
+    Situation: "clear pairing" on the device, or its pairing menu timing out, invalidates the
+    link key while Windows still reports paired=True, so the stale encrypted link is rejected
+    at the GATT layer. Delete the host pairing first, then let ensure_paired rebuild it.
     """
     if not _WINRT_OK:
         return False
@@ -147,15 +147,15 @@ async def unpair_device(address: str) -> bool:
             return True
         res = await p.unpair_async()
         ok = int(res.status) == int(DeviceUnpairingResultStatus.UNPAIRED)
-        LOG.info("[PAIR] 解绑%s", "成功" if ok else "失败(status=%s)" % res.status)
+        LOG.info("[PAIR] unpair %s", "ok" if ok else "failed(status=%s)" % res.status)
         return ok
     except Exception as e:
-        LOG.warning("[PAIR] 解绑异常: %s: %s", type(e).__name__, e)
+        LOG.warning("[PAIR] unpair raised: %s: %s", type(e).__name__, e)
         return False
 
 
 async def paired_state(address: str) -> str:
-    """返回 'paired' / 'unpaired' / 'unknown'（设备不可达或非 Windows）。"""
+    """Return 'paired' / 'unpaired' / 'unknown' (unreachable device, or not Windows)."""
     if not _WINRT_OK:
         return "unknown"
     try:
@@ -170,10 +170,10 @@ async def paired_state(address: str) -> str:
 
 async def ensure_paired(address: str, log: Optional[Callable[[str], None]] = None
                         ) -> bool:
-    """确保系统级配对存在；未配对则自动以 Just Works 绑定。
+    """Ensure OS-level pairing exists; bond via Just Works when it does not.
 
-    返回 True 表示"已配对或无需处理"；False 表示配对失败。
-    非 Windows 平台直接返回 True（BlueZ 由系统管理）。
+    Returns True when already paired or nothing was needed; False when pairing failed.
+    Non-Windows platforms return True immediately (BlueZ handles it).
     """
     def say(msg):
         LOG.info("[PAIR] %s" % msg)
@@ -185,25 +185,25 @@ async def ensure_paired(address: str, log: Optional[Callable[[str], None]] = Non
     try:
         dev = await BluetoothLEDevice.from_bluetooth_address_async(
             parse_mac(address))
-        if dev is None:                # 不在系统缓存（可能休眠），连接流程自会处理
+        if dev is None:                # not in the system cache (asleep); connect will cope
             return True
         p = dev.device_information.pairing
         if p.is_paired:
             return True
         if not p.can_pair:
-            say("设备当前不可配对（可能休眠或被占用）")
+            say("Device cannot pair right now (asleep or occupied)")
             return False
 
         custom = p.custom
-        if custom is None:             # 老接口，走系统默认
-            say("未配对，发起系统默认配对…")
+        if custom is None:             # older interface, use the system default
+            say("Not paired, starting the default system pairing...")
             res = await p.pair_async()
         else:
-            say("未配对，自动以 Just Works 绑定…")
+            say("Not paired, bonding via Just Works...")
 
             def on_req(_sender, args):
-                # 设备实测只请求 CONFIRM_ONLY；出现其它方式一律拒绝，
-                # 避免卡在没有 UI 可弹的场景
+                # Measured: the device only requests CONFIRM_ONLY; reject anything else so
+                # we never block waiting for a UI that nobody can show
                 from winrt.windows.devices.enumeration import DevicePairingKinds
                 if args.pairing_kind == DevicePairingKinds.CONFIRM_ONLY:
                     args.accept()
@@ -213,34 +213,34 @@ async def ensure_paired(address: str, log: Optional[Callable[[str], None]] = Non
 
         ok = int(res.status) == int(DevicePairingResultStatus.PAIRED)
         if ok:
-            say("自动配对成功")
+            say("Automatic pairing succeeded")
         else:
-            # 实测：设备不在配对窗口时，Just Works 可能返回失败，
-            # 需要用户在面板上执行"清除配对"来打开窗口
-            say("自动配对失败(status=%s)：请到热水器面板执行「清除配对」，"
-                "再重新连接" % res.status)
+            # Measured: outside its pairing window the device can fail Just Works, so the
+            # user has to run "clear pairing" on the panel to open the window
+            say("Automatic pairing failed(status=%s): run 'clear pairing' on the heater "
+                "panel, then reconnect" % res.status)
         return ok
     except Exception as e:
-        say("配对检查异常: %s: %s" % (type(e).__name__, e))
+        say("Pairing check raised: %s: %s" % (type(e).__name__, e))
         return False
 
 CONFIG_FILE = pathlib.Path(__file__).with_name("config.json")
 
 
-# ---------------------------------------------------------------------- 配置
+# ---------------------------------------------------------------------- config
 @dataclass
 class Config:
-    """运行配置。**任何敏感值都不写进代码**，只从 config.json 或环境变量来。
+    """Runtime configuration. **No sensitive value lives in the code**; it is read from
 
-    环境变量优先级最高，命名规则：BOSCH_ + 字段名大写
+    config.json or from environment variables, which win: BOSCH_ + FIELD_NAME_UPPER.
         BOSCH_DEVICE_ADDRESS / BOSCH_LOGIN_MAC / BOSCH_PAIR_CODE / BOSCH_BEMFA_UID
-    适合容器、CI 或不想把配对码落到磁盘的场景。
+    Handy for containers, CI, or whenever the pairing code must not land on disk.
     """
 
-    device_address: str = ""           # 热水器蓝牙地址，必填
-    login_mac: str = ""                # 本机蓝牙地址，设备白名单用，必填
-    pair_code: str = ""                # 面板配对码 / 临时码，必填
-    bemfa_uid: str = ""                # 巴法云私钥，可空（空=不同步米家）
+    device_address: str = ""           # heater Bluetooth address, required
+    login_mac: str = ""                # this host's Bluetooth address, required
+    pair_code: str = ""                # panel pairing code (temporary), required
+    bemfa_uid: str = ""                # Bemfa key, optional (empty = no Mi Home sync)
     topic_set: str = "boschset004"
     topic_up: str = "boschup006"
     topic_down: str = "boschdown006"
@@ -271,40 +271,40 @@ class Config:
                         "utf-8")
 
     def validate(self) -> List[str]:
-        """返回配置问题列表，空列表表示可用。"""
+        """Return a list of configuration problems; an empty list means usable."""
         errs = []
         if not (self.device_address or "").strip():
-            errs.append("未配置热水器蓝牙地址")
+            errs.append("heater Bluetooth address is not configured")
         if not (self.pair_code or "").strip():
-            errs.append("未配置配对码")
+            errs.append("pairing code is not configured")
         try:
             self.login_mac_bytes
         except ValueError:
-            errs.append("本机蓝牙地址无效（应为 12 位十六进制）")
+            errs.append("host Bluetooth address is invalid (expected 12 hex digits)")
         return errs
 
     @property
     def login_mac_bytes(self) -> bytes:
         s = (self.login_mac or "").replace(":", "").replace("-", "").strip()
         if len(s) != 12:
-            raise ValueError("本机蓝牙地址应为 12 位十六进制")
+            raise ValueError("host Bluetooth address must be 12 hex digits")
         return bytes.fromhex(s)
 
 
-# ------------------------------------------------------------------ 设备状态
+# ------------------------------------------------------------------ device state
 @dataclass
 class DeviceState:
-    """设备状态（字段语义依据 2026-11 实机采样，见 BLE_PROTOCOL.md §6）。
+    """Device state (field semantics measured 2026-11; see BLE_PROTOCOL.md §6).
 
-    0xA0 广播分 Type0 / Type1 两型，以 data[0] 区分；部分字段偏移不同。
+    The 0xA0 broadcast is Type0 or Type1, distinguished by data[0]; some offsets differ.
     """
 
     frame_type: int = 0                 # 0=Type0, 1=Type1
-    temp_in: Optional[float] = None     # 进水温度 data[1]+data[2]/100
-    chamber: Optional[float] = None     # 炉腔（燃烧室）温度 data[3]+data[4]/100
-    setpoint: Optional[int] = None      # 当前设定温度 data[5]
-    temp_box: Optional[float] = None    # 机身温度 data[6]+data[7]/100
-    water_flow: Optional[float] = None  # 水流量 L/min data[8]/10
+    temp_in: Optional[float] = None     # inlet temperature data[1]+data[2]/100
+    chamber: Optional[float] = None     # combustion chamber data[3]+data[4]/100
+    setpoint: Optional[int] = None      # current setpoint data[5]
+    temp_box: Optional[float] = None    # chassis temperature data[6]+data[7]/100
+    water_flow: Optional[float] = None  # flow, L/min data[8]/10
     burner_power: int = 0               # 燃烧功率 % data[9]
     ionized: bool = False               # 电离（火焰）检测 data[10] & 0x10
     failure: int = 0                    # 活动故障码 data[11]，0=无故障

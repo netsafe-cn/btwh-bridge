@@ -35,8 +35,8 @@ class TestConfig(unittest.TestCase):
         """空配置应报三个必填项"""
         errs = Config().validate()
         self.assertEqual(len(errs), 3)
-        self.assertTrue(any("蓝牙地址" in e and "热水器" in e for e in errs))
-        self.assertTrue(any("配对码" in e for e in errs))
+        self.assertTrue(any("heater Bluetooth address" in e for e in errs))
+        self.assertTrue(any("pairing code" in e for e in errs))
 
     def test_validate_ok(self):
         """完整配置应无报错"""
