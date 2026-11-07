@@ -728,27 +728,27 @@ class BoschDevice:
         elif kind == 0x00:
             # Measured on ESP32-S3 hardware, 2026-11-07: 00 means the device is not in its
             # pairing window (clear pairing never ran, or it timed out) - NOT "MAC unauthed".
-            # 仍补发 A2/08（设备侧同样处理），但原因码如实记 window_closed。
+            # Still send A2/08 (the device does the same), but record window_closed.
             self._pair_fail_reason = PAIR_FAIL_WINDOW_CLOSED
-            self._set_login("配对窗口未打开或已超时（仍尝试提交码）")
+            self._set_login("pairing window not open or expired (code still submitted)")
         else:
-            self._set_login("未知应答 %s" % r.hex(" "))
+            self._set_login("unknown reply %s" % r.hex(" "))
             return False
 
         if not code:
-            self._set_login("需要配对码（未填写）")
-            self.log("请在配置里填写配对码，否则设备不会推送数据")
+            self._set_login("pairing code required (none configured)")
+            self.log("Set the pairing code in the config, or the device sends no data")
             return False
 
-        # 对齐 App 时序：提交配对码前固定 sleep(1000ms)
+        # Match the app timing: a fixed sleep(1000 ms) before submitting the code
         await asyncio.sleep(1.0)
         self.pair_code_ts = time.time()
         r2 = await self._send_login_wait(
-            bytes([0x08]) + BoschProtocol.encode_pair_code(code), "配对码")
+            bytes([0x08]) + BoschProtocol.encode_pair_code(code), "pairing code")
         if r2 is None:
             if self._pair_fail_reason is None:
                 self._pair_fail_reason = PAIR_FAIL_NO_RESPONSE
-            self._set_login("配对码无应答")
+            self._set_login("pairing code: no reply")
             return False
 
         k2 = r2[1] if len(r2) > 1 else -1
@@ -756,20 +756,20 @@ class BoschDevice:
             self._pair_fail_reason = None
             self.authorized = True
             self.pair_code_verified_at = time.time()
-            self._set_login("已授权（配对码）")
+            self._set_login("authorised (pairing code)")
             return True
         if k2 == 0x02:
             self._pair_fail_reason = PAIR_FAIL_CODE_MISMATCH
-            self._set_login("配对码错误（与当前面板码不一致）")
+            self._set_login("pairing code rejected (does not match the panel)")
         elif k2 == 0x00:
-            # 实测：窗口已关或码已过期都会回 00。
-            # 若 A2/07 已经是 00，说明窗口从头就没开，此处保持 window_closed——
-            # 否则会把「没开窗口」误报成「码错」，用户去核对码是白折腾。
+            # Measured: a closed window and an expired code both answer 00.
+            # If A2/07 was already 00 the window never opened, so keep window_closed -
+            # reporting "wrong code" would send the user to check a code that was fine.
             if self._pair_fail_reason != PAIR_FAIL_WINDOW_CLOSED:
                 self._pair_fail_reason = PAIR_FAIL_CODE_REJECTED
-            self._set_login("配对码被拒绝（窗口已关或码已过期）")
+            self._set_login("pairing code rejected (window closed or code expired)")
         else:
-            self._set_login("配对码应答异常 %s" % r2.hex(" "))
+            self._set_login("pairing code: unexpected reply %s" % r2.hex(" "))
         return False
 
     async def _wait_login(self, timeout: float) -> bool:
@@ -779,7 +779,7 @@ class BoschDevice:
         except asyncio.TimeoutError:
             return False
 
-    # ---- 收发
+    # ---- send / receive
     async def send(self, cmd: int, data: bytes = b"",
                    receiver: int = RECV_BIZ, tag: str = ""):
         if self.client is None or not self.client.is_connected:
@@ -793,7 +793,7 @@ class BoschDevice:
             await asyncio.sleep(0.02)
         if tag:
             self.log("%s → %s" % (tag, frame.hex(" ")))
-        await asyncio.sleep(0.1)          # App 无此延迟；留小间隔防淹没
+        await asyncio.sleep(0.1)          # the app has none; a small gap avoids flooding
 
     def _on_notify(self, _sender, data: bytearray):
         self._last_rx = time.time()
@@ -802,22 +802,22 @@ class BoschDevice:
         for f in frames:
             if len(f) < 9:
                 continue
-            if sum(f[2:-3]) & 0xFF != f[-3]:      # CheckSum.check 等价
-                LOG.warning("[RX] 丢弃坏帧 chk: %s", f.hex(" "))
+            if sum(f[2:-3]) & 0xFF != f[-3]:      # same check as CheckSum.check
+                LOG.warning("[RX] dropping frame, bad checksum: %s", f.hex(" "))
                 continue
             mid, cmd, payload = f[4], f[5], f[6:-3]
             self.rx(mid, cmd, payload)
             if cmd == CMD_STATE:
                 st = BoschProtocol.parse_state(payload)
                 self.state = st
-                LOG.debug("[STATE] T%d 出%.1f 进%.1f 炉腔%.1f 机身%.1f 设定%s "
-                          "功率%d%% 风机%s/%srpm 水流%.1f 模式%s 故障%s%s",
+                LOG.debug("[STATE] T%d out%.1f in%.1f chamber%.1f chassis%.1f set%s "
+                          "power%d%% fan%s/%srpm flow%.1f mode%s fault%s%s",
                           st.frame_type,
                           st.temp_out or 0, st.temp_in or 0, st.chamber or 0,
                           st.temp_box or 0, st.setpoint,
                           st.burner_power, st.fan_power, st.fan_speed,
                           st.water_flow or 0, st.mode_text, st.failure_text,
-                          " 电离" if st.ionized else "")
+                          " ionized" if st.ionized else "")
                 LOG.debug("[STATE] raw(%d)=%s", len(payload), payload.hex(" "))
                 if self.on_state:
                     self.on_state(st)
@@ -829,27 +829,27 @@ class BoschDevice:
                     self._resp_map[mid] = payload
                     ev.set()
             else:
-                # 应答路由：有等待者则投递（单飞机制，规格 §3.5）
+                # Reply routing: hand to a waiter if there is one (single-flight, S3.5)
                 ev = self._resp_ev.get(mid)
                 if ev is not None:
                     self._resp_map[mid] = payload
                     ev.set()
                 else:
-                    # D2/D8 等业务应答统一记下来，方便探测未知命令
+                    # Record business replies (D2/D8) to help probing unknown commands
                     self.log("RX cmd=%02X mid=%d data=%s"
                              % (cmd, mid, payload.hex(" ")))
 
-    # ---- 高层操作
+    # ---- high-level operations
     async def send_and_wait(self, cmd: int, data: bytes = b"",
                             receiver: int = RECV_BIZ, tag: str = "",
                             timeout: float = 6.0, retries: int = 5) -> bytes:
-        """单飞发送：发出后等应答；6s 超时 ×5 重发，重发换 msgId（规格 §3.5）。
+        """Single-flight send: wait for the reply, 6 s timeout, 5 resends, fresh msgId.
 
-        应答按 msgId 路由；若设备不回显 mid，则宽松匹配"唯一等待者"。
-        重试耗尽抛 TimeoutError。
+        Replies route by msgId; when the device does not echo it, match the single waiter.
+        Raises TimeoutError once the retries are exhausted.
         """
         for attempt in range(retries):
-            expect = self.mid                       # send() 将使用的 msgId
+            expect = self.mid                       # the msgId send() is about to use
             ev = asyncio.Event()
             self._resp_ev[expect] = ev
             self._resp_map[expect] = None
@@ -865,8 +865,8 @@ class BoschDevice:
             finally:
                 self._resp_ev.pop(expect, None)
                 self._resp_map.pop(expect, None)
-            self.log("%s 无应答，重发 %d/%d（新 msgId）" % (tag, attempt + 1, retries))
-        raise TimeoutError("%s 重试耗尽（%d 次 × %ds）" % (tag, retries, timeout))
+            self.log("%s no reply, resend %d/%d (fresh msgId)" % (tag, attempt + 1, retries))
+        raise TimeoutError("%s retries exhausted (%d x %ds)" % (tag, retries, timeout))
 
     async def set_temperature(self, value: int):
         v = max(TEMP_MIN, min(TEMP_MAX, int(value)))
@@ -874,30 +874,30 @@ class BoschDevice:
             resp = await self.send_and_wait(
                 CMD_WRITE_PARAM,
                 bytes([PARAM_TYPE_SETPOINT, PARAM_ID_SETPOINT, 0x00, v]),
-                RECV_BIZ, "设置 %d℃" % v)
-            LOG.info("[CMD] 设置 %d℃ 应答: %s", v, resp.hex(" "))
+                RECV_BIZ, "set %d C" % v)
+            LOG.info("[CMD] set %d C reply: %s", v, resp.hex(" "))
         except TimeoutError as e:
-            LOG.warning("[CMD] 设置 %d℃ 未获确认: %s", v, e)
+            LOG.warning("[CMD] set %d C not confirmed: %s", v, e)
             raise
 
     async def idle_seconds(self) -> float:
         return time.time() - self._last_rx
 
-    # ---- 只读查询（历史 / 故障）
+    # ---- read-only queries (history / faults)
     async def read_history(self, kind: int = 2) -> bytes:
-        """读历史数据（B0）。kind: 2=运行统计(次数/小时) 3=洗浴记录(水量/时长)。"""
+        """Read history (B0). kind: 2 = run statistics, 3 = bathing records."""
         return await self.send_and_wait(
-            CMD_HISTORY, bytes([kind]), RECV_BIZ, "历史数据 type=%d" % kind)
+            CMD_HISTORY, bytes([kind]), RECV_BIZ, "history type=%d" % kind)
 
     async def read_errors(self, count: int = 10) -> bytes:
-        """读故障列表（D7）。应答为故障码序列。"""
+        """Read the fault list (D7). The reply is a sequence of fault codes."""
         return await self.send_and_wait(
-            CMD_READ_ERROR, bytes([count]), RECV_BIZ, "故障列表")
+            CMD_READ_ERROR, bytes([count]), RECV_BIZ, "fault list")
 
 
-# ------------------------------------------------------------------ 常驻服务
+# ------------------------------------------------------------------ resident service
 class BoschService:
-    """常驻服务：后台线程跑 asyncio，自动重连，对外提供同步接口。"""
+    """Resident service: asyncio on a worker thread, auto-reconnect, synchronous API."""
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -906,7 +906,7 @@ class BoschService:
         self._stop_flag = False
         self._reload = False
         self._cmd_q: "queue.Queue[Optional[int]]" = queue.Queue()
-        self._req_q: "queue.Queue[tuple]" = queue.Queue()   # 只读查询（历史/故障）
+        self._req_q: "queue.Queue[tuple]" = queue.Queue()   # read-only queries
         self._log_q: "queue.Queue[str]" = queue.Queue()
         self._state_lock = threading.Lock()
 
@@ -915,14 +915,14 @@ class BoschService:
         self.login_state = "not logged in"
         self.pair_fail_reason: Optional[str] = None
         self.connected = False
-        self._rx_frames = 0            # 本次会话收到的 A0 帧数（判定会话有效性）
-        # 查询结果：{"history": bytes|None, "history_ts":..., "errors": bytes|None,...}
+        self._rx_frames = 0            # A0 frames this session (used to judge validity)
+        # Query results: {"history": bytes|None, "history_ts": ..., "errors": ...}
         self.results: dict = {}
 
-        # 可选的对外回调（在 worker 线程执行）
+        # Optional callbacks (invoked on the worker thread)
         self.on_state: Optional[Callable[[DeviceState], None]] = None
 
-    # ---- 生命周期
+    # ---- lifecycle
     def start(self):
         if self._thread and self._thread.is_alive():
             return
@@ -932,7 +932,7 @@ class BoschService:
         self._thread.start()
 
     def stop(self, timeout: float = 3.0):
-        """优雅停止：先让会话断开蓝牙，再退出线程。"""
+        """Stop gracefully: let the session drop Bluetooth first, then exit the thread."""
         self._stop_flag = True
         self._cmd_q.put(None)
         if self._thread:
@@ -942,16 +942,16 @@ class BoschService:
     def running(self) -> bool:
         return bool(self._thread and self._thread.is_alive())
 
-    # ---- 对外命令
+    # ---- public commands
     def set_temperature(self, value: int):
         self._cmd_q.put(value)
 
     def query_history(self, kind: int = 2):
-        """请求历史数据，结果写入 self.results['history']。"""
+        """Request history; the result lands in self.results['history']."""
         self._req_q.put(("history", kind))
 
     def query_errors(self, count: int = 10):
-        """请求故障列表，结果写入 self.results['errors']。"""
+        """Request the fault list; the result lands in self.results['errors']."""
         self._req_q.put(("errors", count))
 
     def take_logs(self) -> List[str]:
@@ -963,32 +963,32 @@ class BoschService:
                 return out
 
     def pair_fail_hint(self) -> str:
-        """最近一次配对失败的动作建议；无失败或原因未知时返回空串。"""
+        """Action hint for the last pairing failure; empty when there is none."""
         return PAIR_HINTS.get(self.pair_fail_reason or "", "")
 
     def update_config(self, cfg: Config):
-        """换配置并立即重连。"""
+        """Swap the configuration and reconnect immediately."""
         self.cfg = cfg
         self._reload = True
 
     def set_pair_code_and_reconnect(self, code: str, save: bool = True):
-        """用面板新生成的动态配对码立即重连。
+        """Reconnect immediately with a freshly generated panel code.
 
-        配对码是热水器进入配对菜单时才生成的短时效码，所以这条路径
-        追求快：更新配置 → 跳过退避等待 → 立即直连。
+        The code exists only while the heater pairing menu is open, so this path
+        is built for speed: update config -> skip the backoff -> connect now.
         """
         if not isinstance(code, str):
-            raise ValueError("配对码应为 6 位数字")
+            raise ValueError("pairing code must be 6 digits")
         code = code.strip()
         if not code.isdigit() or len(code) != 6:
-            raise ValueError("配对码应为 6 位数字")
+            raise ValueError("pairing code must be 6 digits")
         self.cfg.pair_code = code
         if save:
             self.cfg.save()
-        self._log("收到新配对码，立即重连")
+        self._log("new pairing code received, reconnecting now")
         self._reload = True
 
-    # ---- 内部
+    # ---- internals
     def _log(self, msg: str):
         LOG.info("[SVC] %s" % msg)
         self._log_q.put("%s  %s" % (time.strftime("%H:%M:%S"), msg))
@@ -997,7 +997,7 @@ class BoschService:
         try:
             asyncio.run(self._main())
         except Exception as e:
-            self._log("服务退出: %s" % e)
+            self._log("service exited: %s" % e)
 
     def _set_state(self, st: DeviceState):
         self.state = st
@@ -1010,25 +1010,25 @@ class BoschService:
 
     async def _main(self):
         fails = 0
-        gatt_fails = 0                     # 连续 GATT 未就绪次数（配对自愈触发器）
+        gatt_fails = 0                     # consecutive GATT-not-ready count (self-heal)
         reported = set()
         while not self._stop_flag:
             errs = self.cfg.validate()
             if errs:
-                self.status = "配置不完整"
+                self.status = "configuration incomplete"
                 for e in errs:
-                    if e not in reported:      # 同一条只提示一次，避免刷屏
+                    if e not in reported:      # report each problem once, no spam
                         reported.add(e)
-                        self._log("配置错误：" + e)
+                        self._log("config error: " + e)
                 end = time.time() + 2
                 while time.time() < end and not self._stop_flag:
                     await asyncio.sleep(0.2)
                 continue
             reported.clear()
 
-            # 保持系统级配对（解绑后明文链路会被设备静默丢弃，见文件头注释）
+            # Keep OS-level pairing (a plaintext link is silently dropped; see header)
             if not await ensure_paired(self.cfg.device_address, log=self._log):
-                self.status = "配对失败：请到面板清除配对"
+                self.status = "pairing failed: clear pairing on the panel"
                 end = time.time() + 20
                 while time.time() < end and not self._stop_flag:
                     await asyncio.sleep(0.5)
@@ -1040,16 +1040,16 @@ class BoschService:
             ok = False
             t_sess = time.time()
             self._rx_frames = 0
-            self.status = "连接中…"
+            self.status = "connecting..."
             try:
                 await dev.connect()
                 self.connected = True
-                self.status = "已连接"
+                self.status = "connected"
                 exit_reason = "ok"
                 if await dev.login():
                     self.pair_fail_reason = None
-                    self._log("登录成功，开始接收数据")
-                    # 丢弃断线期间积压的旧温度命令，防止在新会话里意外生效
+                    self._log("login succeeded, receiving data")
+                    # Drop setpoint commands queued while offline; they must not fire now.
                     while not self._cmd_q.empty():
                         try:
                             self._cmd_q.get_nowait()
@@ -1060,13 +1060,13 @@ class BoschService:
                             exit_reason = "stop"
                             break
                         if await dev.idle_seconds() > IDLE_TIMEOUT:
-                            self._log("超过 %d 秒无数据，链路已失效，重连"
+                            self._log("no data for %d s, link is dead, reconnecting"
                                       % int(IDLE_TIMEOUT))
                             exit_reason = "idle"
                             break
                         if self._reload:
                             self._reload = False
-                            self._log("配置已更新，重新连接")
+                            self._log("configuration updated, reconnecting")
                             exit_reason = "reload"
                             break
                         try:
@@ -1077,10 +1077,10 @@ class BoschService:
                             try:
                                 await dev.set_temperature(v)
                             except TimeoutError:
-                                # 命令失败已记日志；不断会话（设备下次广播
-                                # data[5] 会带回真实设定值，UI 自然纠正）
+                                # A failed command is only logged: the next A0 broadcast
+                                # carries the real setpoint, so the UI self-corrects.
                                 pass
-                        # 只读查询（历史 / 故障）
+                        # Read-only queries (history / faults)
                         try:
                             what, arg = self._req_q.get_nowait()
                         except queue.Empty:
@@ -1090,93 +1090,93 @@ class BoschService:
                                 r = await dev.read_history(arg)
                                 self.results["history"] = r
                                 self.results["history_ts"] = time.time()
-                                self._log("历史数据 type=%d: %s" % (arg, r.hex(" ")))
+                                self._log("history type=%d: %s" % (arg, r.hex(" ")))
                             except TimeoutError:
                                 self.results["history"] = None
-                                self._log("历史数据读取超时")
+                                self._log("history read timed out")
                         elif what == "errors":
                             try:
                                 r = await dev.read_errors(arg)
                                 self.results["errors"] = r
                                 self.results["errors_ts"] = time.time()
-                                self._log("故障列表: %s" % r.hex(" "))
+                                self._log("fault list: %s" % r.hex(" "))
                             except TimeoutError:
                                 self.results["errors"] = None
-                                self._log("故障列表读取超时")
+                                self._log("fault list read timed out")
                         await asyncio.sleep(0.5)
                     ok = True
                 else:
                     self.pair_fail_reason = dev.pair_fail_reason
-                    self._log("登录未通过：%s" % dev.login_state)
+                    self._log("login failed: %s" % dev.login_state)
                     if dev.pair_fail_hint():
-                        self._log("下一步：" + dev.pair_fail_hint())
+                        self._log("next step: " + dev.pair_fail_hint())
             except Exception as e:
                 msg = str(e)
                 if "GATT" in msg:
-                    self.status = "设备忙，重试中"
+                    self.status = "device busy, retrying"
                     gatt_fails += 1
                     if gatt_fails >= 3:
-                        # 配对自愈：设备侧密钥已作废而 Windows 侧不知情，
-                        # 带旧密钥的链路会被 GATT 层直接拒绝。删掉本机配对，
-                        # 下一轮 ensure_paired 会重新绑定。
-                        self._log("连续 %d 次 GATT 失败，删除旧配对并重新绑定"
+                        # Self-heal: the device invalidated its key while Windows still
+                        # thinks it is paired, so a link with the old key is rejected at
+                        # the GATT layer. Drop the host pairing; ensure_paired rebinds.
+                        self._log("%d consecutive GATT failures, unpairing and rebinding"
                                   % gatt_fails)
                         await unpair_device(self.cfg.device_address)
                         gatt_fails = 0
                 else:
                     gatt_fails = 0
-                self._log("异常: %s: %s" % (type(e).__name__, msg))
+                self._log("exception: %s: %s" % (type(e).__name__, msg))
             finally:
                 self.connected = False
                 await dev.close()
 
             if self._stop_flag:
                 break
-            # 关键：只有"会话真正稳定"才重置退避。
-            # 之前只要 connect+login 成功就 fails=0，而设备常在登录后
-            # 立刻踢人（限流），结果变成 3 秒一次的密集重连，越连越被拒。
+            # Only a genuinely stable session resets the backoff. Resetting as soon as
+            # connect+login succeeded produced 3-second reconnect storms: the device often
+            # drops the link right after login, and hammering it gets us rate-limited.
             dur = time.time() - t_sess
             stable = (ok and dur >= SESSION_STABLE_SEC
                       and self._rx_frames >= SESSION_MIN_FRAMES)
-            # 设备明确要求冷却（3C=30s / 5A=90s）时，覆盖退避间隔
+            # A cooldown demanded by the device (3C = 30 s, 5A = 90 s) overrides the wait
             cd = getattr(dev, "cooldown_sec", 0.0) or 0.0
             dev.cooldown_sec = 0.0
             if stable:
                 fails, wait = 0, 3
-                # 会话曾稳定却被异常中断（踢线/断链）时，缓 30 秒再连，
-                # 避免反复撞设备限流（规格 §7.10 精神）
+                # A session that was stable and then broke (kicked / dropped) waits 30 s,
+                # so we do not keep tripping the device rate limit (spec 7.10).
                 if exit_reason not in ("stop", "reload"):
                     wait = 30
-                    self.status = "会话中断，30s 后重连"
+                    self.status = "session dropped, reconnecting in 30 s"
                 else:
-                    self.status = "重连中…"
+                    self.status = "reconnecting..."
             else:
                 fails += 1
                 wait = min(RECONNECT_BASE * (2 ** (fails - 1)), RECONNECT_MAX)
                 if cd > wait:
                     wait = cd
                 if ok:
-                    self.status = "会话不稳定，等待 %ds" % int(wait)
+                    self.status = "session unstable, waiting %ds" % int(wait)
                 elif fails >= 3:
-                    self.status = "连不上，%ds 后重试" % int(wait)
+                    self.status = "cannot connect, retrying in %ds" % int(wait)
                 else:
-                    self.status = "等待重连 %ds" % int(wait)
+                    self.status = "waiting %ds to reconnect" % int(wait)
                 if fails >= 3 and fails % 3 == 0:
-                    self._log("连续 %d 次未能建立稳定会话，设备可能在限流，"
-                              "建议断电重启热水器" % fails)
+                    self._log("no stable session after %d attempts; the device may be "
+                              "rate limiting - power-cycle the heater" % fails)
             end = time.time() + wait
             while (time.time() < end and not self._stop_flag
                    and not self._reload):
                 await asyncio.sleep(0.2)
 
-        self.status = "已停止"
+        self.status = "stopped"
         self.connected = False
 
 
 def local_bt_mac() -> str:
-    """读取本机蓝牙地址。失败返回空串。
+    """Read this host's Bluetooth address. Returns an empty string on failure.
 
-    Windows 优先用 WinRT（最可靠），退回 PowerShell；Linux 读 sysfs。
+    WinRT first on Windows (most reliable), PowerShell as a fallback; sysfs on Linux.
     """
     # 1) Windows WinRT
     if sys.platform == "win32":
@@ -1192,7 +1192,7 @@ def local_bt_mac() -> str:
                 return "%012X" % addr
         except Exception:
             pass
-        # 2) 退回 PowerShell
+        # 2) fall back to PowerShell
         try:
             r = subprocess.run(
                 ["powershell", "-NoProfile", "-Command",

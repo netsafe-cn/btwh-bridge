@@ -97,7 +97,7 @@ class TestServiceConfigHotReload(unittest.TestCase):
         self.svc.set_pair_code_and_reconnect("999999", save=False)
         self.assertEqual(self.svc.cfg.pair_code, "999999")
         self.assertTrue(self.svc._reload)
-        self.assertTrue(any("立即重连" in x for x in self.svc.take_logs()))
+        self.assertTrue(any("reconnecting now" in x for x in self.svc.take_logs()))
 
     def test_pair_code_is_stripped(self):
         self.svc.set_pair_code_and_reconnect("  888888  ", save=False)

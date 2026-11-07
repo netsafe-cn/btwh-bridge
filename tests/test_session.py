@@ -93,7 +93,7 @@ class TestLogin(SessionBase):
         self.reply({(0xA2, 0x07): bytes([0x07, 0x01]),
                     (0xA2, 0x08): bytes([0x08, 0x01])})
         self.assertTrue(await self.dev.login())
-        self.assertTrue(self.dev.login_state.startswith("已授权"))
+        self.assertTrue(self.dev.login_state.startswith("authorised"))
 
     async def test_login_need_code(self):
         """07→02 表示要密码，有码则继续"""
@@ -112,14 +112,14 @@ class TestLogin(SessionBase):
         self.cfg.pair_code = ""
         self.reply({(0xA2, 0x07): bytes([0x07, 0x02])})
         self.assertFalse(await self.dev.login())
-        self.assertIn("配对码", self.dev.login_state)
+        self.assertIn("pairing code", self.dev.login_state)
 
     async def test_login_wrong_code(self):
         """08→00 表示密码被拒（可能是码过期或窗口未开）"""
         self.reply({(0xA2, 0x07): bytes([0x07, 0x02]),
                     (0xA2, 0x08): bytes([0x08, 0x00])})
         self.assertFalse(await self.dev.login())
-        self.assertIn("拒绝", self.dev.login_state)
+        self.assertIn("rejected", self.dev.login_state)
 
     async def test_login_cooldown_3c(self):
         """3C = 设备冷却 30 秒"""
@@ -138,7 +138,7 @@ class TestLogin(SessionBase):
         """未知应答应失败而不是当作成功"""
         self.reply({(0xA2, 0x07): bytes([0x07, 0x77])})
         self.assertFalse(await self.dev.login())
-        self.assertIn("未知应答", self.dev.login_state)
+        self.assertIn("unknown reply", self.dev.login_state)
 
     async def test_login_sends_mac_and_code(self):
         """两帧都应发往登录地址 0xAB，且密码为 nibble 编码"""
