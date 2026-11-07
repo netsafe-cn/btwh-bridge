@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "btwh-bridge"
+version = "0.1.0"
+description = "BLE interoperability implementation for Bosch BTWH-001 series gas water heaters, with an ESP32 gateway"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "netsafe", email = "netsafe@126.com" }]
+keywords = ["bosch", "btwh", "water-heater", "ble", "bluetooth", "esp32", "home-assistant"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Home Automation",
+]
+dependencies = ["bleak>=0.22"]
+
+[project.urls]
+Homepage = "https://github.com/netsafe-cn/btwh-bridge"
+Issues = "https://github.com/netsafe-cn/btwh-bridge/issues"
+Changelog = "https://github.com/netsafe-cn/btwh-bridge/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+dev = ["pyserial>=3.5"]
+
+[tool.setuptools]
+# Only the importable library modules are packaged; the GUI, bridge and CLI helpers are
+# run from the repository as scripts.
+py-modules = ["bosch_api", "boschlog", "bemfa", "device_fsm"]

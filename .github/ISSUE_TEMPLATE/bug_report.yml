@@ -1,0 +1,75 @@
+name: Bug report
+description: Something does not work as documented
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report.
+
+        **Redact first:** replace real MAC addresses with `AA:BB:CC:DD:EE:FF` and pairing
+        codes with `123456`. Never paste a cloud key.
+
+  - type: input
+    id: model
+    attributes:
+      label: Heater model and firmware
+      description: Visible on the panel or nameplate, e.g. `BTWH-001`
+      placeholder: BTWH-001
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Python library (bosch_api)
+        - Desktop console (bosch_ui)
+        - Headless bridge (bosch_bridge)
+        - ESP32 firmware
+        - Mi Home / Bemfa bridge
+        - Tests / CI
+        - Documentation
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The symptom, and what you expected instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Panel → clear pairing
+        2. Enter code ......
+        3. Observe ......
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Paste the redacted `logs/*.log`, plus the output of
+        `python esp32/gateway/log_diag.py`. This field renders as a code block.
+      render: text
+    validations:
+      required: false
+
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS and version, Python version, and board model for firmware issues
+      placeholder: Windows 11 / Python 3.13 / ESP32-S3-DEV-KIT-N8R8
+    validations:
+      required: true

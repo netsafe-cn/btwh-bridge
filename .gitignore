@@ -1,0 +1,132 @@
+# 本地配置：含巴法云私钥、配对码、本机蓝牙地址，**绝不提交**
+config.json
+config.local.json
+
+# 日志
+*.log
+loop_used.txt
+raw_notify.txt
+bt1.log
+
+# 逆向过程的调试脚本与产物（不属于项目本体，仅本机保留）
+ble_*.py
+probe_*.py
+bosch_ble.py
+bosch_bemfa.py
+scan_adv.py
+shot_win.py
+ui_shot*.png
+ui_*.png
+layout.json
+dex_*.py
+*.dex
+*.apk
+apk_x/
+hdc_dl/
+m0*.txt
+pbm_all.txt
+pbapi.txt
+pbconst.txt
+msg_full.txt
+dash.txt
+uc.txt
+bleconn.txt
+param_full.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 开源化补充（2026-11-07）
+*.key
+*.pem
+.env
+# 归档包内含真实 MAC / 配对码 / 云 UID，绝不入库
+*.zip
+.pytest_cache/
+logs/
+
+# 内部过程文档：含逆向分析记录与内部交接信息，不随开源发布
+# （本地保留，仅不进入版本库）
+APK_ANALYSIS.md
+PROTOCOL_NOTES.md
+BLE_STATUS.md
+CODE_REVIEW.md
+HANDOVER.md
+PROJECT_OVERVIEW.md
+PROJECT_STATUS_交接.md
+使用说明.md
+
+# ---- 逆向过程产物与调试存档（绝不随开源发布）----
+de/
+*.dump
+*.db
+*.pdf
+androguard*
+*_log.txt
+*_out.txt
+loop_*.txt
+ui_log*.txt
+parse_callbacks.txt
+code.txt
+gatt_dump.txt
+msg_cls.txt
+probe_report.txt
+esp32_bosch_ble.ino
+
+# 第三方板卡索引（体积大，可用 fetch_packages.py 重建）
+esp32/toolchain/package_esp32_*.json
+
+# 编译产物与本地工具链（体积大、平台相关，用 fetch_packages.py / install_local.py 重建）
+esp32/toolchain/index/packages/
+esp32/toolchain/arduino_data/
+esp32/gateway/.pio/
+esp32/gateway/.build/
+build/
+*.bin
+
+# 第三方二进制与版权文档：不重新分发，按 esp32/manual/README.md 指引自行下载
+esp32/toolchain/*.exe
+esp32/manual/*.pdf
+esp32/manual/*.7z
+esp32/manual/*.zip
+esp32/manual/api_ref/
+esp32/manual/微雪官方文档_摘录.md
+
+# ESP32 本地工具链与弃用固件：环境相关 / 硬编码真实设备标识，均不入库
+esp32/toolchain/
+esp32/bosch_gateway/
+
+# 本地实验脚本与无关工具（不属于项目本体，仅本机保留）
+analyze_frames.py
+bt_radio.py
+collect_*.csv
+collect_*.summary
+enter_code.py
+enter_code.bat
+grab_logcat.py
+gw.py
+hdcshot.py
+info.bat
+pair_device.py
+probe.bat
+quick_connect.py
+quick_d7.py
+scan.bat
+scan_cmds.py
+settemp.bat
+setup_autostart.bat
+setup_power.bat
+ui_dump.py
+watch_reappear.py
+watch_takeover.py
+启动调试台.bat

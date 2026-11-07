@@ -1,0 +1,12 @@
+# 只跑回归测试所需的最小依赖（CI 用）
+# 运行时若用 Windows 系统级配对，另需 winrt-Windows.Devices.Bluetooth 等包；
+# 它是可选依赖，Linux / macOS CI 不装，相关用例会自动 skip。
+# 回归测试与本地工具链依赖
+# 运行时依赖见 requirements.txt
+-r requirements.txt
+
+# ESP32 串口工具（esp32/gateway/gateway_cli.py、esp32_panel.py）需要
+pyserial>=3.5
+
+# 说明：单元测试只用标准库 unittest / unittest.mock，**不引入第三方 mock 包**。
+# WinRT 系统级配对是 Windows 可选能力，Linux/macOS CI 不安装，相关用例自动 skip。

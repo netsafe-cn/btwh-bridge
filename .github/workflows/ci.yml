@@ -1,0 +1,52 @@
+name: regression-btwh-bridge
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    name: py${{ matrix.python }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    env:
+      # Windows runner 默认 cp1252，而测试会打印中文，强制 UTF-8 避免 UnicodeEncodeError
+      PYTHONIOENCODING: utf-8
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install minimal test deps
+        run: pip install -r requirements-dev.txt
+      # 全部离线：不连蓝牙、不连网络；WinRT 相关用例在非 Windows 自动 skip
+      - name: Full regression (incl. signature contract + golden vectors)
+        run: python run_tests.py
+
+  secrets:
+    name: no real credentials tracked
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: config.json must never be committed
+        shell: bash
+        run: |
+          if git ls-files --error-unmatch config.json >/dev/null 2>&1; then
+            echo "::error::config.json 含真实 MAC / 配对码 / 云 UID，禁止提交"
+            exit 1
+          fi
+          echo "OK: config.json 未被纳入版本控制"
+      - name: Scan for hardcoded cloud UID / pair code in tracked sources
+        shell: bash
+        run: |
+          if git grep -nE 'bemfa_uid\s*=\s*"[0-9a-f]{16,}"|pair_code\s*=\s*"[0-9]{6}"' \
+               -- '*.py' ':!config.example.json'; then
+            echo "::error::源码里疑似硬编码了真实密钥，请改为环境变量注入"
+            exit 1
+          fi
+          echo "OK: 未发现明显硬编码密钥"

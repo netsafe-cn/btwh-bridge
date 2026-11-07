@@ -1,0 +1,9 @@
+{
+  "device_address": "AA:BB:CC:DD:EE:FF",
+  "login_mac": "112233445566",
+  "pair_code": "",
+  "bemfa_uid": "",
+  "topic_set": "boschset004",
+  "topic_up": "boschup006",
+  "topic_down": "boschdown006"
+}

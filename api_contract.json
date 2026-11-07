@@ -1,0 +1,372 @@
+{
+  "contract_version": "v1.0",
+  "note": "API.md v1.0 签名快照；只允许末尾追加带默认值的可选参数",
+  "signatures": {
+    "parse_mac": [
+      {
+        "name": "address",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      }
+    ],
+    "paired_state": [
+      {
+        "name": "address",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      }
+    ],
+    "ensure_paired": [
+      {
+        "name": "address",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      },
+      {
+        "name": "log",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": true,
+        "default": "None"
+      }
+    ],
+    "unpair_device": [
+      {
+        "name": "address",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      }
+    ],
+    "local_bt_mac": [],
+    "Config.load": [
+      {
+        "name": "path",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": true,
+        "default": "None"
+      }
+    ],
+    "Config.save": [
+      {
+        "name": "path",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": true,
+        "default": "None"
+      }
+    ],
+    "Config.validate": [],
+    "BoschProtocol.xor": [
+      {
+        "name": "data",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      }
+    ],
+    "BoschProtocol.encode_chunks": [
+      {
+        "name": "plain",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      },
+      {
+        "name": "chunk",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": true,
+        "default": "20"
+      }
+    ],
+    "BoschProtocol.build": [
+      {
+        "name": "sender",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      },
+      {
+        "name": "receiver",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      },
+      {
+        "name": "mid",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      },
+      {
+        "name": "cmd",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      },
+      {
+        "name": "data",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": true,
+        "default": "b''"
+      }
+    ],
+    "BoschProtocol.stuff": [
+      {
+        "name": "frame",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      }
+    ],
+    "BoschProtocol.unstuff": [
+      {
+        "name": "frame",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      }
+    ],
+    "BoschProtocol.decrypt_chunk": [
+      {
+        "name": "data",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      }
+    ],
+    "BoschProtocol.decode_stream": [
+      {
+        "name": "plain",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      }
+    ],
+    "BoschProtocol.parse_state": [
+      {
+        "name": "payload",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      }
+    ],
+    "BoschProtocol.parse_history": [
+      {
+        "name": "payload",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      }
+    ],
+    "BoschProtocol.parse_errors": [
+      {
+        "name": "payload",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      }
+    ],
+    "BoschProtocol.encode_pair_code": [
+      {
+        "name": "code",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      }
+    ],
+    "BoschDevice.connect": [],
+    "BoschDevice.close": [],
+    "BoschDevice.login": [],
+    "BoschDevice.send": [
+      {
+        "name": "cmd",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      },
+      {
+        "name": "data",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": true,
+        "default": "b''"
+      },
+      {
+        "name": "receiver",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": true,
+        "default": "0"
+      },
+      {
+        "name": "tag",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": true,
+        "default": "''"
+      }
+    ],
+    "BoschDevice.send_and_wait": [
+      {
+        "name": "cmd",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      },
+      {
+        "name": "data",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": true,
+        "default": "b''"
+      },
+      {
+        "name": "receiver",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": true,
+        "default": "0"
+      },
+      {
+        "name": "tag",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": true,
+        "default": "''"
+      },
+      {
+        "name": "timeout",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": true,
+        "default": "6.0"
+      },
+      {
+        "name": "retries",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": true,
+        "default": "5"
+      }
+    ],
+    "BoschDevice.set_temperature": [
+      {
+        "name": "value",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      }
+    ],
+    "BoschDevice.idle_seconds": [],
+    "BoschDevice.read_history": [
+      {
+        "name": "kind",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": true,
+        "default": "2"
+      }
+    ],
+    "BoschDevice.read_errors": [
+      {
+        "name": "count",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": true,
+        "default": "10"
+      }
+    ],
+    "BoschDevice.pair_fail_hint": [],
+    "BoschDevice.pair_summary": [],
+    "BoschService.pair_fail_hint": [],
+    "BoschService.start": [],
+    "BoschService.stop": [
+      {
+        "name": "timeout",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": true,
+        "default": "3.0"
+      }
+    ],
+    "BoschService.set_temperature": [
+      {
+        "name": "value",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      }
+    ],
+    "BoschService.query_history": [
+      {
+        "name": "kind",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": true,
+        "default": "2"
+      }
+    ],
+    "BoschService.query_errors": [
+      {
+        "name": "count",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": true,
+        "default": "10"
+      }
+    ],
+    "BoschService.take_logs": [],
+    "BoschService.update_config": [
+      {
+        "name": "cfg",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      }
+    ],
+    "BoschService.set_pair_code_and_reconnect": [
+      {
+        "name": "code",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": false,
+        "default": null
+      },
+      {
+        "name": "save",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "has_default": true,
+        "default": "True"
+      }
+    ]
+  },
+  "properties": [
+    "Config.login_mac_bytes",
+    "BoschDevice.pair_fail_reason",
+    "DeviceState.outlet",
+    "DeviceState.inlet",
+    "DeviceState.exchanger",
+    "DeviceState.power",
+    "DeviceState.burning",
+    "DeviceState.mode_text",
+    "DeviceState.failure_text",
+    "BoschService.running"
+  ],
+  "constants": {
+    "SERVICE_BASE": "ff4396a6-50a8-4fc0-bcf6-228e82dfed",
+    "CHAR_MODE": "ff4396a6-50a8-4fc0-bcf6-228e82dfedb1",
+    "CHAR_FIFO": "ff4396a6-50a8-4fc0-bcf6-228e82dfedb2",
+    "CHAR_CREDITS": "ff4396a6-50a8-4fc0-bcf6-228e82dfedb3",
+    "CHAR_COUNTER": "ff4396a6-50a8-4fc0-bcf6-228e82dfedd1",
+    "XOR_KEY": {
+      "__bytes_hex__": "316167332e2d667337"
+    },
+    "FRAME_START": {
+      "__bytes_hex__": "7b7b"
+    },
+    "FRAME_END": {
+      "__bytes_hex__": "7d7d"
+    },
+    "SENDER": 33,
+    "RECV_BIZ": 0,
+    "RECV_LOGIN": 171,
+    "CMD_STATE": 160,
+    "CMD_BCAST_CFG": 161,
+    "CMD_LOGIN": 162,
+    "CMD_READ_PARAM": 210,
+    "CMD_WRITE_PARAM": 211,
+    "CMD_HISTORY": 176,
+    "CMD_READ_ERROR": 215,
+    "CHUNK": 20,
+    "TEMP_MIN": 35,
+    "TEMP_MAX": 60
+  }
+}

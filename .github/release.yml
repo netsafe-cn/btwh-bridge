@@ -1,0 +1,32 @@
+# GitHub 自动生成 Release notes 的分类规则。
+# 依据 PR 上的 label 归类；没有 label 的 PR 落到最后一项。
+# 生成的是草稿，发版前必须人工改写（尤其是「为什么」）。
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+      - dependencies
+  categories:
+    - title: Breaking changes
+      labels:
+        - breaking
+        - breaking-change
+    - title: Features
+      labels:
+        - feature
+        - enhancement
+    - title: Fixes
+      labels:
+        - bug
+        - fix
+    - title: Firmware (ESP32)
+      labels:
+        - esp32
+        - firmware
+    - title: Documentation
+      labels:
+        - docs
+        - documentation
+    - title: Other changes
+      labels:
+        - "*"

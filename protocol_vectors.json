@@ -1,0 +1,81 @@
+{
+  "contract_version": "v1.0",
+  "generated_by": "python test_contract.py --update",
+  "usage": "ESP32 C++ 固件单测直接读这些 hex，逐字节对照自己的组帧/填充/加密实现",
+  "cases": [
+    {
+      "name": "a2_07_submit_mac",
+      "note": "登录第 1 步：提交已授权设备 MAC（receiver=0xAB）",
+      "frame_hex": "7b7b21ab05a207c0335e0ff68a5a7d7d",
+      "stuffed_hex": "7b7b21ab05a207c0335e0ff68a5a7d7d",
+      "chunks_hex": [
+        "4a1a46982b8f61b3046f6e91b974501b"
+      ]
+    },
+    {
+      "name": "a2_08_submit_code",
+      "note": "登录第 2 步：提交面板 6 位码，每位 1 字节",
+      "frame_hex": "7b7b21ab06a2080301010502028a7d7d",
+      "stuffed_hex": "7b7b21ab06a2080301010502028a7d7d",
+      "chunks_hex": [
+        "4a1a4698288f6e703630646531a4501b"
+      ]
+    },
+    {
+      "name": "d3_set_temperature_42",
+      "note": "写设定温度 42 度",
+      "frame_hex": "7b7b210010d302552a857d7d",
+      "stuffed_hex": "7b7b210010d302552a857d7d",
+      "chunks_hex": [
+        "4a1a46333efe64261db41c1a"
+      ]
+    },
+    {
+      "name": "b0_read_history",
+      "note": "读运行统计",
+      "frame_hex": "7b7b210011b002e47d7d",
+      "stuffed_hex": "7b7b210011b002e47d7d",
+      "chunks_hex": [
+        "4a1a46333f9d64974a4c"
+      ]
+    },
+    {
+      "name": "stuff_7b_7d",
+      "note": "填充边界：数据区出现 7B/7D 时后插 00",
+      "frame_hex": "7b7b210012a07b7d0001cc7d7d",
+      "stuffed_hex": "7b7b210012a07b007d000001cc7d7d",
+      "chunks_hex": [
+        "4a1a46333c8d1d734a316166ff5350"
+      ]
+    },
+    {
+      "name": "a0_state_type1",
+      "note": "A0 34 字节 Type1：字段偏移依据 2026-11-01 实测采集；ts 已排除",
+      "payload_hex": "0114001e002a1a0000001000232300080000000000500000000000002d000000013c",
+      "state": {
+        "frame_type": 1,
+        "temp_in": 20.0,
+        "chamber": 30.0,
+        "setpoint": 42,
+        "temp_box": 26.0,
+        "water_flow": 8.0,
+        "burner_power": 35,
+        "ionized": true,
+        "failure": 0,
+        "fan_power": 35,
+        "fan_speed": 800,
+        "mode": 1,
+        "temp_out": 45.0,
+        "bathroom": false,
+        "max_setpoint": 60,
+        "air_flow": 0.0,
+        "air_setpoint": 0.0,
+        "gas_setpoint": 0.0,
+        "pressure": 0,
+        "raw": {
+          "__bytes_hex__": "0114001e002a1a0000001000232300080000000000500000000000002d000000013c"
+        }
+      }
+    }
+  ]
+}

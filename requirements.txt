@@ -1,0 +1,6 @@
+# 运行时依赖（核心库与工具）
+# Windows 上 bleak 会自动带上 WinRT 相关包；Linux 需要 BlueZ（多数发行版自带）
+bleak>=0.22
+
+# 可选：仅 GATT 响应慢的设备需要
+# bleak-retry-connector>=3.0
