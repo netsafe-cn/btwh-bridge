@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# 博世热水器 ESP32 网关 —— 编译 / 烧录 / 串口交互 / 日志
-#   python gateway_cli.py --flash   编译+烧录+进入交互（第一次用这个）
-#   python gateway_cli.py           只连串口进入交互
-#   python gateway_cli.py --build   只编译
+# Bosch heater ESP32 gateway - build / flash / serial console / logging
+#   python gateway_cli.py --flash   build, flash, then open the console (first run)
+#   python gateway_cli.py           console only
+#   python gateway_cli.py --build   build only
 from __future__ import annotations
 import argparse, datetime, os, pathlib, shutil, subprocess, sys, threading, time
 
@@ -11,20 +11,20 @@ ROOT = pathlib.Path(__file__).resolve().parent
 TOOLCHAIN = ROOT.parent / "toolchain"
 LOGDIR = ROOT.parent / "logs"
 
-# arduino-cli：优先 PATH 里的，其次工程内 toolchain/（本地工具链不入库）
+# arduino-cli: prefer the one on PATH, fall back to the bundled toolchain/ (not committed)
 CLI = pathlib.Path(shutil.which("arduino-cli") or (TOOLCHAIN / "arduino-cli.exe"))
 CONFIG = TOOLCHAIN / "arduino-cli.yaml"
 
-# Windows 路径长度限制：编译工作区必须放在短路径，源码仍留在工程里。
-# 默认 ~/esp，可用环境变量 BTWH_WORK 覆盖；没有 arduino-cli.yaml 时自动省略该参数。
+# Windows path limit: the build workspace must live on a short path; sources stay here.
+# Defaults to ~/esp, override with BTWH_WORK; --config-file is skipped when absent.
 WORK = pathlib.Path(os.environ.get("BTWH_WORK") or (pathlib.Path.home() / "esp"))
 SKETCH_SRC = ROOT / "arduino_sketch"
 SKETCH = WORK / "arduino_sketch"
 BUILD = WORK / "build"
 LIBS = WORK / "user" / "libraries"
-# 与板载已验证固件保持一致。esptool flash_id 实测硬件是 16MB Flash + 8MB Octal PSRAM，
-# 但启用需 FlashSize=16M,PartitionScheme=default_8MB,PSRAM=opi（见 README 七/九节），
-# 会触发一次 10~15 分钟的全量重编译；BLE 可行性实测不需要它，故留到实测通过后再切。
+# Matches the firmware already verified on the board. esptool reports 16 MB flash plus
+# 8 MB Octal PSRAM, but enabling them needs FlashSize=16M,PartitionScheme=default_8MB,
+# PSRAM=opi and triggers a full rebuild - not needed for the BLE proof, so it waits.
 FQBN = "esp32:esp32:esp32s3:FlashSize=8M"
 
 
@@ -49,7 +49,7 @@ def run(cmd):
 
 
 def sync_sketch():
-    # 只覆盖文件，不删目录（避免触发批量删除保护）
+    # Overwrite files only, never delete the directory (bulk deletes trip the guard)
     WORK.mkdir(parents=True, exist_ok=True)
     SKETCH.mkdir(parents=True, exist_ok=True)
     for f in SKETCH_SRC.iterdir():
@@ -58,7 +58,7 @@ def sync_sketch():
 
 
 def _cmd(*args):
-    """组装 arduino-cli 命令：配置文件、库目录按存在性附加，别人 clone 后也能直接跑。"""
+    """Assemble the arduino-cli command; config and libs are added only when present."""
     out = [CLI]
     if CONFIG.exists():
         out += ["--config-file", CONFIG]
@@ -82,12 +82,12 @@ def serial_session(port, baud):
     LOGDIR.mkdir(parents=True, exist_ok=True)
     logpath = LOGDIR / ("esp32_" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S") + ".log")
     log = open(logpath, "a", encoding="utf-8", errors="replace", buffering=1)
-    print("\n串口日志：" + str(logpath))
-    print("直接输入 6 位面板码回车；quit 退出；help 看全部命令。\n")
+    print("\nSerial log: " + str(logpath))
+    print("Type the six-digit panel code; quit to exit; help lists every command.\n")
     try:
         ser = serial.Serial(port, baud, timeout=0.1)
     except Exception as e:
-        print("打不开 %s：%s" % (port, e))
+        print("cannot open %s: %s" % (port, e))
         return 1
     stop = threading.Event()
 
@@ -96,7 +96,7 @@ def serial_session(port, baud):
             try:
                 raw = ser.readline()
             except Exception as e:
-                print("[串口断开] %s" % e)
+                print("[serial closed] %s" % e)
                 break
             if not raw:
                 continue
@@ -107,7 +107,7 @@ def serial_session(port, baud):
 
     threading.Thread(target=reader, daemon=True).start()
     time.sleep(1)
-    ser.write(b"reboot\n")   # 不要手动拉 DTR/RTS，板子会进 bootloader
+    ser.write(b"reboot\n")   # do not touch DTR/RTS; the board would enter the bootloader
     ser.flush()
     try:
         while True:
@@ -125,7 +125,7 @@ def serial_session(port, baud):
             ser.flush()
     finally:
         stop.set(); time.sleep(0.2); ser.close(); log.close()
-        print("\n日志已保存：" + str(logpath))
+        print("\nlog saved: " + str(logpath))
     return 0
 
 
@@ -141,21 +141,21 @@ def main():
     if a.build or a.flash:
         rc = build()
         if rc != 0:
-            print("\n编译失败 exit=%d" % rc); return rc
-        print("\n✓ 编译通过")
+            print("\nbuild failed, exit=%d" % rc); return rc
+        print("\n[OK] build passed")
         if not a.flash:
             return 0
         rc = upload(port)
         if rc != 0:
-            print("\n烧录失败 exit=%d" % rc); return rc
-        print("\n✓ 烧录完成，3 秒后打开串口…")
+            print("\nflash failed, exit=%d" % rc); return rc
+        print("\n[OK] flashed, opening the console in 3 s...")
         time.sleep(3)
         if a.no_monitor:
             return 0
     if not port:
-        print("找不到串口，用 --port COM3 指定（CH343 那个）")
+        print("no serial port found; pass --port COM3 (the CH343 one)")
         return 1
-    print("使用串口：%s @ %d" % (port, a.baud))
+    print("using %s @ %d" % (port, a.baud))
     return serial_session(port, a.baud)
 
 
