@@ -125,7 +125,7 @@ class TestLogin(SessionBase):
         """3C = 设备冷却 30 秒"""
         self.reply({(0xA2, 0x07): bytes([0x07, 0x3C])})
         self.assertFalse(await self.dev.login())
-        self.assertIn("冷却", self.dev.login_state)
+        self.assertIn("cooling", self.dev.login_state)
         self.assertEqual(self.dev.cooldown_sec, 30.0)
 
     async def test_login_cooldown_5a(self):

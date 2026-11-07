@@ -98,10 +98,10 @@ class TestDeviceState(unittest.TestCase):
         self.assertTrue(DeviceState(burner_power=80).burning)
 
     def test_mode_and_failure_text(self):
-        self.assertEqual(DeviceState(mode=0).mode_text, "待机")
-        self.assertEqual(DeviceState(mode=1).mode_text, "燃烧")
-        self.assertEqual(DeviceState(mode=2).mode_text, "舒适")
-        self.assertEqual(DeviceState(failure=0).failure_text, "无")
+        self.assertEqual(DeviceState(mode=0).mode_text, "idle")
+        self.assertEqual(DeviceState(mode=1).mode_text, "burning")
+        self.assertEqual(DeviceState(mode=2).mode_text, "comfort")
+        self.assertEqual(DeviceState(failure=0).failure_text, "none")
         self.assertEqual(DeviceState(failure=0xEA).failure_text, "EA")
 
     def test_compat_properties(self):

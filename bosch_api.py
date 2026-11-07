@@ -305,24 +305,24 @@ class DeviceState:
     setpoint: Optional[int] = None      # current setpoint data[5]
     temp_box: Optional[float] = None    # chassis temperature data[6]+data[7]/100
     water_flow: Optional[float] = None  # flow, L/min data[8]/10
-    burner_power: int = 0               # 燃烧功率 % data[9]
-    ionized: bool = False               # 电离（火焰）检测 data[10] & 0x10
-    failure: int = 0                    # 活动故障码 data[11]，0=无故障
-    fan_power: Optional[int] = None     # 风机功率 (T0:[13] T1:[12])
-    fan_speed: Optional[int] = None     # 风机转速 (T0:[14] T1:[13])
-    mode: Optional[int] = None          # 0待机 1燃烧 2舒适 (T0:[16] T1:[32])
-    temp_out: Optional[float] = None    # 出水温度 (T0:[21]+[22] T1:[28]+[29])
-    bathroom: bool = False              # 浴室控制器在位 (T0:[17]&0x80 T1:[33]&0x80)
-    max_setpoint: Optional[int] = None  # 最大可设定温度
-    air_flow: Optional[float] = None    # 空气流量 (仅 T1)
+    burner_power: int = 0               # burner power % data[9]
+    ionized: bool = False               # ionisation (flame) detect data[10] & 0x10
+    failure: int = 0                    # active fault code data[11], 0 = none
+    fan_power: Optional[int] = None     # fan power (T0:[13] T1:[12])
+    fan_speed: Optional[int] = None     # fan speed (T0:[14] T1:[13])
+    mode: Optional[int] = None          # 0 idle, 1 burning, 2 comfort (T0:[16] T1:[32])
+    temp_out: Optional[float] = None    # outlet temp (T0:[21]+[22] T1:[28]+[29])
+    bathroom: bool = False              # bathroom controller present (T0/T1 [33]&0x80)
+    max_setpoint: Optional[int] = None  # highest settable temperature
+    air_flow: Optional[float] = None    # air flow (Type1 only)
     air_setpoint: Optional[float] = None
     gas_setpoint: Optional[float] = None
-    pressure: Optional[int] = None      # 气压 (仅 T1，data[27]*10)
+    pressure: Optional[int] = None      # gas pressure (Type1 only, data[27]*10)
 
     raw: bytes = b""
     ts: float = 0.0
 
-    # ---- 兼容旧字段名（界面/外部代码仍在用）
+    # ---- legacy field names (the UI and external callers still use them)
     @property
     def outlet(self) -> Optional[float]:
         return self.temp_out
@@ -345,49 +345,49 @@ class DeviceState:
 
     @property
     def mode_text(self) -> str:
-        return {0: "待机", 1: "燃烧", 2: "舒适"}.get(self.mode, "未知")
+        return {0: "idle", 1: "burning", 2: "comfort"}.get(self.mode, "unknown")
 
     @property
     def failure_text(self) -> str:
-        return "无" if not self.failure else "%02X" % self.failure
+        return "none" if not self.failure else "%02X" % self.failure
 
 
-# ---------------------------------------------------------------------- 协议
+# ---------------------------------------------------------------------- protocol
 class BoschProtocol:
-    """纯编解码，不做任何 IO。所有方法都是静态/类方法，方便单独测试。"""
+    """Pure codec, no I/O. Every method is static or class level, so it tests alone."""
 
-    # ---- 加密
+    # ---- encryption
     @staticmethod
     def xor(data: bytes) -> bytes:
         return bytes(v ^ XOR_KEY[i % 9] for i, v in enumerate(data))
 
     @staticmethod
     def encode_chunks(plain: bytes, chunk: int = CHUNK) -> List[bytes]:
-        """按包分片并逐片加密。
+        """Split into packets and encrypt fragment by fragment.
 
-        注意：设备要求**每个 notify 分片独立从 KEY[0] 开始异或**，
-        不是整帧连续，所以必须自己切片，不能整体 xor 后交给底层拆包。
+        Note: the device requires **each notify fragment to restart the XOR at KEY[0]**,
+        not one continuous XOR over the frame, so splitting is our job, not the stack's.
         """
         out = []
         for i in range(0, len(plain), chunk):
             out.append(BoschProtocol.xor(plain[i:i + chunk]))
         return out
 
-    # ---- 组帧
+    # ---- framing
     @staticmethod
     def build(sender: int, receiver: int, mid: int, cmd: int,
               data: bytes = b"") -> bytes:
-        """组一个**逻辑帧**（含校验，不含填充）。
+        """Build a **logical frame** (checksum included, stuffing not yet applied).
 
-        传输前还要过一遍 stuff() 插填充、再 encode_chunks() 加密。
-        逻辑帧与"线上字节"分开，收发两端才能对称。
+        Before transmission it still goes through stuff() and then encode_chunks().
+        Keeping wire bytes separate from the logical frame is what makes both ends match.
         """
         body = bytes([sender, receiver, mid & 0xFF, cmd]) + data
         return FRAME_START + body + bytes([sum(body) & 0xFF]) + FRAME_END
 
     @staticmethod
     def stuff(frame: bytes) -> bytes:
-        """传输前插填充：数据区出现 7B/7D 时后面补 00（帧头帧尾不处理）"""
+        """Apply stuffing before transmission: 00 after 7B/7D in the data area only."""
         if len(frame) <= 4:
             return frame
         head, body, tail = frame[:2], frame[2:-2], frame[-2:]
@@ -398,15 +398,15 @@ class BoschProtocol:
                 out.append(0x00)
         return bytes(out) + tail
 
-    # ---- 解帧
+    # ---- deframing
     @staticmethod
     def decrypt_chunk(data: bytes) -> bytes:
-        """解密一个 notify 分片。每片独立从 KEY[0] 开始。"""
+        """Decrypt one notify fragment. Each fragment restarts at KEY[0]."""
         return BoschProtocol.xor(bytes(data))
 
     @staticmethod
     def unstuff(frame: bytes) -> bytes:
-        """去掉数据区里 7B/7D 之后插入的 00 填充（帧头帧尾不参与）"""
+        """Strip the 00 padding inserted after 7B/7D (frame delimiters excluded)."""
         if len(frame) <= 2:
             return frame
         head, body, tail = frame[:2], frame[2:-2], frame[-2:]
@@ -422,10 +422,10 @@ class BoschProtocol:
 
     @staticmethod
     def decode_stream(plain: bytes):
-        """从**已逐片解密**的明文流中切出完整帧。
+        """Cut complete frames out of the **already decrypted** plaintext stream.
 
-        返回 (完整帧列表, 尚未收全的剩余字节)。
-        调用方式必须是：先 decrypt_chunk 每片 → 拼接 → 再送这里。
+        Returns (complete frames, bytes buffered from a partial frame).
+        Call it as: decrypt_chunk each fragment -> concatenate -> feed it here.
         """
         frames, buf = [], plain
         while True:
@@ -440,10 +440,10 @@ class BoschProtocol:
             frames.append(BoschProtocol.unstuff(buf[:i + 2]))
             buf = buf[i + 2:]
 
-    # ---- 字段解析
+    # ---- field parsing
     @staticmethod
     def parse_state(payload: bytes) -> DeviceState:
-        """解析 0xA0 广播（字段偏移依据 2026-11-01 实机采样，Type0/Type1 分型）。"""
+        """Parse the 0xA0 broadcast (offsets measured 2026-11-01; Type0 and Type1)."""
         n = len(payload)
 
         def b(i):
@@ -457,8 +457,8 @@ class BoschProtocol:
         ftype = b(0) or 0
         t1 = (ftype == 1)
 
-        # 温度类：两型偏移一致（已实机验证）
-        # 风机关 / 运行模式 / 出水 / 浴室控制器：两型偏移不同（实机对照）
+        # Temperatures: identical offsets in both types (verified on hardware)
+        # Fan power / mode / outlet / bathroom: offsets differ between the two types
         mode_i = 32 if t1 else 16
         bath_i = 33 if t1 else 17
         out_i = 28 if t1 else 21
@@ -467,12 +467,12 @@ class BoschProtocol:
         maxsp = (bath_raw & 0x7F) if n > bath_i else None
         ion_raw = b(10) or 0
 
-        # 流量 / 功率 / 风机：实测与本机固件不符，以下按 2026-11-01
-        # 大小水流对照实验（13:41 大水流 vs 13:42 关水）实测得出：
-        #   [21] 75~111 → 关水 2~3      = 水流量 ×0.1 L/min
-        #   [13] 36~47  → 关水 15~16    = 燃烧功率 %（关水后低温保温）
-        #   [15][16] 15/11 → 7/5        = 风机转速（[15]*100+[16] rpm）
-        # 注意：仅对 Type1 帧验证过，Type0 沿用另一套偏移。
+        # Flow / power / fan: early reference values did not match this firmware. The
+        # numbers below come from the 2026-11-01 load comparison (13:41 running, 13:42 off):
+        #   [21] 75-111 -> 2-3 when off    = water flow x 0.1 L/min
+        #   [13] 36-47  -> 15-16 when off  = burner power % (low flame held after the tap)
+        #   [15][16] 15/11 -> 7/5          = fan speed ([15]*100 + [16] rpm)
+        # Verified on Type1 only; Type0 keeps its own set of offsets.
         if t1:
             water_flow = (b(21) / 10.0) if n > 21 else None
             burner = b(13) or 0
@@ -508,18 +508,18 @@ class BoschProtocol:
             ts=time.time(),
         )
 
-    # ---- 配对码编码（每位数字转 1 字节）
+    # ---- pairing-code encoding (one byte per digit)
     @staticmethod
     def encode_pair_code(code: str) -> bytes:
         return bytes(int(c) for c in code if c.isdigit())
 
-    # ---- 应答解析（历史 / 故障；格式依据 2026-11-01 实测）
+    # ---- reply parsing (history / faults; format measured 2026-11-01)
     @staticmethod
     def parse_history(payload: bytes) -> dict:
-        """B0 应答：[type][4字节大端 A][4字节大端 B]。
+        """B0 reply: [type][4-byte big-endian A][4-byte big-endian B].
 
-        实测 type=2 返回 02 | 00 00 12 67 | 00 00 05 b6 → 4711 / 1462。
-        计数为大端，÷60 得小时：A 为运行分钟数，B 为点火次数。
+        Measured with type=2: 02 | 00 00 12 67 | 00 00 05 b6 -> 4711 / 1462.
+        Counts are big-endian; /60 gives hours. A = run minutes, B = ignition count.
         """
         if len(payload) < 9:
             return {"type": payload[0] if payload else None,
@@ -533,20 +533,20 @@ class BoschProtocol:
 
     @staticmethod
     def parse_errors(payload: bytes) -> List[int]:
-        """D7 应答：[状态字节][故障码...]。
+        """D7 reply: [status byte][fault codes ...].
 
-        实测（2026-11-01）：请求 1/5/10 条，应答长度严格等于请求条数，
-        首字节恒为 0xEA —— 它是状态/起始标识，**不是故障码**（App 显示无历史故障）。
-        其后各字节为故障码，0x00 表示空槽。
+        Measured (2026-11-01): asking for 1, 5 or 10 entries returns exactly that many
+        bytes, and the first is always 0xEA - a status marker, **not a fault code** (the
+        app showed no history). The rest are fault codes, 0x00 meaning an empty slot.
         """
         return [b for b in payload[1:] if b]
 
 
-# ------------------------------------------------------------------ 单次会话
+# ------------------------------------------------------------------ single session
 class BoschDevice:
-    """一次连接的完整生命周期。由 BoschService 驱动，也可单独使用。
+    """Full lifecycle of one connection. Driven by BoschService, but usable alone.
 
-    事件回调都在 asyncio 线程里执行，不要在里面做阻塞操作。
+    Callbacks run on the asyncio thread; never block inside them.
     """
 
     def __init__(self, cfg: Config,
@@ -559,26 +559,26 @@ class BoschDevice:
         self.on_login = on_login
 
         self.client: Optional[BleakClient] = None
-        self.login_state = "未登录"
+        self.login_state = "not logged in"
         self.state: Optional[DeviceState] = None
         self.mid = 0
         self._buf = b""
         self._login_resp: Optional[bytes] = None
         self._login_ev = asyncio.Event()
-        self.cooldown_sec: float = 0.0   # 设备要求的最短重连间隔（3C/5A 时设置）
+        self.cooldown_sec: float = 0.0   # shortest reconnect interval the device demands
         self._pair_fail_reason: Optional[str] = None
-        self.pair_code_ts: Optional[float] = None   # 最近一次提交配对码的时刻
-        # ---- 认证阶段的结构化结果（上层不要解析 login_state 文案）
-        self.mac_registered = False        # 设备认得本机 MAC（A2/07 = 01/02）
-        self.authorized = False            # 应用层授权通过（A2/08 = 01），收 A0 的唯一判据
+        self.pair_code_ts: Optional[float] = None   # when the code was last submitted
+        # ---- structured authentication result (do not parse login_state text)
+        self.mac_registered = False        # device knows this MAC (A2/07 = 01/02)
+        self.authorized = False            # application auth passed (A2/08 = 01)
         self.pair_kind = ""                # 'first_pair'(07=02) | 'rebind'(07=01) | ''
         self.pair_code_verified_at: Optional[float] = None
         self._last_rx = time.time()
-        # 单飞应答路由（规格 §3.5）：mid -> (Event, payload)
+        # single-flight reply routing (spec §3.5): mid -> (Event, payload)
         self._resp_ev: "dict[int, asyncio.Event]" = {}
         self._resp_map: "dict[int, Optional[bytes]]" = {}
 
-    # ---- 日志
+    # ---- logging
     def log(self, msg: str):
         LOG.info(msg)
         if self.on_log:
@@ -599,19 +599,19 @@ class BoschDevice:
 
     @property
     def pair_fail_reason(self) -> Optional[str]:
-        """最近一次配对/登录失败的结构化原因；成功或未失败时为 None。
+        """Structured reason for the last pairing/login failure; None on success.
 
-        取值见模块级 PAIR_FAIL_* 常量。界面、CLI 与诊断工具应优先用它，
-        不要靠匹配 login_state 的中文文案——文案会调整，原因码是契约。
+        Values are the module-level PAIR_FAIL_* constants. The UI, CLI and diagnostics
+        should use this rather than matching login_state text - codes are the contract.
         """
         return self._pair_fail_reason
 
     def pair_fail_hint(self) -> str:
-        """把失败原因翻译成给用户的一步动作；无失败返回空串。"""
+        """Turn the failure reason into one user-facing action; empty when there is none."""
         return PAIR_HINTS.get(self._pair_fail_reason or "", "")
 
     def pair_summary(self) -> dict:
-        """认证阶段的结构化摘要，供界面 / MQTT 上报使用。故意不含码明文。"""
+        """Structured auth-stage summary for the UI / MQTT. Never includes the code itself."""
         return {
             "mac_registered": self.mac_registered,
             "authorized": self.authorized,
@@ -621,17 +621,17 @@ class BoschDevice:
             "code_verified_at": self.pair_code_verified_at,
         }
 
-    # ---- 连接
+    # ---- connection
     async def connect(self):
-        """对齐实机观测到的连接序列：
-        无任何读操作、无 MTU 请求；订阅 FIFO CCCD → 200ms → 订阅 CREDITS CCCD。
+        """Match the connection sequence observed on hardware:
+        no reads, no MTU request; subscribe FIFO CCCD -> 200 ms -> subscribe CREDITS CCCD.
         """
         self.client = BleakClient(self.cfg.device_address, timeout=25.0)
         await self.client.connect()
-        LOG.info("[CONN] 链路建立 address=%s", self.cfg.device_address)
+        LOG.info("[CONN] link established address=%s", self.cfg.device_address)
         await asyncio.sleep(0.6)
-        # 不预检 services（Windows 服务发现未完成时会误判"GATT 未就绪"）；
-        # 直接订阅，bleak 内部会等服务发现完成。失败重试 2 次。
+        # Do not pre-check services: Windows misreports "GATT not ready" before discovery
+        # has finished. Subscribe directly and let bleak wait. Two retries on failure.
         for attempt in range(3):
             try:
                 await self.client.start_notify(CHAR_FIFO, self._on_notify,
@@ -639,12 +639,12 @@ class BoschDevice:
                 break
             except Exception as e:
                 if attempt == 2:
-                    LOG.error("[CONN] 订阅 FIFO 失败（服务枚举未就绪）: %s",
+                    LOG.error("[CONN] FIFO subscribe failed (service enumeration pending): %s",
                               type(e).__name__)
                     raise RuntimeError("GATT not ready")
-                LOG.info("[CONN] 服务未就绪，1s 后重试订阅（%d/3）", attempt + 1)
+                LOG.info("[CONN] services not ready, retrying subscribe in 1 s (%d/3)", attempt + 1)
                 await asyncio.sleep(1.0)
-        await asyncio.sleep(0.2)          # App: postDelayed(200ms) 后订 CREDITS
+        await asyncio.sleep(0.2)          # app: postDelayed(200 ms) before CREDITS
         await self.client.start_notify(CHAR_CREDITS, self._on_notify,
                                        force_indicate=False)
         self._last_rx = time.time()
@@ -654,80 +654,80 @@ class BoschDevice:
             try:
                 if self.client.is_connected:
                     await self.client.disconnect()
-                    LOG.info("[CONN] 已断开")
+                    LOG.info("[CONN] disconnected")
             except Exception:
                 pass
             self.client = None
 
-    # ---- 登录
+    # ---- login
     async def _send_login_wait(self, cmd_data: bytes, tag: str) -> Optional[bytes]:
-        """登录帧发送：6s 超时 ×5 次重发，重发换 msgId（规格 §3.5/§6.6）。
+        """Send a login frame: 6 s timeout, 5 resends, a fresh msgId each time (§3.5/§6.6).
 
-        send() 每次调用自增 self.mid，天然满足"重发换 msgId"。
+        send() increments self.mid on every call, which provides that msgId for free.
         """
         for attempt in range(5):
             self._login_resp = None
             self._login_ev.clear()
             await self.send(CMD_LOGIN, cmd_data, RECV_LOGIN, tag)
             if await self._wait_login(6):
-                LOG.info("[AUTH] %s 应答: %s", tag,
+                LOG.info("[AUTH] %s reply: %s", tag,
                          (self._login_resp or b"").hex(" "))
                 return self._login_resp
-            LOG.warning("[AUTH] %s 无应答，重发 %d/5（新 msgId）",
+            LOG.warning("[AUTH] %s no reply, resend %d/5 (fresh msgId)",
                         tag, attempt + 1)
         return None
 
     async def login(self) -> bool:
-        """登录 → 提交配对码。两步都必须做，缺第二步设备不推数据。
+        """Log in, then submit the pairing code. Both steps matter: skip the second and the
 
-        时序依据实机观测：提交 MAC 前 sleep(1000)；
-        A2/07 应答后走 sendLoginPass（开头 sleep(1000)）。00 拒绝与 02 同样
-        进入密码流程（两种情况设备侧处理一致）。
+        Timing follows the hardware: sleep(1000) before submitting the MAC, and
+        sendLoginPass sleeps(1000) at its start. A 00 rejection enters the password flow
+        exactly like 02, because the device handles both the same way.
         """
         try:
             mac = self.cfg.login_mac_bytes
         except ValueError:
-            self._set_login("本机蓝牙地址无效")
+            self._set_login("invalid host Bluetooth address")
             return False
         code = (self.cfg.pair_code or "").strip()
 
-        self._set_login("认证中…")
-        await asyncio.sleep(1.0)          # App: 提交 MAC 前 sleep(1000)
-        self._pair_fail_reason = None      # 每次登录先清空上一次的失败原因
+        self._set_login("authenticating...")
+        await asyncio.sleep(1.0)          # app: sleep(1000) before submitting the MAC
+        self._pair_fail_reason = None      # clear the previous attempt before each login
         self.mac_registered = False
         self.authorized = False
         self.pair_kind = ""
-        r = await self._send_login_wait(bytes([0x07]) + mac, "登录")
+        r = await self._send_login_wait(bytes([0x07]) + mac, "login")
         if r is None:
             self._pair_fail_reason = PAIR_FAIL_NO_RESPONSE
-            self._set_login("无应答")
+            self._set_login("no reply")
             return False
 
         kind = r[1] if len(r) > 1 else -1
-        # 冷却/等待（这两种应答设备会直接断线——我们也断开并拉长重连间隔）
+        # Cooldown / wait: the device drops the link on both, so we disconnect and back off.
         if kind == 0x3C:
             self._pair_fail_reason = PAIR_FAIL_COOLDOWN
-            self._set_login("设备冷却中")
+            self._set_login("device cooling down")
             self.cooldown_sec = 30.0
             return False
         if kind == 0x5A:
             self._pair_fail_reason = PAIR_FAIL_COOLDOWN
-            self._set_login("设备要求等待 90 秒")
+            self._set_login("device asks for a 90 s wait")
             self.cooldown_sec = 90.0
             return False
         if kind == 0x01:
-            # 实测 2026-11-07：01 表示设备端**已登记本机 MAC**，但**仍需 A2/08 校验**。
-            # 出现过 01 → A2/08=00 失败的组合，所以 01 不是「免密通过」。
+            # Measured 2026-11-07: 01 means the device already has this MAC registered but
+            # still wants A2/08. A 01 -> A2/08=00 failure was seen, so 01 is not a pass.
             self.mac_registered = True
             self.pair_kind = "rebind"
-            self._set_login("MAC 已登记，仍需配对码验证")
+            self._set_login("MAC registered, pairing code still required")
         elif kind == 0x02:
             self.mac_registered = True
             self.pair_kind = "first_pair"
-            self._set_login("设备要求配对码（窗口已开）")
+            self._set_login("device requires the pairing code (window open)")
         elif kind == 0x00:
-            # 2026-11-07 ESP32-S3 真机实测：00 表示设备端不在配对窗口
-            # （从未「清除配对」，或窗口已超时关闭），**不是**「MAC 未授权」。
+            # Measured on ESP32-S3 hardware, 2026-11-07: 00 means the device is not in its
+            # pairing window (clear pairing never ran, or it timed out) - NOT "MAC unauthed".
             # 仍补发 A2/08（设备侧同样处理），但原因码如实记 window_closed。
             self._pair_fail_reason = PAIR_FAIL_WINDOW_CLOSED
             self._set_login("配对窗口未打开或已超时（仍尝试提交码）")
@@ -911,8 +911,8 @@ class BoschService:
         self._state_lock = threading.Lock()
 
         self.state: Optional[DeviceState] = None
-        self.status = "未启动"
-        self.login_state = "未登录"
+        self.status = "not started"
+        self.login_state = "not logged in"
         self.pair_fail_reason: Optional[str] = None
         self.connected = False
         self._rx_frames = 0            # 本次会话收到的 A0 帧数（判定会话有效性）

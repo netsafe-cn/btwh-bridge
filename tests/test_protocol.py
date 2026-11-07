@@ -94,7 +94,7 @@ class TestProtocol(unittest.TestCase):
         self.assertEqual(st.failure, 0)                 # [11]
         self.assertAlmostEqual(st.temp_out, 25.80)      # Type1: [28]+[29]/100
         self.assertEqual(st.mode, 0)                    # Type1: [32]
-        self.assertEqual(st.mode_text, "待机")
+        self.assertEqual(st.mode_text, "idle")
 
     def test_parse_state_burning(self):
         """燃烧态（实测偏移）：功率 [13]、风机 [15]*100+[16]、流量 [21]/10"""
@@ -126,7 +126,7 @@ class TestProtocol(unittest.TestCase):
         self.assertEqual(st.frame_type, 0)
         self.assertEqual(st.burner_power, 40)
         self.assertEqual(st.fan_speed, 0x70)
-        self.assertEqual(st.mode_text, "燃烧")
+        self.assertEqual(st.mode_text, "burning")
         self.assertAlmostEqual(st.temp_out, 48.57)
 
     def test_xor_symmetric(self):

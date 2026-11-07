@@ -29,8 +29,8 @@ class TestServiceInitialState(unittest.TestCase):
 
     def test_initial_public_state(self):
         self.assertIsNone(self.svc.state)
-        self.assertEqual(self.svc.status, "未启动")
-        self.assertEqual(self.svc.login_state, "未登录")
+        self.assertEqual(self.svc.status, "not started")
+        self.assertEqual(self.svc.login_state, "not logged in")
         self.assertFalse(self.svc.connected)
         self.assertEqual(self.svc.results, {})
 
