@@ -5,15 +5,15 @@ import pathlib as _pathlib
 import sys as _sys
 _sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent))
 
-"""analyze_collect.py —— 分析 collector.py 产出的 CSV
+"""analyze_collect.py - analyse the CSV produced by collector.py
 
-输出：
-  1. 概览：帧数、时长、采样间隔
-  2. 各字段取值范围
-  3. ASCII 曲线：出水/进水/炉腔/流量/功率/风机
-  4. 字节关联分析：哪些偏移与"进水温度"同步变化（用于校验字段映射）
+Output:
+  1. overview: frame count, duration, sampling interval
+  2. value range per field
+  3. ASCII curves: outlet / inlet / chamber / flow / power / fan
+  4. byte correlation: which offsets move with inlet temperature (field map check)
 
-用法：
+Usage:
     python analyze_collect.py collect_20261101_140230.csv
 """
 import csv
@@ -34,7 +34,7 @@ def load(path):
 
 
 def spark(vals, width=60, lo=None, hi=None):
-    """生成方块字符曲线。"""
+    """Render a block-character curve."""
     if not vals:
         return ""
     lo = min(vals) if lo is None else lo
@@ -55,7 +55,7 @@ def main():
     path = sys.argv[1]
     rows = load(path)
     if not rows:
-        print("没有数据")
+        print("no data")
         return 1
     n = len(rows)
     ts = [float(r["ts"]) for r in rows]
@@ -64,36 +64,36 @@ def main():
     avg_gap = sum(gaps) / len(gaps) if gaps else 0
 
     print("=" * 70)
-    print("文件: %s" % path)
-    print("帧数: %d   时长: %.1f 秒   平均间隔: %.1f 秒" % (n, dur, avg_gap))
+    print("file: %s" % path)
+    print("frames: %d   duration: %.1f s   mean interval: %.1f s" % (n, dur, avg_gap))
     print("=" * 70)
 
     def col(name):
         return [float(r[name]) for r in rows if r[name] not in ("", None)]
 
-    print("\n%-8s %8s %8s %8s" % ("字段", "最小", "最大", "首→末"))
-    for key, label in (("out", "出水"), ("in", "进水"), ("chamber", "炉腔"),
-                       ("box", "机身"), ("setpoint", "设定"), ("flow", "流量"),
-                       ("power", "功率"), ("fan", "风机")):
+    print("\n%-8s %8s %8s %8s" % ("field", "min", "max", "first->last"))
+    for key, label in (("out", "outlet"), ("in", "inlet"), ("chamber", "chamber"),
+                       ("box", "chassis"), ("setpoint", "setpoint"), ("flow", "flow"),
+                       ("power", "power"), ("fan", "fan")):
         v = col(key)
         if not v:
             continue
         print("%-8s %8.1f %8.1f   %.1f → %.1f"
               % (label, min(v), max(v), v[0], v[-1]))
 
-    print("\n--- 曲线（每格约 %d 帧）---" % max(1, n // 60))
-    for key, label in (("out", "出水"), ("in", "进水"), ("flow", "流量"),
-                       ("power", "功率"), ("fan", "风机")):
+    print("\n--- curves (about %d frames per column) ---" % max(1, n // 60))
+    for key, label in (("out", "outlet"), ("in", "inlet"), ("flow", "flow"),
+                       ("power", "power"), ("fan", "fan")):
         v = col(key)
         if not v:
             continue
         print("%-6s %s  [%.0f~%.0f]" % (label, spark(v), min(v), max(v)))
 
-    # 字节关联：与进水温度变化趋势最一致的偏移
-    print("\n--- 字节关联分析（与进水温度同步的偏移）---")
+    # Byte correlation: offsets whose trend best matches the inlet temperature
+    print("\n--- byte correlation (offsets tracking inlet temperature) ---")
     ins = [float(r["in"]) for r in rows if r["in"] not in ("", None)]
     if len(ins) > 10 and len(set(round(x, 1) for x in ins)) > 3:
-        # 归一化后算相关系数（简易）
+        # Normalised correlation coefficient (simplified)
         def corr(a, b):
             m = min(len(a), len(b))
             a, b = a[:m], b[:m]
@@ -112,17 +112,17 @@ def main():
             scores.append((abs(corr(ins[:flen], v)), off,
                            min(v), max(v)))
         scores.sort(reverse=True)
-        print("关联度  偏移  最小  最大")
+        print("correlation  offset  min  max")
         for s, off, lo, hi in scores[:6]:
             print("%5.2f   [%2d]  %4d  %4d" % (s, off, lo, hi))
     else:
-        print("进水温度变化不足，跳过")
+        print("inlet temperature barely moved; skipping")
 
-    # 故障/电离出现情况
+    # Fault / ionisation occurrences
     faults = Counter(r["fault"] for r in rows)
     ions = Counter(r["ion"] for r in rows)
-    print("\n故障码分布: %s" % dict(faults))
-    print("电离(1=有火): %s" % dict(ions))
+    print("\nfault code distribution: %s" % dict(faults))
+    print("ionisation (1 = flame): %s" % dict(ions))
     return 0
 
 

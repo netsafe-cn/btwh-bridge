@@ -5,16 +5,16 @@ import pathlib as _pathlib
 import sys as _sys
 _sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent))
 
-"""collector.py —— 连续采集 A0 广播，逐帧写 CSV
+"""collector.py - capture A0 broadcasts continuously, one CSV row per frame
 
-用途：长时间工况（如开启热水循环泵，进水温度缓慢上升）下的报文采集，
-用于反推字段语义、绘制曲线。
+For long runs (a circulation pump slowly raising the inlet temperature, say), to
+reverse-engineer field semantics and draw curves.
 
-输出：
-    collect_<时间戳>.csv      每帧一行：时间 + 34 字节原始 + 解析字段
-    collect_<时间戳>.summary  结束时打印的字节取值范围统计
+Output:
+    collect_<timestamp>.csv      one row per frame: time + 34 raw bytes + parsed fields
+    collect_<timestamp>.summary  byte range statistics, written at the end
 
-用法：
+Usage:
     python collector.py --minutes 10
 """
 import argparse
@@ -44,7 +44,7 @@ async def main():
     cfg = Config.load()
     stamp = time.strftime("%Y%m%d_%H%M%S")
     out = pathlib.Path(a.out or ("collect_%s.csv" % stamp))
-    log("采集 %.0f 分钟 → %s" % (a.minutes * 60 / 60, out))
+    log("capturing for %.0f minutes -> %s" % (a.minutes, out))
 
     def on_state(st):
         raw_frames.append(st.raw)
@@ -62,12 +62,12 @@ async def main():
 
     dev = BoschDevice(cfg, on_state=on_state, on_log=lambda m: log("  [dev] " + m))
     await dev.connect()
-    log("✓ 链路建立")
+    log("[OK] link established")
     try:
         ok = await dev.login()
-        log("登录结果: %s（%s）" % ("成功" if ok else "未通过", dev.login_state))
+        log("login result: %s (%s)" % ("ok" if ok else "failed", dev.login_state))
     except Exception as e:
-        log("登录异常: %s" % e)
+        log("login raised: %s" % e)
 
     end = time.time() + a.minutes * 60
     last_n = 0
@@ -77,12 +77,12 @@ async def main():
             last_n = len(rows)
             st = dev.state
             if st:
-                log("帧 %3d | 出%.1f 进%.1f 炉腔%.1f 设定%s 功率%d%% 水%.1fL 风机%s"
+                log("frame %3d | out%.1f in%.1f chamber%.1f set%s power%d%% flow%.1fL fan%s"
                     % (len(rows), st.temp_out or 0, st.temp_in or 0,
                        st.chamber or 0, st.setpoint, st.burner_power,
                        st.water_flow or 0, st.fan_speed))
         if await dev.idle_seconds() > 30:
-            log("超过 30 秒无数据，提前结束")
+            log("no data for 30 s, stopping early")
             break
 
     try:
@@ -96,19 +96,19 @@ async def main():
         w = csv.writer(f)
         w.writerow(header)
         w.writerows(rows)
-    log("已写入 %d 帧 → %s" % (len(rows), out))
+    log("wrote %d frames -> %s" % (len(rows), out))
 
-    # 字节统计
+    # Byte statistics
     if raw_frames:
         n = min(len(r) for r in raw_frames)
-        lines = ["帧数 %d，最短 %d 字节" % (len(raw_frames), n), "",
-                 "偏移  最小  最大  极差"]
+        lines = ["frames %d, shortest %d bytes" % (len(raw_frames), n), "",
+                 "offset  min  max  range"]
         for i in range(n):
             v = [r[i] for r in raw_frames]
             lines.append("[%2d]  %4d  %4d  %4d" % (i, min(v), max(v), max(v) - min(v)))
         summary = out.with_suffix(".summary")
         summary.write_text("\n".join(lines), encoding="utf-8")
-        log("字节统计 → %s" % summary)
+        log("byte statistics -> %s" % summary)
         print("\n".join(lines))
 
     return 0

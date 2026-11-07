@@ -5,15 +5,15 @@ import pathlib as _pathlib
 import sys as _sys
 _sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent))
 
-"""bosch_bridge.py —— 无界面的后台桥接（BLE ↔ 巴法云）
+"""bosch_bridge.py - headless bridge (BLE <-> Bemfa cloud)
 
-适合挂在开机自启/服务里跑，不需要窗口。
-和 bosch_ui.py 共用同一套底层（bosch_api + bemfa），逻辑只有一份。
+Meant for a startup entry or a service, with no window at all.
+Shares its core with tools/bosch_ui.py (bosch_api + bemfa); the logic exists once.
 
-用法:
-    python bosch_bridge.py                 # 读 config.json
-    python bosch_bridge.py --uid <私钥>     # 覆盖配置里的私钥
-    python bosch_bridge.py --gap 15        # 上报间隔（秒）
+Usage:
+    python tools/bosch_bridge.py                # read config.json
+    python tools/bosch_bridge.py --uid <key>    # override the key from the config
+    python tools/bosch_bridge.py --gap 15       # reporting interval in seconds
 """
 import argparse
 import sys
@@ -25,21 +25,21 @@ from bosch_api import Config, BoschService, TEMP_MIN, TEMP_MAX
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--uid", default="", help="巴法云私钥（覆盖 config.json）")
-    ap.add_argument("--gap", type=float, default=10.0, help="上报间隔秒")
+    ap.add_argument("--uid", default="", help="Bemfa key (overrides config.json)")
+    ap.add_argument("--gap", type=float, default=10.0, help="reporting interval, seconds")
     a = ap.parse_args()
 
-    # 与界面共用同一把单实例锁：同时跑会互踢设备、云端指令回环
+    # Shares the single-instance lock with the console: both running evicts the device
     from singlelock import acquire
     if not acquire():
-        print("已有实例在运行（界面或另一个桥接），本进程退出。")
+        print("another instance is running (console or another bridge); exiting.")
         return 2
 
     cfg = Config.load()
     if a.uid:
         cfg.bemfa_uid = a.uid
     if not cfg.bemfa_uid:
-        print("没有巴法云私钥（config.json 或 --uid）", file=sys.stderr)
+        print("no Bemfa key (config.json or --uid)", file=sys.stderr)
         return 1
 
     def log(s):
@@ -78,7 +78,7 @@ def main():
     bemfa.on_log = log
     svc.start()
     bemfa.start()
-    log("桥接已启动，Ctrl+C 退出")
+    log("bridge started, Ctrl+C to stop")
 
     last_report = 0.0
     last_status = ""
@@ -86,7 +86,7 @@ def main():
         while True:
             st = svc.state
             if svc.status != last_status:
-                log("[设备] %s" % svc.status)
+                log("[device] %s" % svc.status)
                 last_status = svc.status
             if st and st.setpoint is not None \
                     and time.time() - last_report >= a.gap:
@@ -98,7 +98,7 @@ def main():
     finally:
         bemfa.stop()
         svc.stop()
-        log("已退出")
+        log("exited")
     return 0
 
 

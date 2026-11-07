@@ -6,28 +6,28 @@ import pathlib as _pathlib
 import sys as _sys
 _sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent))
 
-"""bosch_read.py —— 博世 Therm 4800i 燃气热水器 BLE 读取器（已验证可用）
+"""bosch_read.py - Bosch Therm 4800i gas water heater BLE reader (verified working)
 
-关键流程（缺一不可）：
-  1. 订阅 FIFO(b2) / CREDITS(b3)，CCCD = notify(01 00)
-  2. A2/07 登录（携带 6 字节 MAC）
-  3. A2/08 提交面板临时码（实测必需，缺此步设备不推送）
-  4. (可选) A1 配置广播周期 [type, 秒] —— 实测非必需
-  → 设备开始周期性推送 A0 数据帧（43 字节，MTU=23 下被切成 20+20+3 三片）
+Required sequence, none of it optional:
+  1. subscribe FIFO(b2) / CREDITS(b3) with CCCD = notify (01 00)
+  2. log in with A2/07, carrying the 6-byte MAC
+  3. submit the panel code with A2/08 (required: without it the device sends nothing)
+  4. (optional) A1 sets the broadcast interval [type, seconds] - not actually needed
+  -> the device then pushes A0 frames (43 bytes, split 20+20+3 at MTU 23)
 
-用法:
-  python bosch_read.py                        # 读一次（默认 30 秒）
-  python bosch_read.py --loop                 # 持续读取，断线自动重连
-  python bosch_read.py --code 123456          # 指定面板临时码
-  python bosch_read.py --mac AABBCCDDEEFF     # 指定登录用 MAC
-  python bosch_read.py --json                 # JSON 输出（便于接入 MQTT/巴法云）
-  python bosch_read.py --no-pass              # 跳过密码（用于验证密码是否必需）
-  python bosch_read.py --no-bcast             # 跳过配置广播
+Usage:
+  python tools/bosch_read.py                  # one shot (30 s by default)
+  python tools/bosch_read.py --loop           # keep reading, reconnect on drop
+  python tools/bosch_read.py --code 123456    # panel code
+  python tools/bosch_read.py --mac AABBCCDDEEFF   # host MAC to log in with
+  python tools/bosch_read.py --json           # JSON output (for MQTT / Bemfa)
+  python tools/bosch_read.py --no-pass        # skip the code (to prove it is needed)
+  python tools/bosch_read.py --no-bcast       # skip the broadcast configuration
 """
 import argparse, asyncio, json, sys, time
 from bleak import BleakClient
 
-# 参数一律来自 config.json / 环境变量，代码里不写死任何地址或配对码
+# Everything comes from config.json or the environment; no address or code is hard-coded
 try:
     from bosch_api import Config as _Config
     _CFG = _Config.load()
@@ -37,7 +37,7 @@ try:
     except ValueError:
         DEFAULT_MAC = b"\x00" * 6
     DEFAULT_CODE = _CFG.pair_code
-except Exception:                      # 允许脱离 config 单独使用
+except Exception:                      # standalone use without a config is allowed
     DEV_ADDR = ""
     DEFAULT_MAC = b"\x00" * 6
     DEFAULT_CODE = ""
@@ -52,13 +52,13 @@ def log(s):
     print("[%6.2fs] %s" % (time.time() - T0, s), flush=True)
 
 
-# ---------- 帧编解码 ----------
+# ---------- frame codec ----------
 def xor(b: bytes) -> bytes:
     return bytes(v ^ KEY[i % 9] for i, v in enumerate(b))
 
 
 def unstuff(d: bytes) -> bytes:
-    """移除 0x7B/0x7D 后插入的 0x00 填充"""
+    """Remove the 0x00 padding inserted after 0x7B/0x7D"""
     if len(d) <= 2:
         return d
     head, body, tail = d[:2], d[2:-2], d[-2:]
@@ -74,7 +74,7 @@ def unstuff(d: bytes) -> bytes:
 
 
 def enc_pass(code: str) -> bytes:
-    """面板临时码 → A2/08 数据，每位数字转 1 字节，如 "123456" -> 01 02 03 04 05 06"""
+    """Panel code -> A2/08 payload, one byte per digit: "123456" -> 01 02 03 04 05 06"""
     return bytes(int(c) for c in code)
 
 
@@ -83,16 +83,16 @@ def build(sender, receiver, mid, cmd, data=b""):
     return b"\x7b\x7b" + body + bytes([sum(body) & 0xFF]) + b"\x7d\x7d"
 
 
-# 加密态帧头（0x7B 0x7B 各自异或密钥后的字节）
+# Encrypted frame header (each 0x7B XORed with the key)
 FRAME_HEAD_ENC = bytes([0x7B ^ KEY[0], 0x7B ^ KEY[1]])
 
 
 def decode_stream(buf: bytes):
-    """把「已按分片解密」的明文字节流切成完整帧
+    """Cut complete frames out of a plaintext stream already decrypted per chunk.
 
-    重要：设备对每个 notify 分片（≤20 字节）独立从 KEY[0] 开始异或，
-    不是整帧连续异或。因此调用方需先对每片单独 xor()，再拼接后送入本函数。
-    返回 (完整帧列表, 剩余未完成字节)
+    Important: the device XORs **each notify fragment (<= 20 bytes) from KEY[0]** on its
+    own, not the whole frame continuously. So the caller must xor() each fragment, then
+    concatenate and hand the result here. Returns (frames, leftover bytes).
     """
     frames = []
     while True:
@@ -110,17 +110,17 @@ def decode_stream(buf: bytes):
 
 
 def parse_a0(data: bytes) -> dict:
-    """解码 A0 广播数据帧（字段索引依据 2026-11-01 实机采样）"""
+    """Decode an A0 broadcast (field indices measured 2026-11-01)"""
     if len(data) < 7:
         return {}
     t = data[0]
     d = {
         "type": t,
-        "t_in": round(data[1] + data[2] / 100.0, 2),        # 进水温度
-        "t_alt": round(data[3] + data[4] / 100.0, 2),        # 第二路温度（待确认语义）
-        "setpoint": data[5],                                  # 设定温度
+        "t_in": round(data[1] + data[2] / 100.0, 2),        # inlet temperature
+        "t_alt": round(data[3] + data[4] / 100.0, 2),        # second temperature (TBD)
+        "setpoint": data[5],                                  # setpoint temperature
     }
-    # 出水温度：type 决定索引偏移
+    # Outlet temperature: the offset depends on the frame type
     if t == 0 and len(data) > 22:
         d["t_out"] = round(data[21] + data[22] / 100.0, 2)
     elif t == 1 and len(data) > 29:
@@ -129,7 +129,7 @@ def parse_a0(data: bytes) -> dict:
     return d
 
 
-# ---------- 会话 ----------
+# ---------- session ----------
 class BoschReader:
     def __init__(self, mac=DEFAULT_MAC, code=DEFAULT_CODE, addr=DEV_ADDR,
                  use_pass=True, use_bcast=True, btype=1, bsec=1,
@@ -148,16 +148,16 @@ class BoschReader:
             log(s)
 
     def on_notify(self, _s, data):
-        """notify 分片重组
+        """Reassemble notify fragments.
 
-        MTU=23 下每片最多 20 字节；设备对每片独立从 KEY[0] 开始异或，
-        所以先逐片 xor，再拼接成明文帧流后切帧。
+        At MTU 23 a fragment carries at most 20 bytes, and the device restarts the XOR at
+        KEY[0] for each one, so xor each fragment first, then concatenate and deframe.
         """
         self.buf += xor(bytes(data))
         frames, self.buf = decode_stream(self.buf)
         for f in frames:
             self.handle(f)
-        if len(self.buf) > 400:          # 异常保护
+        if len(self.buf) > 400:          # runaway guard
             self.buf = b""
 
     def handle(self, f: bytes):
@@ -188,17 +188,17 @@ class BoschReader:
     async def run(self, dwell=30.0):
         c = BleakClient(self.addr, timeout=20.0)
         await c.connect()
-        self.say("已连接 MTU=%s" % getattr(c, "mtu_size", "?"))
-        await asyncio.sleep(0.5)                 # 等服务发现完成
+        self.say("connected, MTU=%s" % getattr(c, "mtu_size", "?"))
+        await asyncio.sleep(0.5)                 # wait for service discovery
         try:
             m = await c.read_gatt_char(MODE)
             self.say("MODE = %s" % bytes(m).hex(" "))
         except Exception as e:
-            self.say("MODE 读取跳过 (%s)" % type(e).__name__)
+            self.say("MODE read skipped (%s)" % type(e).__name__)
         await c.start_notify(FIFO, self.on_notify, force_indicate=False)
         await asyncio.sleep(0.25)
         await c.start_notify(CREDITS, self.on_notify, force_indicate=False)
-        self.say("已订阅 FIFO/CREDITS")
+        self.say("subscribed to FIFO/CREDITS")
 
         await self.send(c, 0xA2, bytes([0x07]) + self.mac, "LOGIN")
         if self.use_pass:
@@ -206,11 +206,11 @@ class BoschReader:
         if self.use_bcast:
             await self.send(c, 0xA1, bytes([self.btype, self.bsec]), "BCAST")
 
-        self.say("等待数据 %.0fs ..." % dwell)
+        self.say("waiting for data %.0fs ..." % dwell)
         t_end = time.time() + dwell
         while time.time() < t_end:
             if not c.is_connected:
-                self.say("设备断开")
+                self.say("device disconnected")
                 break
             await asyncio.sleep(1)
         try:
@@ -229,7 +229,7 @@ async def main():
     ap.add_argument("--loop", action="store_true")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--no-pass", action="store_true")
-    ap.add_argument("--bcast", action="store_true", help="额外发 A1 配置广播（实测非必需）")
+    ap.add_argument("--bcast", action="store_true", help="also send A1 (not needed in practice)")
     ap.add_argument("--btype", type=int, default=1)
     ap.add_argument("--bsec", type=int, default=1)
     a = ap.parse_args()
@@ -241,10 +241,10 @@ async def main():
         try:
             await r.run(a.dwell)
         except Exception as e:
-            log("异常: %s %s" % (type(e).__name__, e))
+            log("exception: %s %s" % (type(e).__name__, e))
         if not a.loop:
             break
-        log("10 秒后重连 ...")
+        log("reconnecting in 10 s ...")
         await asyncio.sleep(10)
 
 
