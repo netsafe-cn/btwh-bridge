@@ -1,469 +1,518 @@
-# 博世燃气热水器 BLE 协议笔记
+# BLE protocol notes — Bosch gas water heaters
 
-> 面向博世 **Therm 4800i** 燃气热水器。其蓝牙模块广播名为 `BTWH-001-xxxx`
-> （代码按此名字匹配设备）。本文实测机型：**Bosch Therm 4800i**，广播名 `BTWH-001-6F5F`，
-> 博世 App 包名 `com.bosch.de.tt.prowaterheater`。
+**English** | [简体中文](BLE_PROTOCOL.zh-CN.md)
+
+> For the Bosch **Therm 4800i** gas water heater. Its Bluetooth module advertises as
+> `BTWH-001-xxxx` (the identifier the code matches on). Measured on **Bosch Therm 4800i**,
+> advertised name `BTWH-001-6F5F`; the vendor app package is
+> `com.bosch.de.tt.prowaterheater`.
 >
-> **声明**：本文内容由抓包与实机对照得出，**非官方协议**。仅限自有设备研究与自用，不得用于商业破解或篡改他人设备。协议可能随固件升级失效。
+> **Disclaimer**: everything below comes from packet capture and bench comparison against
+> a device I own. This is **not an official protocol**. It is for research on, and use
+> with, your own hardware — not for commercial cracking or for tampering with anyone
+> else's device. Firmware updates may invalidate any of it.
 
 ---
 
-## 1. 设备与连接
+## 1. Device and connection
 
-| 项目 | 值 |
+| Item | Value |
 |---|---|
-| 广播名 | `BTWH-001-6F5F`（规则：`BTWH-001-` + MAC 末两字节） |
-| 服务基址 | `ff4396a6-50a8-4fc0-bcf6-228e82dfed` + 两位后缀 |
-| 特征 | `..b0` 服务 / `..b1` MODE / `..b2` FIFO / `..b3` CREDITS / `..d0` 服务 / `..d1` COUNTER |
+| Advertised name | `BTWH-001-6F5F` (pattern: `BTWH-001-` + last two MAC bytes) |
+| Service base | `ff4396a6-50a8-4fc0-bcf6-228e82dfed` + two-digit suffix |
+| Characteristics | `..b0` service / `..b1` MODE / `..b2` FIFO / `..b3` CREDITS / `..d0` service / `..d1` COUNTER |
 
-### 特征用法
+### Characteristic roles
 
-| 特征 | 属性 | 用途 |
+| Characteristic | Properties | Purpose |
 |---|---|---|
-| `b1` MODE | 读 / 写 | 出厂值 `ff`。**App 从不写，仅读取打印**，不要动 |
-| `b2` FIFO | 写 + notify | **所有收发都走这里** |
-| `b3` CREDITS | 写 + notify | 订阅它（CCCD 同 notify），但**不必写入** |
-| `d1` COUNTER | 只读 | 设备运行秒数（实测 22 秒涨 22），可用于判断设备是否重启 |
+| `b1` MODE | read / write | Factory value `ff`. The vendor app **never writes it, only reads and prints** — leave it alone |
+| `b2` FIFO | write + notify | **All traffic goes through here** |
+| `b3` CREDITS | write + notify | Subscribe to it (same CCCD write), but **writing to it is not required** |
+| `d1` COUNTER | read only | Device uptime in seconds (22 s over a 22 s interval) — use it to detect a reboot |
 
-### 连接要点
+### Connection notes
 
-- CCCD 用 **`01 00`（notify）**，两个特征都订，间隔约 200ms
-- 写特征用 **带响应写**（write with response）
-- MTU：Android 会自动协商到 517，**Windows 固定 23**。帧最长 43 字节，会被拆成 20+20+3 三片，需要自行拼帧
-- 设备**约 45~50 秒主动断开**（未登录更快，约 18 秒），必须做自动重连
-- 广播包里**没有任何 AD 数据**（无厂商数据、无 service data），温度不在广播里
+- CCCD value is **`01 00` (notify)** on both characteristics, subscribed ~200 ms apart
+- Use **write with response** for the write characteristic
+- MTU: Android negotiates 517, **Windows is pinned at 23**. A frame is up to 43 bytes, so it
+  arrives as 20 + 20 + 3 and has to be reassembled
+- The device **drops the link after ~45–50 s** (sooner — about 18 s — if you have not logged
+  in), so automatic reconnect is mandatory
+- The advertisement carries **no AD data at all** (no manufacturer data, no service data).
+  Temperature is not broadcast
 
 ---
 
-## 2. 帧格式
+## 2. Frame format
 
 ```
 7B 7B | sender | receiver | msgId | cmd | data... | chk | 7D 7D
 ```
 
-| 字段 | 说明 |
+| Field | Notes |
 |---|---|
-| 定界 | 头 `7B 7B`，尾 `7D 7D` |
-| `sender` | 中央设备固定 `0x21` |
-| `receiver` | 业务帧 `0x00`；登录/配置帧 `0xAB` |
-| `msgId` | 递增计数器，从 0 开始；**设备应答会回显** |
-| `cmd` | 命令字，见第 5 节 |
-| `chk` | `sum(sender..data) & 0xFF`（不含两个帧头字节） |
-| 定长 | 基础长度 9 字节（无 data 时） |
+| Delimiters | leading `7B 7B`, trailing `7D 7D` |
+| `sender` | Always `0x21` for the central |
+| `receiver` | `0x00` for business frames; `0xAB` for login / configuration frames |
+| `msgId` | Incrementing counter starting at 0; **the device echoes it in its reply** |
+| `cmd` | Command byte, see §5 |
+| `chk` | `sum(sender..data) & 0xFF` (the two leading bytes are excluded) |
+| Base length | 9 bytes when there is no payload |
 
-### 填充（byte stuffing）
+### Byte stuffing
 
-数据区（`sender` 到 `chk`）里出现 `0x7B` 或 `0x7D` 时，后面补一个 `0x00`。
+Inside the data area (`sender` through `chk`), every `0x7B` or `0x7D` is followed by a
+`0x00` pad byte.
 
-> ⚠️ **帧头 `7B 7B` 之后不填充**。否则 `sender = 0x00` 会被误当成填充字节丢掉，导致后面全错位。这是最容易踩的坑。
-
----
-
-## 3. 加密
-
-- XOR 密钥：`1ag3.-fs7`（9 字节 ASCII）
-- **每个 notify 分片（≤20 字节）独立从 `KEY[0]` 开始异或**，不是整帧连续
-
-```
-加密：plain 每 20 字节为一组，组内 byte[i] ^= KEY[i % 9]
-解密：反过来，先逐片 xor 再拼接成明文帧流，然后按 7D7D 切帧
-```
-
-这一条踩了很久：按"整帧连续异或"解会得到看似合理但校验对不上的数据。
+> ⚠️ **No stuffing after the leading `7B 7B`.** Otherwise a `sender` of `0x00` looks like a
+> pad byte and gets dropped, and every field after it shifts. This is the single easiest
+> mistake to make.
 
 ---
 
-## 4. 登录与配对（最关键的一节）
+## 3. Encryption
 
-### 4.1 流程
+- XOR key: `1ag3.-fs7` (9 ASCII bytes)
+- **Each notify fragment (≤ 20 bytes) restarts from `KEY[0]`** — the XOR is per fragment,
+  not continuous across the frame
 
 ```
-① A2/07 + 6 字节 MAC    → 应答 data[1] 判定身份
-② A2/08 + 编码后的配对码 → 应答 data[1]=1 才算真正可用
-③ 设备开始每 4~8 秒推送 A0 广播
+encrypt: split plaintext into 20-byte groups; within a group byte[i] ^= KEY[i % 9]
+decrypt: XOR each fragment first, concatenate into a plaintext stream, then split on 7D 7D
 ```
 
-### 4.2 第一步应答语义（`data[1]`）
+This one cost a lot of time: a continuous whole-frame XOR produces data that looks plausible
+but never validates.
 
-| 值 | 含义 | 处理 |
+---
+
+## 4. Login and pairing (the section that matters)
+
+### 4.1 Sequence
+
+```
+1. A2/07 + 6-byte MAC      -> decide identity from reply data[1]
+2. A2/08 + encoded code    -> only data[1] == 1 actually enables the session
+3. device starts pushing an A0 broadcast every 4-8 s
+```
+
+### 4.2 Reply semantics for step one (`data[1]`)
+
+| Value | Meaning | Action |
 |---|---|---|
-| `01` | 已授权 | **仍需执行第二步** |
-| `02` | 需要密码 | 执行第二步 |
-| `00` | 拒绝 | 该 MAC 不在设备白名单 |
-| `3C`(60) | 冷却中 | 稍后重试 |
+| `01` | Already authorised | **Still run step two** |
+| `02` | Password required | Run step two |
+| `00` | Rejected | This MAC is not in the device whitelist |
+| `3C` (60) | Cooling down | Retry later |
 
-> ⚠️ **最大的坑：`data[1]=01` 不代表会推数据。**
-> 实测：只发 `A2/07`、不发 `A2/08`，登录"成功"但设备**一个字节都不推**，45 秒后被踢。
-> 必须**无条件**再提交一次配对码帧，设备才开始推 A0。
+> ⚠️ **The big trap: `data[1] == 01` does not mean data will flow.**
+> Measured: send only `A2/07` and skip `A2/08`, and the login "succeeds" while the device
+> pushes **not a single byte**, then drops you after 45 s. You must send the pairing-code
+> frame **unconditionally** before `A0` starts.
 
-### 4.3 MAC 白名单
+### 4.3 MAC whitelist
 
-设备维护**精确的 MAC 白名单**，登录帧里携带的 6 字节 MAC 必须与设备记住的一致。
+The device keeps an **exact MAC whitelist**; the 6 bytes in the login frame must match what
+the device remembers.
 
-实测（同一台设备）：
+Measured on the same unit:
 
-| 提交的 MAC | 应答 |
+| MAC submitted | Reply |
 |---|---|
-| 全 `00` | `00` 拒绝 |
-| 随机 `1A2B3C4D5E6F` | `00` 拒绝 |
-| 华为 OUI `5CEA1D112233` | `00` 拒绝 |
-| 设备自身 MAC | `00` 拒绝 |
-| 本机蓝牙地址 | `01` 已授权 |
+| all `00` | `00` rejected |
+| random `1A2B3C4D5E6F` | `00` rejected |
+| Huawei OUI `5CEA1D112233` | `00` rejected |
+| the device's own MAC | `00` rejected |
+| this host's Bluetooth address | `01` authorised |
 
-MAC 是**应用层字段**，不需要改网卡地址。要拿本机蓝牙地址：
+The MAC is an **application-layer field** — no need to change the adapter address. To read
+the host address:
 
-- Windows：WinRT `BluetoothAdapter.GetDefaultAsync().BluetoothAddress`
-- Linux：`/sys/class/bluetooth/hci0/address`
+- Windows: WinRT `BluetoothAdapter.GetDefaultAsync().BluetoothAddress`
+- Linux: `/sys/class/bluetooth/hci0/address`
 
-### 4.4 配对码编码
+### 4.4 Pairing-code encoding
 
-面板显示的 6 位数字（不是铭牌 S/N），编码很简单：**每一位数字直接转成 1 字节数值**。
+The six digits shown on the panel (not the nameplate S/N) are encoded trivially: **each
+digit becomes one byte**.
 
 ```
-"831152"  →  08 03 01 01 05 02
+"831152"  ->  08 03 01 01 05 02
 ```
 
-完整帧（含命令字节 `A2 08`）：
+Full frame (including the `A2 08` command bytes):
 
 ```
 7b 7b 21 ab 01 a2 08 08 03 01 01 05 02 8b 7d 7d
               ^^ ^^ ^^^^^^^^^^^^^^^^^^
-             cmd data(6B = 每位数字的数值)
+             cmd data (6 bytes = one digit each)
 ```
 
-注意密码是**面板上显示的临时码**，不是铭牌上的 S/N。两者在博世不同型号上用法不同，实测本机型吃的是面板码。
+Note this is the **temporary on-panel code**, not the nameplate S/N. Bosch uses them
+differently across models; this unit accepts the panel code.
 
-### 4.5 ⚠️ 配对码是动态的、短时效的（2026-11-01 实测）
+### 4.5 The code is dynamic and short-lived (measured 2026-11-01)
 
-配对码**不是固定值**，而是热水器进入「设置 → 连接/配对」菜单时才生成，
-**菜单超时即失效**（用户实测超时很短）。含义：
+The code is **not a fixed value**. It is generated when the heater enters its
+Settings → Connect/Pair menu and **expires when that menu times out**.
 
-- 长期存盘的旧码大概率已过期，连接静默时**第一件事是重新生成码**
-- 取码后动作要快：菜单保持打开 → 立即连接（用 `quick_connect.py`，它不扫描直连，省 12 秒）
-- 2026-11-01 实测：即使在有效期内用新码 `152267`，当时仍静默——当时电脑蓝牙栈
-  已被几十次密集连接搞坏（双实例抢占+强杀残留）。**设备侧正常时码应该可用**，
-  电脑重启 + 热水器重启后按此流程验证
+- A code saved from a previous session is almost certainly dead. When the link goes silent,
+  **the first thing to do is generate a fresh code**
+- Move fast after reading it: leave the menu open, connect immediately
+- If nothing arrives with a fresh code, suspect the host Bluetooth stack first: repeated
+  aggressive connect/kill cycles leave it wedged. Restart the adapter (or the machine) and
+  retry before blaming the heater
 
-排查静默问题的顺序（血泪教训）：
+Order of investigation when the device goes silent:
 
 ```
-1. 手机 App 能连吗？  → 能 = 设备正常，问题在电脑侧；不能 = 设备侧
-2. 电脑蓝牙射频 reset（bt_radio.py reset）
-3. 重新进菜单取新配对码，quick_connect.py --code 新码 --save
-4. 还不行 → 重启电脑蓝牙服务 bthserv（需管理员）/ 重启电脑
-5. 最后才是设备侧复位（面板关机 30 秒）
+1. Can the phone app connect?  yes = device is fine, look at the host;  no = device side
+2. Reset the Bluetooth radio on the host
+3. Generate a new panel code and connect immediately (do not run a scan first)
+4. Still nothing -> restart the host Bluetooth service / the machine
+5. Only then power-cycle the heater itself (panel off for 30 s)
 ```
 
 ---
 
-## 5. 命令字表
+## 5. Command table
 
-| cmd | 名称 | 状态 |
+| cmd | Name | Status |
 |---|---|---|
-| `A0` | 广播数据（设备→中央） | ✅ 已解 |
-| `A1` | 配置广播周期 `[type, sec]` | ✅ 可用但**非必需** |
-| `A2` | 登录（`07` MAC / `08` 密码） | ✅ 已解 |
-| `B0` | **历史数据** `[type]`：2=运行统计 3=洗浴记录 | ✅ 见第 16 节 |
-| `C0` `C1` | 未探明 | ❓ |
-| `C2` | 串口测试 | ❓ |
-| `D0` `D1` | 未探明 | ❓ |
-| `D2` | 读参数 | ✅ 已解 |
-| `D3` | 写参数 | ✅ 已解（温度） |
-| `D4` `D5` | 未探明 | ❓ |
-| `D7` | **故障列表** `[条数]` | ✅ 见第 16 节 |
-| `D8` | 读版本 | ✅ 参数 0~2，见第 10 节 |
-| `D9`~`DF` | 未探明 | ❓ |
-| `E0` | 未探明 | ❓ |
-| `E1` | 建立关联 | ❓ App 自己也不调用 |
-| `F0` | 未探明 | ❓ |
+| `A0` | Broadcast state (device → central) | ✅ decoded |
+| `A1` | Set broadcast interval `[type, sec]` | ✅ works but **not required** |
+| `A2` | Login (`07` MAC / `08` password) | ✅ decoded |
+| `B0` | **History** `[type]`: 2 = run statistics, 3 = bathing records | ✅ see §16 |
+| `C0` `C1` | Unknown | ❓ |
+| `C2` | Serial test | ❓ |
+| `D0` `D1` | Unknown | ❓ |
+| `D2` | Read parameter | ✅ decoded |
+| `D3` | Write parameter | ✅ decoded (temperature) |
+| `D4` `D5` | Unknown | ❓ |
+| `D7` | **Fault list** `[count]` | ✅ see §16 |
+| `D8` | Read version | ✅ parameters 0–2, see §10 |
+| `D9`–`DF` | Unknown | ❓ |
+| `E0` | Unknown | ❓ |
+| `E1` | Establish association | ❓ the vendor app never calls it either |
+| `F0` | Unknown | ❓ |
 
-命令表来源：实机抓包与功能对照整理。
-
----
-
-## 6. A0 广播数据结构
-
-设备**主动推送**、App **从不请求**（`getPeriphData()` 只读缓存）。`data` 共 **34 字节**，`type` 恒为 1（配置 `type=0` 也照样只推 1）。
-
-### 6.1 字段表（2026-11-01 实测校准，Type1 帧）
-
-> ⚠️ **重要**：早期参考资料中的偏移与本机固件**不一致**
-> （尤其功率/流量/风机）。下表以实机对照实验为准。
-> 详见 §6 字段表。
-
-| 索引 | 含义 | 换算 | 等级 |
-|---|---|---|---|
-| `[0]` | 广播类型（0=Type0 / 1=Type1） | — | ✅ |
-| `[1][2]` | **进水温度** | `[1]+[2]/100` | ✅ |
-| `[3][4]` | **炉腔（燃烧室）温度** | `[3]+[4]/100` | ✅ |
-| `[5]` | **设定温度** | 整数℃ | ✅✅ 三点验证 |
-| `[6][7]` | **机身温度**（机箱/环境参考） | `[6]+[7]/100` | ✅ |
-| `[8]` | （Type0 下为水流量/10；Type1 恒 0） | — | 🔶 |
-| `[9]` | （Type0 下为功率；Type1 恒 0） | — | 🔶 |
-| `[10]` | 电离/火焰检测位 | `& 0x10` | 🔶 |
-| `[11]` | **活动故障码** | 0=无故障 | 🔶 |
-| `[12]` | 燃气比例（0~7） | — | 🔶 |
-| **`[13]`** | **燃烧功率 %**（`[14]` 为小数位） | 0~100 | ✅ 实测 |
-| `[14]` | 功率小数 | `/100` | ✅ |
-| **`[15][16]`** | **风机转速 rpm** | `[15]*100 + [16]` | ✅ 实测 |
-| `[17]` | 高频抖动量（0~90） | — | ❓ |
-| `[18]` | 设定类常量（恒 6） | — | ❓ |
-| `[19]` `[22]` `[23]` `[24]` | 燃烧相关，关水归零 | — | 🔶 |
-| **`[21]`** | **水流量 L/min ×10** | `[21]/10` | ✅ 实测 |
-| `[28][29]` | **出水温度**（Type0 为 `[21][22]`） | `[28]+[29]/100` | ✅ |
-| `[32]` | 运行模式（本机恒 0，不可用） | — | ⚠️ |
-| `[33]` | bit7=浴室控制器 / 低7位=最大设定 | — | 🔶 |
-
-### 6.2 温度字段语义（实测确认）
-
-四个温度字段全部经工况验证：
-
-| 字段 | 未用水 | 放热水 | 说明 |
-|---|---|---|---|
-| `[1][2]` 进水 | 26.1 | 18.5 | 冷水进机，放水时最低 |
-| `[3][4]` 炉腔 | 26.7 | 39~45 | 燃烧室/换热器，最先升温 |
-| `[6][7]` 机身 | 26.0 | 26.0 | 机箱温度，与用水几乎无关（最接近"环境温度"） |
-| `[28][29]` 出水 | 25.4 | 40~45 | 出水口，用户实际感受到的温度 |
-
-> 早期版本把 `[3][4]` 当"出水"、`[28][29]` 当"换热器"，是反了。
-> 判据：`[28][29]` 与面板显示一致，且关水后回落最慢（管路余温）。
-
-### 6.3 判断运行状态（实测修正）
-
-`data[32]`**本机恒为 0**，不可用。可靠判据：
-
-```
-水流量 [21]/10 > 0.5  → 正在用热水（燃烧中）
-否则 功率 [13] > 10   → 保温（关水后设备维持 10~17% 小火）
-否则                 → 待机
-```
-
-实测：全开 10~11 L/min、44~47%；关水瞬间功率 31% 后降到 15~17%，风机 1410 → 705 rpm。
+The table was assembled from live captures cross-checked against app behaviour.
 
 ---
 
-## 7. D2 读参数
+## 6. A0 broadcast payload
 
-### 7.1 帧格式
+Pushed by the device on its own; the app **never requests it** (it reads a cache). `data` is
+**34 bytes** and `type` is always 1 (asking for `type=0` still yields type 1).
+
+### 6.1 Field table (calibrated against measurements, Type 1 frame)
+
+> ⚠️ Offsets published in early third-party write-ups **do not match this firmware** —
+> power, flow and fan speed especially. The table below is the one verified by bench tests.
+
+| Index | Meaning | Conversion | Confidence |
+|---|---|---|---|
+| `[0]` | Broadcast type (0 = Type0, 1 = Type1) | — | ✅ |
+| `[1][2]` | **Inlet temperature** | `[1] + [2]/100` | ✅ |
+| `[3][4]` | **Combustion chamber temperature** | `[3] + [4]/100` | ✅ |
+| `[5]` | **Setpoint temperature** | integer °C | ✅✅ verified three ways |
+| `[6][7]` | **Chassis temperature** (ambient reference) | `[6] + [7]/100` | ✅ |
+| `[8]` | (flow/10 in Type0; always 0 in Type1) | — | 🔶 |
+| `[9]` | (power in Type0; always 0 in Type1) | — | 🔶 |
+| `[10]` | Ionisation / flame detection bit | `& 0x10` | 🔶 |
+| `[11]` | **Active fault code** | 0 = no fault | 🔶 |
+| `[12]` | Gas ratio (0–7) | — | 🔶 |
+| **`[13]`** | **Burner power %** (`[14]` is the fraction) | 0–100 | ✅ measured |
+| `[14]` | Power fraction | `/100` | ✅ |
+| **`[15][16]`** | **Fan speed, rpm** | `[15] * 100 + [16]` | ✅ measured |
+| `[17]` | High-frequency jitter (0–90) | — | ❓ |
+| `[18]` | Setpoint constant (always 6) | — | ❓ |
+| `[19]` `[22]` `[23]` `[24]` | Combustion-related, zero when water stops | — | 🔶 |
+| **`[21]`** | **Water flow, L/min × 10** | `[21] / 10` | ✅ measured |
+| `[28][29]` | **Outlet temperature** (`[21][22]` in Type0) | `[28] + [29]/100` | ✅ |
+| `[32]` | Operating mode (always 0 here, unusable) | — | ⚠️ |
+| `[33]` | bit7 = bathroom controller / low 7 bits = max setpoint | — | 🔶 |
+
+### 6.2 Temperature semantics (verified)
+
+All four temperature fields were confirmed by running the unit under load:
+
+| Field | Idle | Running hot water | Notes |
+|---|---|---|---|
+| `[1][2]` inlet | 26.1 | 18.5 | Cold water entering; lowest while drawing |
+| `[3][4]` chamber | 26.7 | 39–45 | Combustion chamber / exchanger, heats first |
+| `[6][7]` chassis | 26.0 | 26.0 | Enclosure temperature, nearly independent of draw — closest thing to "ambient" |
+| `[28][29]` outlet | 25.4 | 40–45 | Outlet; what the user actually feels |
+
+> An earlier version of these notes had `[3][4]` and `[28][29]` swapped. The test that
+> settled it: `[28][29]` matches the panel display, and it falls back slowest after the
+> water stops (residual heat in the pipework).
+
+### 6.3 Determining operating state
+
+`data[32]` is **always 0 on this unit** and unusable. Reliable rule:
+
+```
+flow  [21]/10 > 0.5   -> drawing hot water (burning)
+else power [13] > 10  -> standby burn (a 10-17% flame is held after the tap closes)
+else                  -> idle
+```
+
+Measured: fully open 10–11 L/min at 44–47%; the moment the tap closes power drops to 15–17%
+and the fan goes from 1410 to 705 rpm.
+
+---
+
+## 7. D2 — read parameter
+
+### 7.1 Frame
 
 ```
 D2 | paramType | paramId
 ```
-应答：`D2`，`data = [paramId, status, value]`（`status=0` 正常）
 
-### 7.2 合法参数白名单（实机验证）
+Reply payload: `[paramId, status, value]` (`status = 0` means OK).
 
-| paramType | 允许的 paramId |
+### 7.2 Valid parameter whitelist (measured)
+
+| paramType | Allowed paramId |
 |---|---|
 | `2` | 2, 14, 27, 43, 97, 29, 30, 39, 40 |
-| `6` | 0~17, 107, 109 |
+| `6` | 0–17, 107, 109 |
 
-### 7.3 实测值（本机，静置态）
+### 7.3 Observed values (this unit, idle)
 
-| 请求 | 返回值 | 猜测 |
+| Request | Value | Guess |
 |---|---|---|
-| `2/2` `2/14` `2/27` `2/97` `2/29` `2/30` `2/39` | `0` | 未使用或需触发 |
+| `2/2` `2/14` `2/27` `2/97` `2/29` `2/30` `2/39` | `0` | unused, or needs a trigger |
 | `6/1` | `0` | — |
-| `6/2` | `4` | 机型/配置 |
-| `6/3` | `1` | 机型/配置 |
-| `6/8` | `17` | **疑似温度** |
-| `6/9` | `20` | **疑似温度** |
-| `6/10` | `25` | **疑似温度** |
-| `6/13`~`6/16` | `0` | — |
+| `6/2` | `4` | model / configuration |
+| `6/3` | `1` | model / configuration |
+| `6/8` | `17` | **probably a temperature** |
+| `6/9` | `20` | **probably a temperature** |
+| `6/10` | `25` | **probably a temperature** |
+| `6/13`–`6/16` | `0` | — |
 
-> `6/8=17`、`6/9=20`、`6/10=25` 三个值量级都像温度（可能是室外温度、目标温度、限值），**尚未确认**，值得在"放热水/改设定"时对照采样来确定。
+> `6/8 = 17`, `6/9 = 20`, `6/10 = 25` all look temperature-shaped (outdoor, target, limit —
+> unknown). Worth sampling while drawing water and while changing the setpoint.
 
-部分请求可能丢应答（设备响应慢），重试或放慢间隔可补齐。
-
----
-
-## 8. D3 写参数
-
-### 8.1 设定温度
-
-```
-D3 | 02 | 55 | 00 | (byte)温度
-```
-应答：`data = 55 01`（`paramId` 回显 + 状态 01 = 成功）
-
-实测：发 `7b 7b 21 00 02 d3 02 55 00 26 73 7d 7d`（0x26 = 38），4 秒内 A0 的 `[5]` 变为 38。
-
-### 8.2 可写参数白名单（实机验证）
-
-`paramType` 取值 `2 / 6 / 30`（温度走 `85`，实际上 `setParam` 的第三个参数白名单是 `2/6/30/85`）。
-
-其余可写项**未探明**，源码里 `setParam` 共有几个重载（byte / int / 数组），可以按同样格式试探。
+Some requests simply get no reply (the device is slow). Retry, or space requests further
+apart.
 
 ---
 
-## 9. A1 配置广播周期
+## 8. D3 — write parameter
+
+### 8.1 Setpoint temperature
 
 ```
-A1 | type(0或1) | seconds(0~60)
+D3 | 02 | 55 | 00 | (byte) temperature
 ```
 
-- App 只在 UI 里手动设频率时才发，日常不发
-- **实测非必需**：不发 A1 也照样每 4~8 秒推 A0
-- 配置 `type=0` 设备仍只推 `type=1`
+Reply payload `55 01` (`paramId` echoed, status 01 = success).
+
+Measured: sending `7b 7b 21 00 02 d3 02 55 00 26 73 7d 7d` (0x26 = 38) makes `[5]` of the
+next A0 read 38 within four seconds.
+
+### 8.2 Writable whitelist (measured)
+
+`paramType` accepts `2 / 6 / 30`; temperature goes through `85`, so the effective whitelist
+for the third parameter is `2 / 6 / 30 / 85`.
+
+Other writable parameters are **unexplored**. The vendor app has several `setParam`
+overloads (byte / int / array), which suggests the same frame shape can be tried elsewhere.
 
 ---
 
-## 10. D8 读版本
+## 9. A1 — set broadcast interval
 
 ```
-D8 | 参数(0~2)
+A1 | type (0 or 1) | seconds (0-60)
 ```
 
-应答：`data = [参数号, 状态, 值Hi, 值Lo]`，`状态=01` 表示成功。
+- The app only sends it when the user changes the interval in the UI
+- **Not required**: without any A1 the device still pushes A0 every 4–8 s
+- Asking for `type = 0` still yields `type = 1`
 
-| 请求 | 应答 | 说明 |
+---
+
+## 10. D8 — read version
+
+```
+D8 | parameter (0-2)
+```
+
+Reply payload `[parameter, status, valueHi, valueLo]`, `status = 01` means success.
+
+| Request | Reply | Notes |
 |---|---|---|
-| `D8 00` | `00 00 00` | 参数 0 无效 |
-| `D8 01` | `01 01 41 13` | 有数据 |
-| `D8 02` | `02 01 01 09` | 有数据 |
-| `D8 03` | 无应答 | 参数最大为 2 |
+| `D8 00` | `00 00 00` | parameter 0 invalid |
+| `D8 01` | `01 01 41 13` | has data |
+| `D8 02` | `02 01 01 09` | has data |
+| `D8 03` | no reply | highest parameter is 2 |
 
-> ⚠️ **时序很关键**：`D8` 必须在登录成功后**尽快发**（3 秒内）。
-> 若先发了十几帧 D2 再发 D8，设备会完全不回应——这一点曾让我们误判为"D8 不可用"。
+> ⚠️ **Timing matters.** Send `D8` **within about three seconds of a successful login**. If
+> you send a dozen `D2` requests first, the device stops answering entirely — which once
+> made us conclude, wrongly, that `D8` was unsupported.
 
-低两字节的含义未确定，可能是固件版本号的某种压缩编码（`0x4113` / `0x0109`），
-也可能是 BCD（`4.1.13` / `1.09`），需要更多样本才能判断。
+The meaning of the low two bytes is unresolved: possibly a packed firmware version
+(`0x4113` / `0x0109`), possibly BCD (`4.1.13` / `1.09`). More samples needed.
 
 ---
 
-## 11. 已知无应答 / 未探明
+## 11. Known to be silent / unexplored
 
-| 命令 | 情况 |
+| Command | Situation |
 |---|---|
-| `D2` + `paramType=30` | 8 个 paramId **全部无应答** ⇒ 白名单只有 2 和 6 两类 |
-| `E1`（建立关联） | 未观察到使用，格式未知 |
-| `C2`（串口测试） | 未试 |
-| `B1/C0/C1/D0/D1/D4/D5/E0/F0` | 完全未知（语义可能有副作用，未做探测） |
+| `D2` with `paramType = 30` | all eight paramIds **silent** ⇒ only whitelist classes 2 and 6 exist |
+| `E1` (establish association) | never observed in use, format unknown |
+| `C2` (serial test) | not tried |
+| `B1/C0/C1/D0/D1/D4/D5/E0/F0` | entirely unknown; likely side effects, not probed |
 
 ---
 
-## 12. 还能挖什么（按价值排序）
+## 12. What is still worth digging (by value)
 
-### 11.1 高价值：故障码与错误历史
+### 12.1 High value: fault codes and error history
 
-博世官方的蓝牙网关手册里明确提到该系列支持：
+The vendor's own Bluetooth gateway documentation states the series supports:
 
-- **Error History（错误历史）** —— 能查历史故障代码
-- **Diagnostic Mode（诊断模式）** —— 设备自带诊断通道
-- **Backup / Restore** —— 整套配置参数备份还原（换主板时用）
+- **Error History** — historical fault codes
+- **Diagnostic Mode** — a built-in diagnostic channel
+- **Backup / Restore** — full configuration backup, used when replacing a mainboard
 
-这是最有价值的下一步：**故障码比温度有用得多**，尤其设备报 E 系列错误时。
+This is the most valuable next step: **fault codes matter far more than temperatures**,
+especially when the unit throws an E-series error.
 
-**探测思路**：
+Ideas for probing:
 
-1. 逐个试 `D2` 的 `paramType = 2 / 6 / 30` 组合（30 还没试过）
-2. 试 `D4` / `D5` / `D9`~`DF` 这些还没碰过的 `D` 段命令，参数用 `01` 或 `00` 试探
-3. 让设备**故意报错**（比如关燃气阀触发点火失败），同时扫 A0，看哪个字段跳变
-4. 手册里的诊断模式可能对应某个 `Dx` 命令 + 特定参数
+1. Work through `D2` with `paramType = 2 / 6 / 30` (30 not yet tried)
+2. Try the untouched `D`-range commands (`D4`, `D5`, `D9`–`DF`) with parameters `01` / `00`
+3. **Provoke a fault on purpose** (close the gas valve to force an ignition failure) while
+   scanning A0 to see which bytes move
+4. Diagnostic mode probably maps to some `Dx` command plus a specific parameter
 
-### 11.2 中价值：能耗与运行统计
+### 12.2 Medium value: consumption and run statistics
 
-- 燃气量、运行时长、点火次数
-- 可能藏在 `D2` 的 `paramType=30` 或 `D4/D5` 里
-- `d1 COUNTER` 已经确认是运行秒数，可以作为"设备是否重启"的判据
+- Gas volume, running hours, ignition count
+- Possibly behind `D2` with `paramType = 30`, or `D4` / `D5`
+- `d1 COUNTER` is confirmed to be uptime in seconds, usable as a reboot detector
 
-### 11.3 中价值：补齐 A0 未知字段
+### 12.3 Medium value: fill in the unknown A0 fields
 
-`[6] [8] [9] [10] [12] [13~18] [20] [21] [24] [30] [31]` 目前只知道"什么时候有值"，不知道含义。
+For `[6] [8] [9] [10] [12] [13–18] [20] [21] [24] [30] [31]` we know *when* they carry a
+value but not what they mean.
 
-**方法**：单变量对照实验 —— 每次只改一个物理条件（改设定温度 / 开关水龙头 / 调水流大小 / 切换模式），记录哪些字节变化。这是社区公认最靠谱的做法。
+**Method**: single-variable experiments. Change exactly one physical condition per run
+(adjust the setpoint, open a tap, change the flow, switch mode) and record which bytes move.
+This is the approach the community converges on for good reason.
 
-### 11.4 低价值：读版本
+### 12.4 Low value: reading the version
 
-`D8` 无应答，可能格式不对。也可以从设备广播名或 `d1` 特征推断，但意义不大。
-
----
-
-## 13. 坑列表（踩过的）
-
-1. **帧头后不填充** —— 否则 `sender=0x00` 被误删，全帧错位
-2. **XOR 按分片独立** —— 不是整帧连续，否则校验永远对不上
-3. **`data[1]=01` 也要发配对码** —— 不发就一个字节都收不到
-4. **登录/密码帧 `receiver=0xAB`，业务帧 `receiver=0x00`** —— 搞反会以为"设备从不回应业务帧"
-5. **设备会踢人** —— 45~50 秒断开，必须自动重连；异常后要 `try/finally` 强制 disconnect，否则连接泄漏导致后续全是 `GATT 未就绪`
-6. **设备有冷却** —— 短时间内反复连接会被拒，需要退避（8/16/32/60 秒递增）
-7. **多客户端冲突** —— 手机 App 连着时，PC 连不上（表现为"连上就断"）
-8. **Windows GATT 缓存** —— 偶尔 `BleakDeviceNotFoundError` 或特征找不到，重连一次通常就好
-9. **MODE(b1) 不要写** —— 出厂 `ff`，App 从不写，误改需要改回来
-10. **★★ Windows 解绑 = 设备侧密钥残留 = 全业务静默（2026-11-01，最大的坑）**
-    在 Windows 里删除配对后，设备侧仍记着本机地址的旧链路密钥。此时以明文链路连接，
-    设备会**静默丢弃一切业务帧**——表现为：能连接、能枚举 GATT、能读 b1/d1 静态值、
-    写入 ATT 层成功，但登录 `A2/07` 零应答、`A0` 零推送。手机不受影响（它从未配对）。
-    **修复**：保持系统级配对。设备走 Just Works（`CONFIRM_ONLY`，无需 PIN），
-    `bosch_api.ensure_paired()` 已实现自动绑定并在 `BoschService` 连接前自动执行。
-    排查此坑花费 2 小时+，先查配对状态（`paired_state()`）能省下全部时间。
-10. **同一设备同时只能有一个客户端** —— 跑两个程序实例会互踢下线：界面永远显示"连接中"、
-    设备扫描不到（被占着不广播）、巴法云还会出现消息回环刷屏。表现极具误导性，
-    会让人误判成"设备休眠"或"连接保护"。程序务必加单实例锁
-11. **`D8` 要登录后尽快发** —— 若先发十几帧 `D2` 再发 `D8`，设备完全不回应（易误判为不支持）
-12. **功率档位不止 4 档** —— 实测出现过 `0 / 30 / 50 / 70 / 80`，判断"是否在燃烧"用 `!= 0` 即可，
-    但不要假设具体档位集合
+`D8` is silent, so the format may be wrong. It could also be inferred from the advertised
+name or the `d1` characteristic, but it does not buy much.
 
 ---
 
-## 14. 配套工具
+## 13. Pitfalls (all of these happened)
 
-| 文件 | 用途 |
+1. **No stuffing after the leading bytes** — otherwise a `sender` of `0x00` is dropped and
+   the whole frame desynchronises
+2. **XOR is per fragment** — not continuous across the frame, or checksums never match
+3. **`data[1] == 01` still requires the pairing code** — skip it and you receive zero bytes
+4. **Login frames use `receiver = 0xAB`, business frames `0x00`** — get it backwards and it
+   looks like the device never answers business frames
+5. **The device hangs up** — 45–50 s, so reconnect automatically; always `try/finally` a
+   forced disconnect, or a leaked link leaves every later attempt at `GATT not ready`
+6. **The device cools down** — rapid reconnects get refused; back off 8 / 16 / 32 / 60 s
+7. **One client at a time** — while the phone app is connected the PC cannot stay connected
+   (it connects, then drops)
+8. **Windows GATT cache** — occasional `BleakDeviceNotFoundError` or missing
+   characteristics; one reconnect usually clears it
+9. **Do not write MODE (`b1`)** — factory `ff`, the app never writes it, and undoing a stray
+   write is a nuisance
+10. **★★ Unpairing on Windows leaves a stale key on the device — everything goes silent
+    (2026-11-01, the worst one).** After you delete the pairing in Windows, the device still
+    holds the old link key for this address. Connecting in plaintext then makes it
+    **silently discard every business frame**: the link establishes, GATT enumerates, `b1`
+    and `d1` read fine, ATT writes return success — but `A2/07` gets no reply and `A0` never
+    arrives. The phone is unaffected because it never bonded that way.
+    **Fix**: keep system-level pairing. The device uses Just Works (`CONFIRM_ONLY`, no PIN);
+    `bosch_api.ensure_paired()` bonds automatically and `BoschService` calls it before
+    connecting. Diagnosing this cost over two hours — checking `paired_state()` first would
+    have saved all of it.
+11. **Only one client per device** — two program instances evict each other: the UI sits on
+    "connecting" forever, the device stops advertising (it is occupied), and the cloud
+    bridge starts echo-looping messages. The symptoms point convincingly at "device asleep"
+    or "connection guard". Always take a single-instance lock.
+12. **Send `D8` soon after login** — a dozen `D2` frames first and the device ignores it
+    (easy to misread as "unsupported")
+13. **Power has more than four steps** — observed `0 / 30 / 50 / 70 / 80`. Use `!= 0` to
+    decide "is it burning"; do not assume a fixed set of levels.
+
+---
+
+## 14. Bundled tooling
+
+| File | Purpose |
 |---|---|
-| `tools/bosch_ui.py` | 桌面控制台（BLE + 巴法云 + 配置 + 配对码登录） |
-| `tools/bosch_bridge.py` | 无界面的巴法云桥接 |
-| `tools/bosch_read.py` | 单次读取，协议常量与编解码都在这里 |
-| `ble_set_temp.py` | 单独设置温度 |
-| `ble_param_probe.py` | D2 参数全量探测 |
-| `analyze_frames.py` | 逐字节统计 A0 各位置的取值范围 |
-| `shot_win.py` | 截取窗口（排查 GUI 问题用） |
+| `tools/bosch_ui.py` | Desktop console (BLE + Bemfa cloud + config + pairing-code login) |
+| `tools/bosch_bridge.py` | Headless Bemfa bridge |
+| `tools/bosch_read.py` | One-shot read; protocol constants and codec live here |
+| `tools/collector.py` | Continuously capture A0 into a per-frame CSV |
+| `tools/analyze_collect.py` | Analyse a collected CSV |
 
 ---
 
-## 15. 免责
+## 15. Disclaimer
 
-本文仅记录对**自有设备**的观察与实验。协议来自互操作观测，非官方公开接口，可能随固件升级失效。请勿用于未经授权的设备。
+These notes record observations and experiments on **hardware I own**. The protocol was
+derived from interoperability testing, is not a public interface, and may break with any
+firmware update. Do not use it against devices you are not authorised to access.
 
-## 16. B0 历史数据 / D7 故障列表（2026-11-01 实测）
+## 16. B0 history / D7 fault list (measured 2026-11-01)
 
-### 16.1 B0 历史数据
+### 16.1 B0 history
 
-请求：`B0` + `[type]`（2 = 运行统计，3 = 洗浴记录）
+Request: `B0` + `[type]` (2 = run statistics, 3 = bathing records).
 
-实测 type=2 应答：`02 00 00 12 67 00 00 05 b6`（9 字节）
+Measured reply for type 2: `02 00 00 12 67 00 00 05 b6` (9 bytes).
 
 ```
-[0]      = 请求的 type 回显（02）
-[1..4]   = 大端 32 位 A = 0x00001267 = 4711
-[5..8]   = 大端 32 位 B = 0x000005B6 = 1462
+[0]      = echoed type (02)
+[1..4]   = big-endian 32-bit A = 0x00001267 = 4711
+[5..8]   = big-endian 32-bit B = 0x000005B6 = 1462
 ```
 
-按博世 App 内部注释「大端计数 ÷60 = 小时」：
-- **A = 运行分钟数** → 4711 分钟 ≈ **78.5 小时**
-- **B = 点火次数** → 1462 次（平均每次 3.2 分钟，与家用热水器工况吻合）
+Per the vendor app's internal note ("big-endian count ÷ 60 = hours"):
 
-> ✅ **已用手机 App 交叉核对一致**（2026-11-01）：A/B 顺序与单位无误。
+- **A = run minutes** → 4711 min ≈ **78.5 hours**
+- **B = ignition count** → 1462 (3.2 minutes per burn, plausible for domestic use)
 
-### 16.2 D7 故障列表
+> ✅ Cross-checked against the phone app (2026-11-01): the order and units are correct.
 
-请求：`D7` + `[条数]`（1~10）
+### 16.2 D7 fault list
 
-实测（同一台设备，App 显示"无历史故障"）：
+Request: `D7` + `[count]` (1–10).
 
-| 请求 | 应答 |
+Measured on the same unit while the app reported "no fault history":
+
+| Request | Reply |
 |---|---|
 | `D7 01` | `ea` |
 | `D7 05` | `ea 00 00 00 00` |
 | `D7 0A` | `ea 00 00 00 00 00 00 00 00 00` |
 
-**关键结论**：
-1. 应答长度**严格等于请求条数**
-2. 首字节**恒为 `0xEA`**，是状态/起始标识，**不是故障码**
-   （最初误判为故障码 EA，经用户用 App 核对后纠正）
-3. 其后各字节为故障码，`0x00` = 空槽；全 0 表示无故障记录
+Conclusions:
 
-解析规则：
+1. The reply length **exactly equals the requested count**
+2. The first byte is **always `0xEA`** — a status/start marker, **not a fault code**
+   (originally misread as fault code EA until the app cross-check corrected it)
+3. Remaining bytes are fault codes; `0x00` is an empty slot, so all-zero means no history
+
+Parsing:
+
 ```python
-codes = [b for b in payload[1:] if b]   # 跳过状态字节，取非零故障码
+codes = [b for b in payload[1:] if b]   # skip the status byte, keep non-zero codes
 ```
-
