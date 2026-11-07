@@ -1,179 +1,178 @@
-# ESP32 网关 v2.0 —— 微雪 ESP32-S3-DEV-KIT-N8R8
+# ESP32 gateway v2 — Waveshare ESP32-S3-DEV-KIT-N8R8
 
-> 2026-11-07 到板开工。硬件已识别：COM3 = CH343（烧录 + 日志），COM4 = 原生 USB。
-> 官方手册/原理图/数据手册已下载到 [`manual/`](manual/)。
+> Built 2026-11-07. Board identified as COM3 = CH343 (flash + logs), COM4 = native USB.
+> Vendor manuals, schematics and datasheets: see [`manual/`](manual/).
 
-## 一、这次开工修掉的两个坑
+## 1. Two defects fixed in v2
 
-| # | 问题 | 后果 | v2 修正 |
+| # | Problem | Consequence | v2 fix |
 |---|---|---|---|
-| 1 | **v1 完全没有处理 BLE SMP PIN** | `ble_pair_auto.py` 实测：面板码同时是 **BLE passkey** 和**应用层密码**，配对窗口打开时设备请求 `PROVIDE_PIN`。v1 却设了 `NoInputNoOutput` + Just Works，SMP 会失败，后面 `A2/08` 只能回 `00` | 实现 `onPassKeyRequest()` 返回 6 位面板码，IOCap 改 `KEYBOARD_ONLY`（设备无 IO 时自动回落 Just Works） |
-| 2 | **配对码写死在固件里** | 面板码几分钟就过期，换一次码要重编译+重烧 2 分钟以上，实战根本来不及 | 改成**运行时串口输码**，NVS 持久化配置，烧一次可反复输、反复重试 |
+| 1 | **v1 ignored the BLE SMP pin entirely** | Measured on hardware: the panel code is **both the BLE passkey and the application-layer password**, and the device requests `PROVIDE_PIN` while the pairing window is open. v1 used `NoInputNoOutput` + Just Works, so SMP failed and `A2/08` could only answer `00` | Implement `onPassKeyRequest()` to return the six-digit panel code; set IO capability to `KEYBOARD_ONLY` (falls back to Just Works when the peer has no IO) |
+| 2 | **The pairing code was compiled in** | A panel code expires within minutes; changing it meant a rebuild plus reflash of two minutes or more — far too slow in practice | **Enter the code at runtime** over serial; configuration is persisted in NVS, so one flash covers unlimited retries |
 
-另外：协议逐字节对照 `bosch_api.py` 重新核过（stuff 范围含 chk、每分片独立 XOR、FIFO/CREDITS 共用一个回调、A2 六秒×五次重发换 msgId、A0 字段用 11-01 实测偏移）。
+The protocol was also re-checked byte for byte against `bosch_api.py`: the stuffed range
+includes the checksum, XOR restarts per fragment, FIFO and CREDITS share one callback, `A2`
+resends five times at six-second intervals with a fresh msgId, and the A0 field offsets are the
+ones measured on 2026-11-01.
 
-## 二、目录
+## 2. Layout
 
 ```
 esp32/
-├── gateway/                       ← 主工程（PlatformIO / arduino-cli 双通道）
-│   ├── src/main.cpp               固件源码 v2.0
-│   ├── arduino_sketch/            arduino-cli 用的 .ino（由 main.cpp 复制）
-│   ├── platformio.ini             PlatformIO 配置（锁 NimBLE 1.4.3）
-│   ├── gateway_cli.py             一键 编译/烧录/串口交互/日志
-│   ├── esp32_panel.py             置顶控制面板（输入 6 位码）
-│   ├── pair_once.py               一条命令完成配对并给出结论
-│   └── log_diag.py                串口日志诊断
-├── manual/                        板卡资料下载指引（PDF 不随仓库分发）
-└── README.md                      本文件
+├── gateway/                       main project (PlatformIO / arduino-cli)
+│   ├── src/main.cpp               firmware source, v2.0
+│   ├── arduino_sketch/            the .ino arduino-cli needs (copied from main.cpp)
+│   ├── platformio.ini             PlatformIO configuration (NimBLE pinned to 1.4.3)
+│   ├── gateway_cli.py             build / flash / serial console / logging in one command
+│   ├── esp32_panel.py             always-on-top control panel (enter the six-digit code)
+│   ├── pair_once.py               pair in one command and report a verdict
+│   └── log_diag.py                serial log diagnosis
+├── manual/                        board documentation download guide (PDFs not shipped)
+└── README.md                      this file
 ```
 
-## 三、第一次使用（一条命令）
+## 3. First run (one command)
 
 ```bash
 cd esp32/gateway
 python gateway_cli.py --flash
 ```
 
-它会自动找 CH343 口（本机 COM3）→ 编译 → 烧录 → 打开串口交互。
+It finds the CH343 port, builds, flashes and opens the serial console.
 
-### 然后按这个顺序操作
+### Then follow this order
 
 ```
-1. 确认电脑上的 Python 界面/桥接都关了（否则两个 BLE 客户端抢设备）
-2. 热水器面板 →「清除配对」                  ← 打开配对窗口，这步不能省
-3. 面板 →「连接/配对」→ 记下 6 位码
-4. 在脚本窗口直接敲这 6 位码并回车          ← 毫秒级，不用重烧
-5. 看 [SMP] / [AUTH] / [A0] 三段输出
+1. Make sure the Python console / bridge on the PC is closed (two BLE clients fight over the heater)
+2. Heater panel -> "clear pairing"            <- opens the pairing window; do not skip
+3. Panel -> "connect / pair" -> note the six digits
+4. Type those six digits into the console     <- takes milliseconds, no reflash
+5. Watch the [SMP] / [AUTH] / [A0] stages
 ```
 
-码过期或被拒了？**重新取码再敲一次就行**，不用碰编译。
+Code expired or rejected? **Read a new one and type it again** — no build involved.
 
-### 串口命令
+### Serial commands
 
-| 输入 | 作用 |
+| Input | Effect |
 |---|---|
-| `311522` | 6 位面板码 → 立即连接+配对+登录 |
-| `go` | 用当前码重连（不重新配对） |
-| `pair` | 清本机绑定，强制重新 SMP 配对 |
-| `scan` | 扫 5 秒，列出附近 BLE 设备（查地址/信号） |
-| `mac AA:BB:CC:DD:EE:FF` | 改登录 MAC（设备白名单里的那台） |
-| `addr AA:BB:CC:DD:EE:FF` | 改热水器 BLE 地址 |
-| `status` | 打印配置与运行状态 |
-| `raw on` / `raw off` | 显示/隐藏 A0 原始字节 |
-| `reboot` / `help` | 重启 / 帮助 |
+| `311522` | Six-digit panel code → connect, pair and log in immediately |
+| `go` | Reconnect with the current code (no new pairing) |
+| `pair` | Clear the local bond and force a fresh SMP pairing |
+| `scan` | Scan for 5 s and list nearby BLE devices (address / RSSI) |
+| `mac AA:BB:CC:DD:EE:FF` | Set the login MAC (the host on the device's whitelist) |
+| `addr AA:BB:CC:DD:EE:FF` | Set the heater's BLE address |
+| `status` | Print configuration and runtime state |
+| `raw on` / `raw off` | Show / hide raw A0 bytes |
+| `reboot` / `help` | Reboot / help |
 
-## 四、三条成功判据（同时满足才算通）
+## 4. Three criteria that must all hold
 
-1. `[SMP] 认证完成：链路已加密`
-2. `[AUTH] ★ A2/07 应答 = 01/02/00` 且 `A2/08 应答 = 01`
-3. `[A0]` 字段合理：水流 0~11 L/min、功率 0~50%、风机 700~1500 rpm
+1. The `[SMP]` stage reports the link is encrypted
+2. The `[AUTH]` stage shows an `A2/07` reply followed by **`A2/08` = `01`**
+3. `[A0]` frames arrive with sane values: flow 0–11 L/min, power 0–50%, fan 700–1500 rpm
 
-## 五、失败对照
+## 5. Failure matrix
 
-| 现象 | 原因 | 处理 |
+| Symptom | Cause | Action |
 |---|---|---|
-| `连不上` | 面板休眠 / 手机 App 占着 / 距离远 | `scan` 看设备在不在；关掉手机蓝牙 |
-| `A2/08 应答 = 00` | **配对窗口没开**或码过期 | 面板「清除配对」→ 重取码 → 再敲一次 |
-| `[SMP] 设备请求 PIN` 后失败 | 码填错 / 窗口关了 | 同上；`status` 确认 PIN 值 |
-| 找不到服务 | 配对没生效 | 看 `[SMP]` 那一段 |
-| 有 A2 应答但无 A0 | 登录没真通过 | 确认 `A2/08 = 01` |
-| A0 字段离谱 | 收帧不完整 | `raw on` 看长度是否 34 字节 |
-| 串口没输出 | 看错口了 | **用 COM3（CH343），不是 COM4**；别开 USB CDC On Boot |
+| Link never comes up | Panel asleep / phone app holds the device / too far | `scan` to confirm the device is advertising; turn off phone Bluetooth |
+| `A2/08` replies `00` | **Pairing window not open**, or the code expired | Panel "clear pairing" → new code → type it again |
+| `[SMP]` fails after the PIN request | Wrong code, or the window closed | As above; check the PIN with `status` |
+| Service not found | Pairing did not take effect | Look at the `[SMP]` stage |
+| A2 answers but no A0 | The login did not really pass | Confirm `A2/08` = `01` |
+| A0 fields look wrong | Incomplete frame | `raw on` and check the payload is 34 bytes |
+| No serial output | Wrong port | **Use COM3 (CH343), not COM4**; do not enable USB CDC On Boot |
 
-## 六、验证通过后再扩展（顺序建议）
+## 6. Expansion order once verification passes
 
 ```
-1. WiFi 连接（首次配网免改代码）
-2. MQTT 上报 + HA 自动发现
-3. 巴法云上报（米家通道，沿用现有 topic 约定）
-4. 温度控制下行（D3 写参数，sendFrame 可直接用）
-5. OTA 空中升级（以后不用拆下来插 USB）
-6. 断线重连 + 看门狗（长期运行，建议连跑 2 天）
+1. Wi-Fi connection (first provisioning without touching code)
+2. MQTT reporting + Home Assistant discovery
+3. Bemfa reporting (Mi Home channel, reusing the existing topic convention)
+4. Setpoint commands downstream (D3 write, sendFrame is already usable)
+5. OTA updates (no more unplugging to reach USB)
+6. Reconnect hardening + watchdog (soak for two days)
 ```
 
-## 七、技术口径
+## 7. Hardware facts
 
-| 项 | 值 |
+| Item | Value |
 |---|---|
-| 板卡 | 微雪 ESP32-S3-DEV-KIT-N8R8；**esptool 实测 16MB Flash**（Manufacturer 0x46 / Device 0x4018），与型号里的 "N8" 不一致，以实测为准 |
-| PSRAM | 8MB **Octal**（R8）。必须 `PSRAM=opi` 才会启用；缺省 Disabled 时 `ESP.getPsramSize()` = 0 |
-| 板型 / FQBN（**板载当前**） | `esp32:esp32:esp32s3:FlashSize=8M` —— 已编译、烧录、启动验证通过，与接下来实测用的一致 |
-| 目标 FQBN（实测通过后） | `esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=default_8MB,PSRAM=opi` —— 对齐 16MB Flash 并解锁 8MB PSRAM |
-| 分区 | 当前 `FlashSize=8M` 自动带 `default_8MB`（3MB APP × OTA + 1.5MB SPIFFS）；切 16M 时**必须显式写** `PartitionScheme=default_8MB`，否则落回 `default` 只有 1.2MB APP |
-| BLE 库 | **NimBLE-Arduino 1.4.3**（2.x 回调签名不兼容，锁死） |
-| 日志/烧录口 | COM3（CH343 → UART0），115200 / 上传 460800 |
-| 热水器地址 | 首次 `scan` 找到后用 `addr <MAC>` 写入 NVS（示例占位 `AA:BB:CC:DD:EE:FF`） |
-| 登录 MAC | 本机蓝牙地址，`mac <MAC>` 可改（示例占位 `11:22:33:44:55:66`） |
+| Board | Waveshare ESP32-S3-DEV-KIT-N8R8; **esptool reports 16 MB flash** (manufacturer 0x46 / device 0x4018), which contradicts the "N8" in the part number — trust the measurement |
+| PSRAM | 8 MB **Octal** (the R8 suffix). Only enabled with `PSRAM=opi`; left at the default (Disabled) `ESP.getPsramSize()` reports 0 |
+| FQBN, currently on the board | `esp32:esp32:esp32s3:FlashSize=8M` — built, flashed and boot-verified |
+| FQBN, target | `esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=default_8MB,PSRAM=opi` — matches the 16 MB flash and unlocks the 8 MB PSRAM |
+| Partitions | `FlashSize=8M` implies `default_8MB` (3 MB app × OTA + 1.5 MB SPIFFS). Switching to 16M **requires the explicit `PartitionScheme`**, otherwise it falls back to `default` and the app partition shrinks to 1.2 MB |
+| BLE stack | **NimBLE-Arduino 1.4.3** (2.x changed the callback signatures — pinned) |
+| Log / flash port | COM3 (CH343 → UART0), 115200; upload at 460800 |
+| Heater address | Found with `scan`, then persisted with `addr <MAC>` (placeholder `AA:BB:CC:DD:EE:FF`) |
+| Login MAC | This host's Bluetooth address, set with `mac <MAC>` (placeholder `11:22:33:44:55:66`) |
 
-协议依据：根目录 `BLE_PROTOCOL.md`（§6 字段实测校准、§16 B0/D7）、`API.md`、
-`bosch_api.py`（136 项测试）。SMP PIN 的行为另有实机抓包佐证，见 `API.md` §10。
+Protocol references: `BLE_PROTOCOL.md` in the repository root (field calibration in §6, B0/D7 in
+§16), `API.md`, and `bosch_api.py` (136 tests). The SMP pin behaviour is corroborated by captures
+on real hardware — see `API.md §10`.
 
-## 八、编译环境（换电脑 / 重装时用）
+## 8. Build environment (new machine / reinstall)
 
-本机不装 Arduino IDE，用 **arduino-cli 命令行**：一条 `python gateway_cli.py --flash`
-完成编译 + 烧录 + 读日志。
+No Arduino IDE: **arduino-cli on the command line**, so `python gateway_cli.py --flash` covers
+build + flash + log.
 
-| 组件 | 版本 / 要求 |
+| Component | Version / requirement |
 |---|---|
-| arduino-cli | ≥ 1.0，放在 `PATH` 或 `esp32/toolchain/arduino-cli.exe`（本地工具链不入库） |
-| arduino-esp32 core | **2.0.17**（3.x 没有内置 NimBLE，且回调签名不同） |
-| NimBLE-Arduino | **1.4.3**（2.x 不兼容，锁死） |
-| 板型 FQBN | `esp32:esp32:esp32s3:FlashSize=8M` |
+| arduino-cli | ≥ 1.0, on `PATH` or at `esp32/toolchain/arduino-cli.exe` (the local toolchain is not committed) |
+| arduino-esp32 core | **2.0.17** (3.x ships no bundled NimBLE and changed the callbacks) |
+| NimBLE-Arduino | **1.4.3** (2.x is incompatible — pinned) |
+| Board FQBN | `esp32:esp32:esp32s3:FlashSize=8M` |
 
-网络正常时的标准装法：
+Standard installation, given a working network:
 
 ```bash
 arduino-cli core install esp32:esp32@2.0.17
 arduino-cli lib install NimBLE-Arduino@1.4.3
 ```
 
-编译工作区默认 `~/esp`（Windows 下即 `C://Users//<你>//esp`），可用环境变量
-`BTWH_WORK` 覆盖。**不要放进工程目录**：Windows 的 CreateProcess 有路径长度限制，
-工具链里有超长 C++ 头文件名，目录一深 `g++` 就报
-`The filename or extension is too long`。源码正本仍在工程里，短路径只是编译副本。
+The build workspace defaults to `~/esp` (on Windows `C:\Users\<you>\esp`) and can be overridden
+with the `BTWH_WORK` environment variable. **Do not put it inside the repository**: Windows'
+`CreateProcess` has a path-length limit, the toolchain contains very long C++ header names, and a
+deeper directory makes `g++` fail with `The filename or extension is too long`. The source of
+truth stays in the repository; the short-path copy is only a build artefact.
 
-### 国内网络（实测 2026-11-07）
+### Slow networks (measured 2026-11-07)
 
-| 通道 | 速度 |
+| Channel | Throughput |
 |---|---|
-| GitHub 直连 / PlatformIO CDN | 超时 / 18 KB/s |
-| arduino-cli 自带下载器 | 78 KB/s |
-| GitHub 加速前缀 + curl 并行 | 500~665 KB/s |
+| GitHub direct / PlatformIO CDN | timeout / 18 KB/s |
+| arduino-cli's own downloader | 78 KB/s |
+| GitHub mirror prefix + parallel curl | 500–665 KB/s |
 
-拉不动时用任意加速前缀拼出 release 直链，下完按 Arduino 规范解压到
-`<工作区>/data/packages/esp32/`。两个坑：解压必须带 `\\?\` 长路径前缀，否则会中断；
-判断工具链是否完整要看
-`libexec/gcc/xtensa-esp32s3-elf/8.4.0/cc1plus.exe` 是否存在——残留的 `gcc.exe`
-会让人误判"已解压完成"。
+When downloads stall, prefix the release URL with any GitHub mirror and unpack the archives into
+`<workspace>/data/packages/esp32/` following the Arduino layout. Two traps: extraction must use
+the `\\?\` long-path prefix or it aborts partway; and completeness must be judged by the presence
+of `libexec/gcc/xtensa-esp32s3-elf/8.4.0/cc1plus.exe` — a leftover `gcc.exe` makes it look
+finished when it is not.
 
-## 九、当前状态（2026-11-07 收尾）
+## 9. Status (2026-11-07)
 
-| 阶段 | 状态 |
+| Stage | State |
 |---|---|
-| 官网手册/原理图/数据手册/驱动 | ✅ `manual/` |
-| 板卡识别（COM3 = CH343，COM4 = 原生 USB） | ✅ |
-| arduino-cli 工具链（短路径 + 本地包 + NimBLE 1.4.3） | ✅ |
-| v2 固件（运行时输码 + SMP PIN + A2/07/A2/08 + A0 解析） | ✅ 编译 536401 B / 烧录 Hash 校验 / 启动横幅全通过 |
-| 硬件实测（16MB Flash、8MB Octal PSRAM 闲置） | ✅ 已查明，配置升级留到实测后 |
-| **真实热水器 BLE 连通实测** | ⏳ **唯一待办，需人在热水器旁操作** |
+| Vendor manuals / schematic / datasheet / driver | ✅ `manual/` |
+| Board identification (COM3 = CH343, COM4 = native USB) | ✅ |
+| arduino-cli toolchain (short path, local packages, NimBLE 1.4.3) | ✅ |
+| v2 firmware (runtime code entry, SMP pin, `A2/07`/`A2/08`, A0 parsing) | ✅ builds at 536 569 B, flash hash verified, boot banner clean |
+| Real-heater BLE session | ✅ **passed**: encrypted link, `A2/07` = `01`, `A2/08` = `01`, steady A0 |
+| Power-cycle recovery | ✅ reconnects unattended using the code stored in NVS |
+| Hardware facts (16 MB flash, 8 MB Octal PSRAM idle) | ✅ identified; the configuration upgrade is the next step |
+| Wi-Fi / MQTT / Home Assistant | ⏳ next |
 
-### 现在就差这四步
+> ⚠️ Do not run `gateway_cli.py --flash` casually: changing the FQBN triggers a full rebuild that
+> takes over 20 minutes on Windows, and it flashes a firmware whose boot has not been verified
+> yet. To just watch the console use `python gateway_cli.py` with no arguments, or the control
+> panel.
 
-```
-1. 关掉电脑上的 Python 界面 / 桥接（两个 BLE 客户端会抢热水器）
-2. 双击 gateway/启动控制面板.bat（置顶窗口；日志自动落盘 logs/panel_*.log）
-3. 热水器面板 →「清除配对」→ 取新的 6 位码
-4. 窗口里输入 6 位码回车 → 看 [SMP] / [AUTH] / [A0] 三段输出
-```
+### Next cut once the PSRAM upgrade is done
 
-> ⚠️ 实测阶段**不要跑 `gateway_cli.py --flash`**：开过一次 16M+PSRAM 的全量重编译，
-> Windows 上 11 分钟仍停在库探测，而且会烧进一个尚未验证启动的固件。
-> 只连串口用 `python gateway_cli.py`（不带参数）或直接双击控制面板。
-> 窗口关了日志也不丢，把 `logs/panel_*.log` 发回来即可分析。
-
-### 实测通过后的下一刀
-
-把 `gateway_cli.py` 的 FQBN 换成第七节的目标值 → `--flash` → 确认启动日志变成
-`Flash=16MB  PSRAM=8388608 bytes` → 再上 WiFi / MQTT / HA 自动发现。
-已验证固件的三个 bin 建议备份在编译工作区（默认 `~/esp/backup_v2/`），出问题可用 esptool 直接烧回。
+Switch the FQBN in `gateway_cli.py` to the target value in §7 → `--flash` → confirm the boot
+banner reports `Flash=16MB  PSRAM=8388608 bytes` → then move on to Wi-Fi / MQTT / discovery.
+Keep a copy of the verified binaries in the build workspace (default `~/esp/backup_v2/`) so
+esptool can restore them.

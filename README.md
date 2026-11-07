@@ -248,7 +248,7 @@ change is a patch, minor or major bump live in
 ├── protocol_vectors.json   ★ Golden vectors (Python ↔ ESP32, byte-for-byte)
 ├── API.md                  Interface contract (additive only, machine-checked in CI)
 ├── BLE_PROTOCOL.md         Protocol notes: frame format, field tables, unexplored areas
-├── docs/                   Architecture and decision records (translation in progress)
+├── docs/                   Architecture and decision records (ADR-001 to ADR-006)
 ├── esp32/                  ESP32 gateway: firmware / toolchain / manual download guide
 ├── config.example.json     Config template (contains no real data)
 ├── pyproject.toml          Packaging metadata (`pip install .`)

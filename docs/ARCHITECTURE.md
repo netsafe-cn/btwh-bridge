@@ -1,203 +1,210 @@
-# 架构与决策记录
+# Architecture and decision records
 
-本文记录「为什么这么设计」。改动架构前请先读一遍，并在文末 ADR 追加新记录。
+This document explains **why the project is shaped the way it is**. Read it before changing
+the architecture, and append a new ADR at the end when you do.
 
 ---
 
-## 1. 分层
+## 1. Layers
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  Home Assistant / 米家 / Node-RED / 任意 MQTT 客户端          │
-└───────────────────────────┬──────────────────────────────────┘
-                            │ MQTT Discovery（目标）
-┌───────────────────────────▼──────────────────────────────────┐
-│  ESP32 固件                                                   │
-│  ┌──────────────┐  ┌──────────────┐  ┌────────────────────┐  │
-│  │ provisioning │  │   pairing    │  │  telemetry / cmd   │  │
-│  │  配网(WiFi)   │  │ 配对(热水器) │  │  状态上报 / 调温    │  │
-│  └──────┬───────┘  └──────┬───────┘  └─────────┬──────────┘  │
-│         │                 │                    │             │
-│         └─────────────────┴────────────────────┘             │
-│                           │                                  │
-│                  ┌────────▼────────┐                         │
-│                  │   bosch_proto   │  纯 C，无框架依赖        │
-│                  │ 组帧/填充/异或/  │  PC 上可单测            │
-│                  │ 分片/字段解析    │                         │
-│                  └────────┬────────┘                         │
-└───────────────────────────┼──────────────────────────────────┘
-                            │ BLE GATT（FIFO / CREDITS）
-┌───────────────────────────▼──────────────────────────────────┐
-│  博世 Therm 4800i 燃气热水器（BLE 名 BTWH-001-xxxx）           │
-└──────────────────────────────────────────────────────────────┘
-
-Python 侧同构：
-  BoschProtocol（纯编解码）→ BoschDevice（单次会话）→ BoschService（常驻服务）
-  参考实现是协议的**可执行规范**，C++ 实现必须与它逐字节一致
+Home Assistant / Mi Home / Node-RED / any MQTT client
+        ^
+        | MQTT Discovery (target)
+ESP32 firmware
+  |-- provisioning   Wi-Fi setup
+  |-- pairing        heater BLE authorisation
+  |-- telemetry      state reporting / setpoint
+  `-- bosch_proto    pure C, no framework, unit-testable on a PC
+        ^
+        | BLE GATT (FIFO / CREDITS)
+Bosch Therm 4800i gas water heater (BLE name BTWH-001-xxxx)
 ```
 
-| 层 | 职责 | 不做什么 |
+The Python side mirrors the same shape:
+
+```
+BoschProtocol (pure codec) -> BoschDevice (one session) -> BoschService (resident)
+```
+
+The Python reference implementation **is the executable specification** of the protocol;
+the C++ side must match it byte for byte.
+
+| Layer | Responsibility | Not responsible for |
 |---|---|---|
-| `bosch_proto` / `BoschProtocol` | 组帧、校验、填充、逐片异或、字段解析 | 不碰 IO、不知道蓝牙 |
-| 会话层 | 连接、订阅、单飞收发、超时重发、登录状态机 | 不管重连策略 |
-| 服务层 / 固件主循环 | 重连退避、命令队列、状态缓存、上报 | 不解析协议字节 |
-| 接入层 | MQTT Discovery、HA 实体映射 | 不含协议知识 |
+| `bosch_proto` / `BoschProtocol` | Framing, checksum, stuffing, per-fragment XOR, field parsing | No I/O, no knowledge of Bluetooth |
+| Session | Connect, subscribe, single-flight request/response, timeout and resend, login state machine | Reconnection policy |
+| Service / firmware main loop | Reconnect backoff, command queue, state cache, reporting | Parsing protocol bytes |
+| Integration | MQTT Discovery, HA entity mapping | Any protocol knowledge |
 
 ---
 
-## 2. 架构决策记录（ADR）
+## 2. Architecture decision records
 
-### ADR-001 协议层与框架解耦
+### ADR-001 Decouple the protocol from any framework
 
-**背景**：协议逆向成果是全项目最值钱的资产。若把它写进 Arduino `setup()/loop()`，
-换框架就要重写，也无法在 PC 上跑单测。
+**Context**: the reverse-engineered protocol is the most valuable asset in the project. Written
+inside Arduino `setup()/loop()` it could not be reused under another framework, nor unit-tested
+on a PC.
 
-**决策**：协议层抽成纯 C 库 `bosch_proto` + Python 参考实现，两者用
-`protocol_vectors.json` 的十六进制向量对齐。
+**Decision**: extract it as a pure C library (`bosch_proto`) plus a Python reference
+implementation, aligned by the hex vectors in `protocol_vectors.json`.
 
-**代价**：多一层封装，C 与 Python 要各维护一份实现。
+**Cost**: an extra indirection, and two maintained implementations (C and Python).
 
-**收益**：协议可在 CI 单测；更换固件框架不影响协议；ESPHome / Arduino / IDF
-都能复用同一份协议代码。
-
----
-
-### ADR-002 固件主干选 ESP-IDF，而非 Arduino 或 ESPHome
-
-**背景**：早期用 Arduino-ESP32 core + NimBLE-Arduino 快速验证，能跑通，但长期有问题。
-
-**决策**：正式固件迁 ESP-IDF + NimBLE。
-
-**理由**：
-
-- arduino-esp32 2.x/3.x 的 NimBLE 版本分裂，本项目被迫锁死 1.4.3，升级路径堵死
-- 8MB Octal PSRAM 需要 IDF 的内存配置能力才能真正用起来
-- OTA、双分区回滚、看门狗、任务优先级、深度睡眠在 IDF 下可控
-- 断线重连与 BLE 事件处理在 IDF 下更可预测
-
-**代价**：工具链门槛更高，贡献者需要装 IDF；首次编译慢。
-
-**缓解**：提供 Docker / `idf.py` 一键脚本；文档写清最短路径。
-
-**注意**：ESPHome 不作为主干，但可以作为二期的 external component 分发入口，
-覆盖只想要 YAML 的那部分用户。
+**Benefit**: the protocol is unit-tested in CI; swapping firmware frameworks no longer touches
+it; ESPHome, Arduino and IDF can all reuse the same code.
 
 ---
 
-### ADR-003 HA 接入优先 MQTT Discovery，而非 ESPHome native API
+### ADR-002 ESP-IDF is the firmware trunk, not Arduino or ESPHome
 
-**背景**：两种接入方式都能让 HA 自动发现实体。
+**Context**: Arduino-ESP32 core plus NimBLE-Arduino got a feasibility build running quickly, but
+it does not hold up long term.
 
-**决策**：先做 MQTT Discovery。
+**Decision**: move the production firmware to ESP-IDF + NimBLE.
 
-**理由**：
+**Reasons**:
 
-- 不绑定任何构建体系，HA / 米家 / Node-RED / 自建服务都能用
-- 用户不必为了接入而改用 ESPHome 编译固件
-- 状态与命令模型简单，易测试（纯 JSON，可离线断言）
+- NimBLE versions diverge between arduino-esp32 2.x and 3.x; the project is pinned to 1.4.3 and
+  has no upgrade path
+- 8 MB Octal PSRAM only becomes usable with IDF's memory configuration
+- OTA, dual-bank rollback, watchdogs, task priorities and deep sleep are all controllable in IDF
+- Reconnection and BLE event handling are more predictable there
 
-**代价**：需要用户有一个 MQTT broker（HA 用户通常已有）。
+**Cost**: a steeper toolchain; contributors must install IDF; the first build is slow.
 
-**备选**：ESPHome external component，二期作为「零配置 HA」通道。
+**Mitigation**: provide a Docker image and one-shot `idf.py` scripts; document the shortest path.
+
+**Note**: ESPHome will not be the trunk, but it can ship in phase 2 as an external component for
+users who only want YAML.
 
 ---
 
-### ADR-004 配网与配对正交
+### ADR-003 Prefer MQTT Discovery over the ESPHome native API
 
-**背景**：容易误把「让设备上网」和「让热水器信任 ESP32」当成一个「配对模式」。
+**Context**: both approaches let Home Assistant discover entities automatically.
 
-**决策**：两条独立状态轴，见 `device_fsm.py` 与 `API.md §9`。
+**Decision**: MQTT Discovery first.
 
-| 轴 | 状态 | 持久性 |
+**Reasons**:
+
+- Nothing is bound to a build system: HA, Mi Home, Node-RED and self-hosted services all work
+- Users do not have to switch to ESPHome just to integrate
+- The state and command model is simple and testable (plain JSON, assertable offline)
+
+**Cost**: the user needs an MQTT broker (HA users usually have one already).
+
+**Alternative**: an ESPHome external component, offered later as the zero-configuration path.
+
+---
+
+### ADR-004 Provisioning and pairing are orthogonal
+
+**Context**: it is tempting to treat "get the ESP32 online" and "make the heater trust it" as one
+"pairing mode".
+
+**Decision**: two independent state axes; see `device_fsm.py` and `API.md §9`.
+
+| Axis | States | Persistence |
 |---|---|---|
-| 配网 | `unprovisioned → provisioning → connecting → connected / failed` | 一次性，凭证存 NVS |
-| 配对 | `idle → window_wait → pin_ready → bonding → login → online / failed` | 可反复，6 位码短时效 |
+| Provisioning | `unprovisioned → provisioning → connecting → connected / failed` | One-off; credentials in NVS |
+| Pairing | `idle → window_wait → pin_ready → bonding → login → online / failed` | Repeatable; the 6-digit code is short-lived |
 
-**理由**：耦合的后果很具体——换路由器就得跑到热水器面板重新「清除配对」，
-热水器掉线又得重输 WiFi 密码。`reset_wifi_only()` 明确只清 WiFi、保留 bond 与 pin。
+**Reason**: the consequences of coupling are concrete — changing router would mean walking to the
+heater panel to clear pairing, and a heater drop would mean re-entering the Wi-Fi password.
+`reset_wifi_only()` explicitly clears Wi-Fi while keeping the bond and the pin.
 
-**代价**：多一层状态管理，UI 要分别展示两个状态。
-
----
-
-### ADR-005 接口稳定性用「签名冻结 + 黄金向量」双重锁定
-
-**背景**：项目要开源，社区会依赖 `bosch_api`。口头承诺「只增不改」没有约束力。
-
-**决策**：
-
-- `api_contract.json` 存签名快照，`tests/test_contract.py` 比对。删除符号、改参数名、
-  改默认值、把可选改成必填 → 回归变红；末尾追加带默认值的可选参数 → 允许
-- `protocol_vectors.json` 存关键帧的十六进制，Python 与 C++ 双向验证
-
-**代价**：每次有意扩展都要跑 `--update` 并 review diff。
-
-**收益**：breaking change 不可能悄悄混进 PR。
+**Cost**: one more layer of state, and the UI has to show both.
 
 ---
 
-### ADR-006 配对码运行时输入，不编译进固件
+### ADR-005 Lock interface stability with a frozen signature snapshot plus golden vectors
 
-**背景**：面板码短时效（窗口约 60 秒）且每次都变。早期固件把它写死，换码就要重编译，
-而 Windows 上全量编译远超窗口时间。
+**Context**: the project is open source and the community will depend on `bosch_api`. A verbal
+promise of "additive only" carries no weight.
 
-**决策**：串口 / 桌面面板运行时输码，NVS 持久化；码同时用于 SMP passkey 与 `A2/08`。
+**Decision**:
 
-**代价**：首次部署需要一次人工交互（本来就必须，因为开窗口要人按面板）。
+- `api_contract.json` stores the signature snapshot and `tests/test_contract.py` compares against
+  it. Removing a symbol, renaming a parameter, changing a default, or turning an optional
+  parameter into a required one turns the build red; appending an optional parameter with a
+  default is allowed
+- `protocol_vectors.json` stores key frames as hex, verified in both Python and C++
 
-**约束**：码不得出现在日志、MQTT 上报或 `snapshot()` 里，只上报 `has_pin` 布尔。
+**Cost**: every intentional extension needs `--update` and a diff review.
+
+**Benefit**: a breaking change cannot slip into a pull request unnoticed.
 
 ---
 
-## 3. 目标仓库结构
+### ADR-006 The pairing code is entered at runtime, never compiled in
+
+**Context**: the panel code is short-lived (a window of about 60 s) and different every time. Early
+firmware hard-coded it, so each change meant a rebuild — and on Windows a full rebuild takes far
+longer than the window.
+
+**Decision**: enter the code over serial or the desktop panel at runtime, persist it in NVS, and
+use the same digits for both the SMP passkey and `A2/08`.
+
+**Cost**: the first deployment needs one human interaction (unavoidable anyway — a human has to
+press the panel to open the window).
+
+**Constraint**: the code must never appear in logs, MQTT reports or `snapshot()`; only the boolean
+`has_pin` is published.
+
+---
+
+## 3. Target repository layout
 
 ```
-├── bosch_proto/            C 协议库（无框架依赖）+ 向量测试
-├── firmware/               ESP-IDF 工程
+├── bosch_proto/            C protocol library (no framework) + vector tests
+├── firmware/               ESP-IDF project
 │   ├── main/
-│   │   ├── provisioning/   Improv WiFi + captive portal 兜底
-│   │   ├── pairing/        SMP + A2/07 + A2/08 状态机
-│   │   ├── telemetry/      状态缓存 / MQTT Discovery
-│   │   └── proto_port/     bosch_proto 的 IDF 适配层
-│   └── test/               固件侧单测（宿主上跑）
-├── python/                 Python 参考实现与工具
-├── tests/                  向量与契约测试
-├── docs/                   本目录：架构、协议、路线图
-└── tools/                  log_diag、采集分析、向量生成
+│   │   ├── provisioning/   Improv Wi-Fi + captive portal fallback
+│   │   ├── pairing/        SMP + A2/07 + A2/08 state machine
+│   │   ├── telemetry/      state cache / MQTT Discovery
+│   │   └── proto_port/     IDF adapter for bosch_proto
+│   └── test/               host-side firmware tests
+├── python/                 Python reference implementation and tools
+├── tests/                  vector and contract tests
+├── docs/                   this directory: architecture, protocol, roadmap
+└── tools/                  log_diag, capture analysis, vector generation
 ```
 
-当前代码仍平铺在根目录（历史原因）。迁移会破坏已有引用，**等到阶段 2 一次性做**，
-不做渐进式搬家。
+The library modules currently sit at the repository root, with `tests/` and `tools/` alongside
+them. Moving them into the layout above would break every published import, so it lands in phase 2
+as a single change — no gradual migration.
 
 ---
 
-## 4. 路线图
+## 4. Roadmap
 
-| 阶段 | 内容 | 出口条件 |
+| Phase | Content | Exit criteria |
 |---|---|---|
-| **0 · 已完成** | 协议逆向、Python 参考实现、测试体系（112 项）、ESP32 可行性固件 | 回归全绿、固件启动正常 |
-| **1 · 当前** | 真实热水器连通实测 → 配网/配对模块 → MQTT Discovery | 三段日志（SMP/A2/A0）全通；HA 能自动发现实体 |
-| **2** | 迁 ESP-IDF、OTA、看门狗、断线重连加固、仓库结构调整 | 连续跑 7 天不掉线；OTA 可回滚 |
-| **3** | ESPHome external component（可选）、多型号字段适配、更多语言绑定 | 至少两个型号被社区验证 |
+| **0 · done** | Protocol work, Python reference implementation, test suite (136 tests), ESP32 feasibility firmware | Regression green; firmware boots |
+| **1 · current** | Real-heater verification → provisioning/pairing module → MQTT Discovery | All three log stages pass (SMP / A2 / A0); HA discovers the entities |
+| **2** | Move to ESP-IDF, OTA, watchdog, hardened reconnection, repository restructure | Seven days without a drop; OTA rollback works |
+| **3** | Optional ESPHome external component, field mapping for more models, more language bindings | At least two models verified by the community |
 
 ---
 
-## 5. 风险与缓解
+## 5. Risks and mitigations
 
-| 风险 | 影响 | 缓解 |
+| Risk | Impact | Mitigation |
 |---|---|---|
-| 厂商固件升级改协议 | 项目失效 | 字段解析集中在协议层；上报原始帧便于快速定位；文档记录固件版本 |
-| 厂商法务 | 项目下架 | 不含厂商产物、不做破解、项目名中性化、README 明确非官方 |
-| 设备连接频率保护 | 密集重连后被拒 | 服务层退避重连；固件侧限制重连速率 |
-| BLE 单客户端限制 | 手机 App 与网关互斥 | 文档明确；配网期提示用户断开 App |
-| 密钥误提交 | 用户设备暴露 | `.gitignore` + CI secrets job + `config.example.json` 脱敏 |
-| 两端协议漂移 | 隐蔽故障 | 黄金向量双向验证，CI 强制 |
-| Windows 路径长度 / 编译慢 | 贡献者流失 | 短路径工作区脚本；文档写清；阶段 2 提供 Docker |
+| Vendor firmware changes the protocol | Project stops working | Field parsing is centralised in the protocol layer; raw frames can be reported for fast diagnosis; firmware versions are recorded in the docs |
+| Legal pressure from the vendor | Project taken down | No vendor artefacts, no cracking, neutral project name, explicit non-affiliation in the README |
+| Device rate-limits connections | Refused after rapid retries | Backoff in the service layer; the firmware also caps its reconnect rate |
+| BLE allows one client | Phone app and gateway are mutually exclusive | Documented; provisioning tells the user to close the app |
+| Secrets committed by accident | A user's device exposed | `.gitignore`, a CI secrets job, and a sanitised `config.example.json` |
+| The two implementations drift | Silent, hard-to-find faults | Golden vectors verified in both directions, enforced by CI |
+| Windows path limits / slow builds | Contributors give up | Short-path workspace script; documented; Docker in phase 2 |
 
 ---
 
-## 6. 变更记录
+## 6. Change log
 
-| 日期 | 变更 |
+| Date | Change |
 |---|---|
-| 2026-11-07 | 初版：分层、6 条 ADR、目标结构、路线图、风险表 |
+| 2026-11-07 | First version: layers, six ADRs, target layout, roadmap, risk table |
