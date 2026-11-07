@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
-"""pair_once.py —— 一条命令跑完「输码 → 连接 → SMP → 登录 → 收 A0」
+"""pair_once.py - one command: code -> connect -> SMP -> login -> A0
 
-配对窗口只有几十秒，手动开窗口、找输入框、敲码很容易错过。
-这个脚本把整个流程压成一条命令，跑完直接给结论。
+The pairing window lasts tens of seconds, and opening it, finding the box and typing the
+code by hand is easy to miss. This collapses the whole flow into one command.
 
-用法：
-    python pair_once.py 311522              # 默认观察 30 秒
-    python pair_once.py 311522 --wait 45    # 设备响应慢时多等一会儿
-    python pair_once.py 311522 --reboot     # 先重启板子再发码（默认不重启，最快）
+Usage:
+    python pair_once.py 311522              # watch for 30 s by default
+    python pair_once.py 311522 --wait 45    # wait longer on a slow device
+    python pair_once.py 311522 --reboot     # reboot the board first (skipped by default)
     python pair_once.py 311522 --port COM3
 
-退出码：0 = 三段判据全部满足；2 = 未通过（原因见输出）
+Exit code: 0 = all three criteria met; 2 = not working (reason in the output)
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ LOGDIR = HERE.parent / "logs"
 sys.path.insert(0, str(HERE))
 try:
     from log_diag import diagnose
-except Exception:                       # 诊断器缺失也不影响主流程
+except Exception:                       # a missing diagnostic helper must not break the flow
     diagnose = None
 
 
@@ -44,28 +44,28 @@ def pick_port() -> str | None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("code", help="热水器面板显示的 6 位配对码")
-    ap.add_argument("--wait", type=float, default=30.0, help="发码后观察秒数（默认 30）")
-    ap.add_argument("--port", default=None, help="串口，默认自动找 CH343")
-    ap.add_argument("--reboot", action="store_true", help="先重启板子再发码")
+    ap.add_argument("code", help="six-digit pairing code shown on the heater panel")
+    ap.add_argument("--wait", type=float, default=30.0, help="seconds to observe (default 30)")
+    ap.add_argument("--port", default=None, help="serial port; defaults to the CH343 one")
+    ap.add_argument("--reboot", action="store_true", help="reboot the board before sending")
     a = ap.parse_args()
 
     code = (a.code or "").strip()
     if not code.isdigit() or len(code) != 6:
-        print("配对码应为 6 位数字，收到：%r" % a.code)
+        print("pairing code must be six digits, got: %r" % a.code)
         return 1
 
     import serial
     port = a.port or pick_port()
     if not port:
-        print("找不到 CH343 串口，请确认板子已插好，或用 --port 指定")
+        print("no CH343 serial port; check the board is plugged in, or pass --port")
         return 1
 
     try:
         ser = serial.Serial(port, 115200, timeout=0.2)
     except Exception as e:
-        print("打不开 %s：%s" % (port, e))
-        print("→ 如果控制面板 / gateway_cli 正在运行，先关掉它（同一串口只能一个进程占用）")
+        print("cannot open %s: %s" % (port, e))
+        print("-> if the panel or gateway_cli is running, close it (one process per port)")
         return 1
 
     LOGDIR.mkdir(parents=True, exist_ok=True)
@@ -83,13 +83,13 @@ def main() -> int:
         ser.reset_input_buffer()
 
         if a.reboot:
-            emit("[--] 重启板子…")
+            emit("[--] rebooting the board...")
             ser.write(b"reboot\n")
             ser.flush()
             time.sleep(2.0)
             ser.reset_input_buffer()
 
-        emit("[--] 串口 %s @115200，发送面板码 %s" % (port, code))
+        emit("[--] %s @115200, sending panel code %s" % (port, code))
         ser.write((code + "\n").encode("ascii"))
         ser.flush()
 
@@ -115,17 +115,17 @@ def main() -> int:
         stages = diagnose(text)
         for stage, verdict, advice in stages:
             print("[%-12s] %s" % (stage, verdict))
-            if advice != "无需处理":
+            if advice != "nothing to do":
                 print("               → %s" % advice)
-        ok = (any("✓ 链路已加密" in v for _, v, _ in stages)
-              and any("✓ 应答 01" in v for _, v, _ in stages)
-              and any("✓ 收到" in v for _, v, _ in stages))
+        ok = (any("+ link encrypted" in v for _, v, _ in stages)
+              and any("+ reply 01" in v for _, v, _ in stages)
+              and any("state frames received" in v for _, v, _ in stages))
     else:
-        ok = "A2/08 应答 = 01" in text and "认证完成" in text
+        ok = "A2/08 reply = 01" in text and "authentication complete" in text
     print("=" * 68)
-    print("日志：%s" % logpath)
-    print("结论：%s" % ("✓ 通过，三段判据全部满足" if ok
-                       else "✗ 未通过，按上面第一条 ✗ 处理"))
+    print("log: %s" % logpath)
+    print("verdict: %s" % ("+ passed, all three criteria met" if ok
+                       else "x failed; follow the first x above"))
     return 0 if ok else 2
 
 

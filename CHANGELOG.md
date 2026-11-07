@@ -15,6 +15,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   run_tests.py` is unchanged. Library modules stay at the repository root, so
   `import bosch_api` is unaffected.
 
+- Firmware serial output, the ESP32 helper scripts and the diagnostic tool are English too,
+  including the log fragments `log_diag`, `pair_once` and the control panel match on.
 - All user-facing text is English: exception messages (`GATT not ready`, `not connected`),
   `BemfaClient.status` (`not started`, `not configured`, `connected`, `disconnected`) and
   `BridgeFsm.last_error`. Match on exception types and state enums, never on message text.

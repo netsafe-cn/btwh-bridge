@@ -1,24 +1,24 @@
 /*
  * ============================================================================
- * 博世热水器 BLE 网关  v2.0  ——  微雪 ESP32-S3-DEV-KIT-N8R8
+ * Bosch heater BLE gateway  v2.0  --  Waveshare ESP32-S3-DEV-KIT-N8R8
  * ----------------------------------------------------------------------------
- * 阶段一目标（可行性验证，全部通过再上 WiFi/MQTT）：
- *   ① 连上热水器 + 完成 SMP 配对（面板码就是 BLE PIN）
- *   ② A2/07 提交 MAC + A2/08 提交配对码，拿到授权
- *   ③ 收到 A0 广播并正确解析字段
+ * Phase one (feasibility, complete before any Wi-Fi/MQTT work):
+ *   1) connect to the heater and finish SMP pairing (the panel code is the BLE pin)
+ *   2) A2/07 submits the MAC, A2/08 submits the pairing code, authorisation follows
+ *   3) A0 broadcasts arrive and every field parses correctly
  *
- * v2.0 相比 v1.0 的两个关键修正：
- *   1) 【致命】v1 用 Just Works + NoInputNoOutput，完全没有处理 SMP PIN。
- *      实测面板码同时充当 "BLE passkey" 和 "应用层密码"，
- *      配对窗口打开时设备请求 PROVIDE_PIN。v2 实现 onPassKeyRequest() 返回面板码。
- *   2) 【效率】配对码不再写死在固件里，改为运行时从串口输入。
- *      面板码只有几分钟寿命，v1 每换一次码都要重新编译+烧录（2 分钟以上），
- *      v2 烧录一次即可反复输码、反复重试。
+ * Two defects fixed in v2.0 against v1.0:
+ *   1) CRITICAL: v1 used Just Works + NoInputNoOutput and ignored the SMP pin entirely.
+ *      Measured: the panel code is both the BLE passkey and the application password,
+ *      and the device asks for PROVIDE_PIN while its window is open. v2 answers it.
+ *   2) EFFICIENCY: the code is no longer compiled in; it is entered over serial at runtime.
+ *      It lives for minutes, and v1 needed a rebuild plus reflash of 2 minutes or more per
+ *      code change. v2 flashes once and then accepts any number of codes and retries.
  *
- * 硬件：微雪 ESP32-S3-DEV-KIT-N8R8（8MB Flash / 8MB PSRAM）
- * 日志：COM3（CH343 → UART0），115200。烧录也走 COM3。
- * 依赖：NimBLE-Arduino 1.4.3（platformio.ini 已锁定，勿升 2.x）
- * 协议依据：BLE_PROTOCOL.md / bosch_api.py（逐字节对齐，136 项测试全绿）
+ * Hardware: Waveshare ESP32-S3-DEV-KIT-N8R8 (8 MB flash / 8 MB PSRAM)
+ * Logs: COM3 (CH343 -> UART0) at 115200. Flashing also uses COM3.
+ * Depends on: NimBLE-Arduino 1.4.3 (pinned in platformio.ini; do not move to 2.x)
+ * Protocol reference: BLE_PROTOCOL.md / bosch_api.py (byte-identical, 136 tests green)
  * ============================================================================
  */
 
@@ -28,11 +28,11 @@
 #include <ctype.h>
 #include <string.h>
 
-// ---------------------------------------------------------------- 默认配置
-// 占位值。首次使用：scan 找到热水器 → `addr <热水器MAC>` → `mac <本机蓝牙MAC>`
-static const char* DEF_DEVICE_MAC = "AA:BB:CC:DD:EE:FF";   // 热水器 BLE 地址（占位）
-static const char* DEF_LOGIN_MAC  = "11:22:33:44:55:66";   // 已授权主机蓝牙 MAC（占位）
-static const char* DEF_PIN        = "";                     // 面板码：必须运行时输入
+// ---------------------------------------------------------------- defaults
+// Placeholders. First run: scan, then `addr <heater MAC>` and `mac <host MAC>`.
+static const char* DEF_DEVICE_MAC = "AA:BB:CC:DD:EE:FF";   // heater BLE address (placeholder)
+static const char* DEF_LOGIN_MAC  = "11:22:33:44:55:66";   // authorised host MAC (placeholder)
+static const char* DEF_PIN        = "";                     // panel code: entered at runtime
 
 static const char* SVC_UUID  = "ff4396a6-50a8-4fc0-bcf6-228e82dfedb0";
 static const char* FIFO_UUID = "ff4396a6-50a8-4fc0-bcf6-228e82dfedb2";
@@ -45,7 +45,7 @@ static const uint8_t CMD_LOGIN  = 0xA2;
 static const uint8_t CMD_STATE  = 0xA0;
 static const size_t  CHUNK      = 20;
 
-// ---------------------------------------------------------------- 全局状态
+// ---------------------------------------------------------------- global state
 static Preferences gPrefs;
 
 static String  gDevMac, gLoginMac, gPin;
@@ -59,8 +59,8 @@ static uint8_t gRxBuf[1024];
 static size_t  gRxLen = 0;
 static uint8_t gMid   = 0;
 
-static volatile int      gAuthResp   = -1;   // A2/07 的 data[1]
-static volatile int      gPassResp   = -1;   // A2/08 的 data[1]
+static volatile int      gAuthResp   = -1;   // A2/07 data[1]
+static volatile int      gPassResp   = -1;   // A2/08 data[1]
 static volatile uint32_t gA0Count    = 0;
 static volatile uint32_t gLastA0Ms   = 0;
 static volatile bool     gEncrypted  = false;
@@ -73,7 +73,7 @@ static String   gSerialLine;
 enum Phase { PH_WAIT_CODE, PH_RUNNING, PH_FAILED };
 static Phase gPhase = PH_WAIT_CODE;
 
-// ---------------------------------------------------------------- 小工具
+// ---------------------------------------------------------------- helpers
 static void banner(const char* s) { Serial.printf("\n===== %s =====\n", s); }
 
 static bool parseMac(const String& s, uint8_t out[6]) {
@@ -98,12 +98,12 @@ static String macToStr(const uint8_t m[6]) {
   return String(b);
 }
 
-// ---------------------------------------------------------------- 协议编解码
+// ---------------------------------------------------------------- protocol codec
 static void xorBuf(uint8_t* p, size_t n) {
   for (size_t i = 0; i < n; i++) p[i] ^= XOR_KEY[i % 9];
 }
 
-// 逻辑帧：7B7B | sender recv mid cmd data... | chk | 7D7D
+// Logical frame: 7B7B | sender recv mid cmd data... | chk | 7D7D
 static size_t buildFrame(uint8_t* out, uint8_t recv, uint8_t mid,
                          uint8_t cmd, const uint8_t* data, size_t dlen) {
   size_t i = 0;
@@ -117,7 +117,7 @@ static size_t buildFrame(uint8_t* out, uint8_t recv, uint8_t mid,
   return i;
 }
 
-// 插填充：frame[2 .. len-3] 内出现 7B/7D 时后补 00（含 chk 字节，对齐 Python stuff()）
+// Stuffing: a 7B/7D inside frame[2 .. len-3] gets a 00 after it (chk included, as in Python)
 static size_t stuffFrame(const uint8_t* in, size_t n, uint8_t* out) {
   if (n <= 4) { memcpy(out, in, n); return n; }
   size_t o = 0;
@@ -144,8 +144,8 @@ static size_t unstuffFrame(const uint8_t* in, size_t n, uint8_t* out) {
   return o;
 }
 
-// ---------------------------------------------------------------- A0 状态解析
-// 字段偏移依据 2026-11-01 148 帧实测校准（BLE_PROTOCOL.md §6）
+// ---------------------------------------------------------------- A0 parsing
+// Offsets calibrated against 148 captured frames on 2026-11-01 (BLE_PROTOCOL.md §6)
 static void dumpA0(const uint8_t* d, size_t n) {
   auto b = [&](int i) -> int { return (i < (int)n) ? d[i] : 0; };
   int  ftype = b(0);
@@ -159,21 +159,21 @@ static void dumpA0(const uint8_t* d, size_t n) {
   int   fault = b(11);
   bool  ion   = (b(10) & 0x10) != 0;
 
-  // 实测偏移仅对 Type1 验证过；Type0 沿用反编译表
+  // Offsets verified on Type1 only; Type0 keeps its own set
   int   outI  = t1 ? 28 : 21;
   float tOut  = (float)b(outI) + b(outI+1) / 100.0f;
   float flow  = t1 ? b(21) / 10.0f : b(8) / 10.0f;
   int   power = t1 ? b(13) : b(9);
   int   fan   = t1 ? (b(15) * 100 + b(16)) : b(14);
 
-  Serial.printf("[A0] T%d 出水%.1f 进水%.1f 炉腔%.1f 机身%.1f 设定%d "
-                "功率%d%% 水流%.1fL/min 风机%drpm 电离%s 故障%s\n",
+  Serial.printf("[A0] T%d out%.1f in%.1f chamber%.1f chassis%.1f set%d "
+                "power%d%% flow%.1fL/min fan%drpm flame%s fault%s\n",
                 ftype, tOut, tIn, tChm, tBox, setp, power, flow, fan,
-                ion ? "有" : "无", fault ? String(fault, HEX).c_str() : "无");
+                ion ? "yes" : "no", fault ? String(fault, HEX).c_str() : "none");
 
-  if (t1) {  // 反编译推测字段，标注以便后续核对
-    Serial.printf("     [推测] 环境%.1f 环境设定%.1f 燃气设定%.1f "
-                  "压力%dPa 模式[%d]=%02X 浴室[%d]=%02X\n",
+  if (t1) {  // suspected fields, marked so they can be confirmed later
+    Serial.printf("     [guess] ambient%.1f ambient_set%.1f gas_set%.1f "
+                  "pressure%dPa mode[%d]=%02X bath[%d]=%02X\n",
                   temp(16), temp(18), temp(22), b(27) * 10, 32, b(32), 33, b(33));
   }
   if (gRawDump) {
@@ -183,13 +183,13 @@ static void dumpA0(const uint8_t* d, size_t n) {
   }
 }
 
-// ---------------------------------------------------------------- 收帧分发
+// ---------------------------------------------------------------- frame dispatch
 static void onFrame(const uint8_t* f, size_t n) {
   if (n < 9) return;
   uint8_t sum = 0;
   for (size_t i = 2; i < n - 3; i++) sum += f[i];
   if (sum != f[n-3]) {
-    Serial.printf("[RX] 丢弃坏帧 chk=%02X expect=%02X len=%d\n", f[n-3], sum, (int)n);
+    Serial.printf("[RX] dropping frame chk=%02X expect=%02X len=%d\n", f[n-3], sum, (int)n);
     return;
   }
   uint8_t mid = f[4], cmd = f[5];
@@ -203,18 +203,18 @@ static void onFrame(const uint8_t* f, size_t n) {
   } else if (cmd == CMD_LOGIN && plen >= 2) {
     if (p[0] == 0x07) {
       gAuthResp = p[1];
-      Serial.printf("[AUTH] ★ A2/07 应答 = %02X  (%s)\n", p[1],
-        p[1] == 0x01 ? "免密授权" : p[1] == 0x02 ? "要求配对码" :
-        p[1] == 0x00 ? "MAC 未授权(走配对码)" :
-        p[1] == 0x3C ? "设备冷却中(30s)" :
-        p[1] == 0x5A ? "设备要求等 90s" : "其它");
+      Serial.printf("[AUTH] + A2/07 reply = %02X  (%s)\n", p[1],
+        p[1] == 0x01 ? "passwordless" : p[1] == 0x02 ? "code required" :
+        p[1] == 0x00 ? "window closed (code path)" :
+        p[1] == 0x3C ? "cooling down (30 s)" :
+        p[1] == 0x5A ? "asks for 90 s" : "other");
     } else if (p[0] == 0x08) {
       gPassResp = p[1];
-      Serial.printf("[AUTH] ★ A2/08 应答 = %02X  (%s)\n", p[1],
-        p[1] == 0x01 ? "授权成功" : p[1] == 0x02 ? "配对码错误" :
-        p[1] == 0x00 ? "被拒绝(码过期/窗口未开)" : "其它");
+      Serial.printf("[AUTH] + A2/08 reply = %02X  (%s)\n", p[1],
+        p[1] == 0x01 ? "authorised" : p[1] == 0x02 ? "wrong code" :
+        p[1] == 0x00 ? "rejected (expired / no window)" : "other");
     } else {
-      Serial.printf("[AUTH] A2 未知子命令 %02X: ", p[0]);
+      Serial.printf("[AUTH] unknown A2 sub-command %02X: ", p[0]);
       for (size_t i = 0; i < plen; i++) Serial.printf("%02x ", p[i]);
       Serial.println();
     }
@@ -249,16 +249,16 @@ static void drainRx() {
   }
 }
 
-// FIFO 与 CREDITS 两个 CCCD 共用此回调：与 Python _on_notify 完全一致
+// FIFO and CREDITS share this callback, exactly as Python _on_notify does
 static void onNotify(NimBLERemoteCharacteristic* ch, uint8_t* data,
                      size_t len, bool isNotify) {
   (void)ch; (void)isNotify;
   if (len == 0 || len > 64) return;
   uint8_t tmp[64];
   memcpy(tmp, data, len);
-  xorBuf(tmp, len);                       // 每个分片独立从 KEY[0] 开始
+  xorBuf(tmp, len);                       // each fragment restarts at KEY[0]
   if (gRxLen + len > sizeof(gRxBuf)) {
-    Serial.println("[RX ] 缓冲溢出，清空重同步");
+    Serial.println("[RX ] buffer overflow, clearing to resync");
     gRxLen = 0;
   }
   memcpy(gRxBuf + gRxLen, tmp, len);
@@ -266,10 +266,10 @@ static void onNotify(NimBLERemoteCharacteristic* ch, uint8_t* data,
   drainRx();
 }
 
-// ---------------------------------------------------------------- 发送
+// ---------------------------------------------------------------- sending
 static bool sendFrame(uint8_t recv, uint8_t cmd, const uint8_t* data, size_t dlen) {
   if (!gFifo || !gClient || !gClient->isConnected()) {
-    Serial.println("[TX ] FIFO 未就绪");
+    Serial.println("[TX ] FIFO not ready");
     return false;
   }
   uint8_t frame[160];
@@ -287,7 +287,7 @@ static bool sendFrame(uint8_t recv, uint8_t cmd, const uint8_t* data, size_t dle
     memcpy(chunk, wire + off, n);
     xorBuf(chunk, n);
     if (!gFifo->writeValue(chunk, n, true)) {
-      Serial.println("[TX ] 写失败");
+      Serial.println("[TX ] write failed");
       return false;
     }
     delay(20);
@@ -304,50 +304,50 @@ static bool waitResp(volatile int& which, uint32_t timeoutMs) {
   return false;
 }
 
-// 对齐 bosch_api.py::_send_login_wait：6s 超时 × 5 次重发，每次换 msgId
+// Mirrors bosch_api.py::_send_login_wait: 6 s timeout, 5 resends, fresh msgId each time
 static bool loginStep(const uint8_t* data, size_t len, volatile int& resp,
                       const char* tag) {
   for (int attempt = 0; attempt < 5; attempt++) {
     resp = -1;
     if (!sendFrame(RECV_LOGIN, CMD_LOGIN, data, len)) return false;
     if (waitResp(resp, 6000)) {
-      Serial.printf("[AUTH] %s 应答 = %d\n", tag, (int)resp);
+      Serial.printf("[AUTH] %s reply = %d\n", tag, (int)resp);
       return true;
     }
-    Serial.printf("[AUTH] %s 无应答，重发 %d/5（新 msgId）\n", tag, attempt + 1);
+    Serial.printf("[AUTH] %s no reply, resend %d/5 (fresh msgId)\n", tag, attempt + 1);
   }
   return false;
 }
 
-// ---------------------------------------------------------------- SMP 安全回调
-// 【关键】面板码同时是 BLE passkey：配对窗口打开时设备请求 PROVIDE_PIN，
-// 必须由这里返回 6 位数字，否则 SMP 配对直接失败，后续 A2/08 永远回 00。
+// ---------------------------------------------------------------- SMP callbacks
+// KEY: the panel code is also the BLE passkey. While the window is open the device asks
+// for PROVIDE_PIN, and this must answer with the six digits, or SMP fails and A2/08 says 00.
 class BoschSecurity : public NimBLESecurityCallbacks {
   uint32_t onPassKeyRequest() override {
-    Serial.printf("[SMP] 设备请求 PIN → 返回 %06u\n", (unsigned)gPinNum);
+    Serial.printf("[SMP] device asks for the PIN -> returning %06u\n", (unsigned)gPinNum);
     return gPinNum;
   }
   void onPassKeyNotify(uint32_t pass_key) override {
-    Serial.printf("[SMP] 设备显示 PIN：%06u（请确认与面板一致）\n", (unsigned)pass_key);
+    Serial.printf("[SMP] device displays PIN %06u (should match the panel)\n", (unsigned)pass_key);
   }
   bool onSecurityRequest() override {
-    Serial.println("[SMP] 设备请求加密 → 接受");
+    Serial.println("[SMP] device requests encryption -> accepting");
     return true;
   }
   bool onConfirmPIN(uint32_t pin) override {
-    Serial.printf("[SMP] 数值比较 PIN=%06u → 接受\n", (unsigned)pin);
+    Serial.printf("[SMP] numeric comparison PIN=%06u -> accepting\n", (unsigned)pin);
     return true;
   }
   void onAuthenticationComplete(ble_gap_conn_desc* desc) override {
     bool ok = desc && desc->sec_state.encrypted;
     gEncrypted = ok;
-    Serial.printf("[SMP] 认证完成：%s%s\n",
-                  ok ? "链路已加密" : "未加密/失败",
-                  (desc && desc->sec_state.bonded) ? "，已绑定" : "");
+    Serial.printf("[SMP] authentication complete: %s%s\n",
+                  ok ? "link encrypted" : "not encrypted / failed",
+                  (desc && desc->sec_state.bonded) ? ", bonded" : "");
   }
 };
 
-// ---------------------------------------------------------------- 会话
+// ---------------------------------------------------------------- session
 static void disconnectClient() {
   if (gClient) {
     if (gClient->isConnected()) gClient->disconnect();
@@ -361,7 +361,7 @@ static void disconnectClient() {
 static bool connectAndPair() {
   uint8_t dummy[6];
   if (!parseMac(gDevMac, dummy)) {
-    Serial.println("[CONN] 热水器地址格式错误，用 addr AA:BB:CC:DD:EE:FF 修正");
+    Serial.println("[CONN] bad heater address; fix it with addr AA:BB:CC:DD:EE:FF");
     return false;
   }
 
@@ -370,15 +370,15 @@ static bool connectAndPair() {
   gClient = NimBLEDevice::createClient();
   gClient->setConnectTimeout(15);
 
-  Serial.printf("[CONN] 连接 %s ...\n", gDevMac.c_str());
+  Serial.printf("[CONN] connecting to %s ...\n", gDevMac.c_str());
   if (!gClient->connect(addr)) {
-    Serial.println("[CONN] ✗ 连不上（检查距离 / 面板是否开着 / 手机 App 是否占用）");
+    Serial.println("[CONN] x cannot connect (distance / panel asleep / phone app busy)");
     return false;
   }
-  Serial.println("[CONN] ✓ 链路已建立 [1/5]");
+  Serial.println("[CONN] + link established [1/5]");
 
-  // 设备可能主动要求加密；显式触发一次确保 SMP 走完
-  Serial.printf("[SMP ] 发起配对（IOCap=KeyboardOnly，PIN=%06u）... [2/5]\n",
+  // The device may ask for encryption itself; trigger once so SMP definitely runs
+  Serial.printf("[SMP ] starting pairing (IOCap=KeyboardOnly, PIN=%06u)... [2/5]\n",
                 (unsigned)gPinNum);
   bool sec = gClient->secureConnection();
   Serial.printf("[SMP ] secureConnection() = %s，encrypted=%s\n",
@@ -386,26 +386,26 @@ static bool connectAndPair() {
 
   NimBLERemoteService* svc = gClient->getService(SVC_UUID);
   if (!svc) {
-    Serial.println("[CONN] ✗ 找不到服务（配对未生效时常见）");
+    Serial.println("[CONN] x service not found (common when pairing did not take)");
     return false;
   }
   gFifo = svc->getCharacteristic(FIFO_UUID);
   NimBLERemoteCharacteristic* cred = svc->getCharacteristic(CRED_UUID);
   if (!gFifo || !cred) {
-    Serial.println("[CONN] ✗ 找不到 FIFO/CREDITS 特征");
+    Serial.println("[CONN] x FIFO/CREDITS characteristics missing");
     return false;
   }
-  // 顺序对齐 App：FIFO → 200ms → CREDITS，之后 sleep(1000)
+  // Same order as the app: FIFO -> 200 ms -> CREDITS, then sleep(1000)
   if (!gFifo->subscribe(true, onNotify)) {
-    Serial.println("[CONN] ✗ 订阅 FIFO 失败");
+    Serial.println("[CONN] x FIFO subscribe failed");
     return false;
   }
   delay(200);
   if (!cred->subscribe(true, onNotify)) {
-    Serial.println("[CONN] ✗ 订阅 CREDITS 失败");
+    Serial.println("[CONN] x CREDITS subscribe failed");
     return false;
   }
-  Serial.println("[CONN] ✓ 已订阅 FIFO + CREDITS [3/5]");
+  Serial.println("[CONN] + subscribed to FIFO + CREDITS [3/5]");
   delay(1000);
   return true;
 }
@@ -413,47 +413,47 @@ static bool connectAndPair() {
 static bool doLogin() {
   uint8_t mac[6];
   if (!parseMac(gLoginMac, mac)) {
-    Serial.println("[AUTH] 登录 MAC 格式错误，用 mac AA:BB:CC:DD:EE:FF 修正");
+    Serial.println("[AUTH] bad login MAC; fix it with mac AA:BB:CC:DD:EE:FF");
     return false;
   }
   if (gPin.length() != 6) {
-    Serial.println("[AUTH] 面板码为空或不是 6 位。请先输入 6 位码。");
+    Serial.println("[AUTH] panel code empty or not six digits. Enter one first.");
     return false;
   }
 
-  Serial.printf("[AUTH] 提交 MAC = %s（设备白名单）\n", macToStr(mac).c_str());
+  Serial.printf("[AUTH] submitting MAC = %s (device whitelist)\n", macToStr(mac).c_str());
   uint8_t b1[7] = {0x07, 0,0,0,0,0,0};
   memcpy(b1 + 1, mac, 6);
   if (!loginStep(b1, 7, gAuthResp, "A2/07")) return false;
-  Serial.println("[AUTH] ✓ MAC 应答已收到 [4/5]");
+  Serial.println("[AUTH] + MAC reply received [4/5]");
 
   int kind = gAuthResp;
   if (kind == 0x3C || kind == 0x5A) {
-    Serial.printf("[AUTH] 设备要求冷却（%02X），%s 后重试\n",
-                  kind, kind == 0x3C ? "30 秒" : "90 秒");
+    Serial.printf("[AUTH] device asks to cool down (%02X), retry in %s\n",
+                  kind, kind == 0x3C ? "30 s" : "90 s");
     return false;
   }
 
-  delay(1000);   // App: sendLoginPass 开头固定 sleep(1000)
+  delay(1000);   // app: sendLoginPass always sleeps 1000 ms first
   uint8_t b2[7];
   b2[0] = 0x08;
-  for (int i = 0; i < 6; i++) b2[i+1] = gPin[i] - '0';   // 每位数字转 1 字节
-  Serial.printf("[AUTH] 提交配对码 %s（nibble 编码）\n", gPin.c_str());
+  for (int i = 0; i < 6; i++) b2[i+1] = gPin[i] - '0';   // one byte per digit
+  Serial.printf("[AUTH] submitting code %s (nibble encoded)\n", gPin.c_str());
   if (!loginStep(b2, 7, gPassResp, "A2/08")) return false;
 
   if (gPassResp == 0x01) {
-    Serial.println("[AUTH] ✓ 授权成功 [5/5]，等待 A0 广播…");
+    Serial.println("[AUTH] + authorised [5/5], waiting for A0 broadcasts...");
     return true;
   }
-  Serial.println("[AUTH] ✗ 授权失败。多半是「配对窗口没开」或「码已过期」：");
-  Serial.println("       面板执行『清除配对』→ 重新取码 → 直接输入新码（不用重烧）");
+  Serial.println("[AUTH] x authorisation failed. Usually no window, or an expired code:");
+  Serial.println("       panel clear pairing -> read a new code -> type it (no reflash)");
   return false;
 }
 
 static void startSession(bool forceRebond) {
-  if (gInSession) { Serial.println("[BUSY] 会话进行中，输入 reboot 可中断"); return; }
+  if (gInSession) { Serial.println("[BUSY] session running; type reboot to interrupt"); return; }
   if (gPin.length() != 6) {
-    Serial.println("请先输入 6 位面板码（例如：311522），我立刻开始连接。");
+    Serial.println("Enter the six-digit panel code first (e.g. 311522) to start connecting.");
     return;
   }
   gInSession = true;
@@ -466,50 +466,50 @@ static void startSession(bool forceRebond) {
 
   NimBLEDevice::setSecurityPasskey(gPinNum);
   if (forceRebond || gNeedRebond) {
-    Serial.println("[SMP ] 清除本机旧绑定（准备重新配对）");
+    Serial.println("[SMP ] clearing the old local bond (preparing to pair again)");
     NimBLEDevice::deleteAllBonds();
     gNeedRebond = false;
     delay(200);
   }
 
-  banner("开始会话");
-  Serial.printf("[CFG ] 热水器=%s  登录MAC=%s  PIN=%s\n",
+  banner("starting session");
+  Serial.printf("[CFG ] heater=%s  loginMAC=%s  PIN=%s\n",
                 gDevMac.c_str(), gLoginMac.c_str(), gPin.c_str());
 
   bool ok = connectAndPair();
   if (ok) ok = doLogin();
   if (!ok) {
-    Serial.println("\n[结果] ✗ 未通过。修好之后直接再输一次码即可，无需重新烧录。");
+    Serial.println("\n[result] x failed. Fix it and type the code again; no reflash needed.");
     disconnectClient();
     gPhase = PH_FAILED;
   } else {
-    Serial.println("\n[结果] ✓ 三步全通，持续监听 A0（每 4 秒一帧）");
+    Serial.println("\n[result] + all three stages passed, listening for A0 (a frame every 4 s)");
   }
   gInSession = false;
 }
 
-// ---------------------------------------------------------------- 命令
+// ---------------------------------------------------------------- commands
 static void doScan() {
   if (gClient && gClient->isConnected()) {
-    Serial.println("[SCAN] 已连接，先断开再扫描");
+    Serial.println("[SCAN] already connected; disconnect before scanning");
     disconnectClient();
     delay(300);
   }
-  banner("BLE 扫描 5 秒");
+  banner("BLE scan, 5 s");
   NimBLEScan* s = NimBLEDevice::getScan();
   s->setActiveScan(true);
   s->setInterval(100);
   s->setWindow(99);
   NimBLEScanResults r = s->start(5, false);
-  Serial.printf("[SCAN] 发现 %d 个设备：\n", r.getCount());
+  Serial.printf("[SCAN] found %d devices://n", r.getCount());
   for (int i = 0; i < r.getCount(); i++) {
-    NimBLEAdvertisedDevice d = r.getDevice(i);   // 1.4.x 返回对象，不是指针
+    NimBLEAdvertisedDevice d = r.getDevice(i);   // 1.4.x returns an object, not a pointer
     Serial.printf("  %-20s RSSI=%4d  %s\n",
                   d.getAddress().toString().c_str(), d.getRSSI(),
-                  d.haveName() ? d.getName().c_str() : "(无名)");
+                  d.haveName() ? d.getName().c_str() : "(unnamed)");
   }
   s->clearResults();
-  banner("扫描结束");
+  banner("scan finished");
 }
 
 static void setPin(const String& code) {
@@ -518,40 +518,40 @@ static void setPin(const String& code) {
   gPinNum = (uint32_t)strtoul(code.c_str(), nullptr, 10);
   gPrefs.putString("pin", gPin);
   NimBLEDevice::setSecurityPasskey(gPinNum);
-  if (changed) gNeedRebond = true;    // 码变了 = 面板开过新窗口，旧 bond 作废
-  Serial.printf("[CFG ] 面板码 = %s（同时作为 BLE PIN 和应用层密码）%s\n",
-                gPin.c_str(), changed ? " [码已变→下次自动清绑定]" : "");
+  if (changed) gNeedRebond = true;    // a new code means a new window; the old bond is void
+  Serial.printf("[CFG ] panel code = %s (both the BLE PIN and the app password)%s\n",
+                gPin.c_str(), changed ? " [changed -> bond cleared on next connect]" : "");
   startSession(false);
 }
 
 static void printHelp() {
-  banner("串口命令（直接输入后回车，不需要重新烧录）");
-  Serial.println("  311522            6 位面板码 → 立即开始连接+配对+登录");
-  Serial.println("  pin 311522        同上");
-  Serial.println("  go                用当前码重连（不重新配对）");
-  Serial.println("  pair              清本机绑定，强制重新 SMP 配对");
-  Serial.println("  scan              扫描 5 秒，列出附近 BLE 设备");
-  Serial.println("  mac AA:BB:...     改登录 MAC（设备白名单里的那台）");
-  Serial.println("  addr AA:BB:...    改热水器 BLE 地址");
-  Serial.println("  status            打印配置与运行状态");
-  Serial.println("  raw on / raw off  显示/隐藏 A0 原始字节");
-  Serial.println("  reboot            重启");
-  Serial.println("  help              本帮助");
+  banner("serial commands (type and press enter; no reflash needed)");
+  Serial.println("  311522            six-digit panel code -> connect, pair, log in");
+  Serial.println("  pin 311522        same as above");
+  Serial.println("  go                reconnect with the current code (no new pairing)");
+  Serial.println("  pair              clear the local bond and force a new SMP pairing");
+  Serial.println("  scan              scan for 5 s and list nearby BLE devices");
+  Serial.println("  mac AA:BB:...     set the login MAC (the host on the whitelist)");
+  Serial.println("  addr AA:BB:...    set the heater BLE address");
+  Serial.println("  status            print configuration and runtime state");
+  Serial.println("  raw on / raw off  show / hide raw A0 bytes");
+  Serial.println("  reboot            reboot");
+  Serial.println("  help              this help");
 }
 
 static void printStatus() {
-  banner("状态");
-  Serial.printf("  热水器地址 : %s\n", gDevMac.c_str());
-  Serial.printf("  登录 MAC   : %s\n", gLoginMac.c_str());
-  Serial.printf("  面板码     : %s (PIN=%06u)\n", gPin.c_str(), (unsigned)gPinNum);
-  Serial.printf("  相位       : %s\n", gPhase == PH_WAIT_CODE ? "等待输码" :
-                                     gPhase == PH_RUNNING  ? "已连接监听" : "上次失败");
-  Serial.printf("  链路       : %s / 加密=%s\n",
-                (gClient && gClient->isConnected()) ? "已连接" : "未连接",
-                gEncrypted ? "是" : "否");
-  Serial.printf("  A2/07=%d  A2/08=%d  A0帧数=%u  原始帧=%s\n",
+  banner("status");
+  Serial.printf("  heater     : %s\n", gDevMac.c_str());
+  Serial.printf("  login MAC  : %s\n", gLoginMac.c_str());
+  Serial.printf("  panel code : %s (PIN=%06u)\n", gPin.c_str(), (unsigned)gPinNum);
+  Serial.printf("  phase      : %s\n", gPhase == PH_WAIT_CODE ? "waiting for code" :
+                                     gPhase == PH_RUNNING  ? "connected, listening" : "last attempt failed");
+  Serial.printf("  link       : %s / encrypted=%s\n",
+                (gClient && gClient->isConnected()) ? "up" : "down",
+                gEncrypted ? "yes" : "no");
+  Serial.printf("  A2/07=%d  A2/08=%d  A0 frames=%u  raw=%s\n",
                 (int)gAuthResp, (int)gPassResp, (unsigned)gA0Count,
-                gRawDump ? "开" : "关");
+                gRawDump ? "on" : "off");
 }
 
 static void handleCommand(String line) {
@@ -559,7 +559,7 @@ static void handleCommand(String line) {
   if (!line.length()) return;
   String low = line; low.toLowerCase();
 
-  // 纯 6 位数字 = 面板码
+  // Six digits on their own mean the panel code
   if (line.length() == 6) {
     bool digits = true;
     for (int i = 0; i < 6; i++) if (!isdigit((unsigned char)line[i])) digits = false;
@@ -571,24 +571,24 @@ static void handleCommand(String line) {
   if (low == "scan")                 { doScan(); return; }
   if (low == "go")                   { gNeedRebond = false; startSession(false); return; }
   if (low == "pair")                 { startSession(true); return; }
-  if (low == "reboot")               { Serial.println("重启…"); delay(200); ESP.restart(); }
+  if (low == "reboot")               { Serial.println("rebooting..."); delay(200); ESP.restart(); }
   if (low == "raw on")               { gRawDump = true;  Serial.println("[CFG] raw=on");  return; }
   if (low == "raw off")              { gRawDump = false; Serial.println("[CFG] raw=off"); return; }
   if (low.startsWith("mac ")) {
     uint8_t m[6];
-    if (!parseMac(line.substring(4), m)) { Serial.println("MAC 格式不对"); return; }
+    if (!parseMac(line.substring(4), m)) { Serial.println("bad MAC format"); return; }
     gLoginMac = macToStr(m);
     gPrefs.putString("loginmac", gLoginMac);
-    Serial.printf("[CFG] 登录 MAC = %s\n", gLoginMac.c_str());
+    Serial.printf("[CFG] login MAC = %s\n", gLoginMac.c_str());
     return;
   }
   if (low.startsWith("addr ")) {
     gDevMac = line.substring(5); gDevMac.trim(); gDevMac.toLowerCase();
     gPrefs.putString("devmac", gDevMac);
-    Serial.printf("[CFG] 热水器地址 = %s\n", gDevMac.c_str());
+    Serial.printf("[CFG] heater address = %s\n", gDevMac.c_str());
     return;
   }
-  Serial.printf("[?] 不认识的命令：%s（输入 help 看列表）\n", line.c_str());
+  Serial.printf("[?] unknown command: %s (type help for the list)\n", line.c_str());
 }
 
 static void pollSerial() {
@@ -606,7 +606,7 @@ static void pollSerial() {
 void setup() {
   Serial.begin(115200);
   delay(1200);
-  banner("博世热水器 ESP32 网关 v2.0  微雪 ESP32-S3-DEV-KIT-N8R8");
+  banner("Bosch heater ESP32 gateway v2.0 - Waveshare ESP32-S3-DEV-KIT-N8R8");
 
   gPrefs.begin("bosch", false);
   gDevMac   = gPrefs.getString("devmac",   DEF_DEVICE_MAC);
@@ -616,36 +616,36 @@ void setup() {
 
   Serial.printf("[BOOT] Chip=%s  Flash=%uMB  PSRAM=%u bytes\n",
                 ESP.getChipModel(), ESP.getFlashChipSize() / (1024*1024), ESP.getPsramSize());
-  Serial.printf("[BOOT] 热水器=%s  登录MAC=%s  已存面板码=%s\n",
-                gDevMac.c_str(), gLoginMac.c_str(), gPin.length() ? gPin.c_str() : "(无)");
+  Serial.printf("[BOOT] heater=%s  loginMAC=%s  stored code=%s\n",
+                gDevMac.c_str(), gLoginMac.c_str(), gPin.length() ? gPin.c_str() : "(none)");
 
   NimBLEDevice::init("BoschGW");
-  // KeyboardOnly：设备 display PIN 时我们输入；设备 NoIO 时自动回落 Just Works
+  // KeyboardOnly: we type when the device displays a PIN; NoIO peers fall back to Just Works
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_KEYBOARD_ONLY);
-  NimBLEDevice::setSecurityAuth(true, false, true);   // bonding, no MITM 强制, Secure Connections
+  NimBLEDevice::setSecurityAuth(true, false, true);   // bonding, no forced MITM, Secure Conn.
   NimBLEDevice::setSecurityPasskey(gPinNum);
   NimBLEDevice::setSecurityCallbacks(new BoschSecurity());
-  // 发射功率用默认值：setPower() 在 core/NimBLE 各版本签名不一致，不冒险
+  // Default transmit power: setPower() differs across core/NimBLE versions, not worth it
 
-  banner("准备就绪");
-  Serial.println("操作顺序：");
-  Serial.println("  1) 确认电脑上的 Python 界面/桥接已关闭（避免抢设备）");
-  Serial.println("  2) 热水器面板 →『清除配对』→ 取新的 6 位码");
-  Serial.println("  3) 在串口直接输入这 6 位码并回车（几秒内完成，不用重烧）");
-  Serial.println("  4) 看 [SMP]/[AUTH]/[A0] 三段输出；失败就重取码再输一次");
+  banner("ready");
+  Serial.println("Order of operations:");
+  Serial.println("  1) close the Python console / bridge on the PC (they fight for the device)");
+  Serial.println("  2) heater panel -> clear pairing -> read the new six-digit code");
+  Serial.println("  3) type that code here and press enter (seconds, no reflash)");
+  Serial.println("  4) watch [SMP]/[AUTH]/[A0]; on failure read a new code and retry");
   Serial.println();
   printHelp();
 
-  // 断电/重启自动恢复：NVS 里有 6 位码就直接发起一次连接。
-  // 依据（2026-11-07 实测）：配对成功过的码会被设备长期保留，配对窗口关闭后
-  // 仍可用于重连（A2/07=01 → A2/08=01）。失败则退回等待输入，不影响手动输码。
+  // Power-cycle recovery: reconnect once when NVS holds a six-digit code.
+  // Basis (measured 2026-11-07): a code that paired successfully is kept by the device
+  // and still works after the window closes (A2/07=01 -> A2/08=01). On failure, fall back.
   if (gPin.length() == 6) {
-    Serial.printf("\n[BOOT] 已存面板码 %s，自动尝试重连…（失败可直接输入新码）\n",
+    Serial.printf("\n[BOOT] stored code %s, reconnecting automatically (type a new one if it fails)\n",
                   gPin.c_str());
     startSession(false);
-    Serial.println("[BOOT] 若连不上，等待输入新码");
+    Serial.println("[BOOT] if that fails, type a new code");
   } else {
-    Serial.println("\n等待输入…");
+    Serial.println("\nwaiting for input...");
   }
 }
 
@@ -654,18 +654,18 @@ void loop() {
 
   if (gPhase == PH_RUNNING && gClient) {
     if (!gClient->isConnected()) {
-      Serial.println("[CONN] 连接已断，5 秒后自动重连（用当前码）");
+      Serial.println("[CONN] link dropped, reconnecting in 5 s with the current code");
       gPhase = PH_WAIT_CODE;
       disconnectClient();
       delay(5000);
       startSession(false);
       return;
     }
-    // 30 秒没收到 A0 = 登录其实没生效，提示但不自动打断（便于观察）
+    // 30 s without A0 means the login did not really take; warn without interrupting
     static uint32_t lastWarn = 0;
     if (gA0Count == 0 && millis() - gSessionStart > 30000 && millis() - lastWarn > 15000) {
       lastWarn = millis();
-      Serial.println("[WARN] 已连接 30s 仍无 A0：多半是 A2/08 未通过，请重取码再输一次");
+      Serial.println("[WARN] 30 s connected with no A0: A2/08 likely failed, read a new code");
     }
   }
   delay(10);
