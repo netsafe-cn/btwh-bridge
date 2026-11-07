@@ -44,9 +44,13 @@ jobs:
       - name: Scan for hardcoded cloud UID / pair code in tracked sources
         shell: bash
         run: |
-          if git grep -nE 'bemfa_uid\s*=\s*"[0-9a-f]{16,}"|pair_code\s*=\s*"[0-9]{6}"' \
-               -- '*.py' ':!config.example.json'; then
+          # 测试里用的是假夹具（123456 / 654321 / 831152），不算密钥泄漏；
+          # 库代码里出现才是事故。所以 test_*.py 不参与扫描。
+          hits=$(git grep -nE 'bemfa_uid\s*=\s*"[0-9a-f]{16,}"|pair_code\s*=\s*"[0-9]{6}"' \
+                   -- '*.py' ':!config.example.json' ':!test_*.py' || true)
+          if [ -n "$hits" ]; then
+            echo "$hits"
             echo "::error::源码里疑似硬编码了真实密钥，请改为环境变量注入"
             exit 1
           fi
-          echo "OK: 未发现明显硬编码密钥"
+          echo "OK: 未发现硬编码密钥（测试夹具已排除）"
