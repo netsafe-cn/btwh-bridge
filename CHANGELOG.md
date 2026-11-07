@@ -15,6 +15,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   run_tests.py` is unchanged. Library modules stay at the repository root, so
   `import bosch_api` is unaffected.
 
+- Exception messages are now English (`GATT not ready`, `not connected`). Match on the
+  exception type, not on the message text.
+
 ### Planned
 
 - MQTT Discovery integration for Home Assistant

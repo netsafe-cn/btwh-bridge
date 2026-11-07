@@ -162,11 +162,25 @@ Firmware-only releases keep the same tag with a suffix, e.g. `v0.2.0-fw2.1`.
 
 ---
 
-## 7. Code style
+## 7. Language policy
+
+English is the working language of this project. Everything that lands in the repository
+is written in English: documentation, code comments, docstrings, log messages, exception
+text and the firmware's serial output.
+
+- `README.zh-CN.md` is the single Chinese document, kept so Chinese-speaking users can find
+  and adopt the project. It mirrors `README.md` and may lag behind it.
+- Issues and pull requests may be opened in English or Simplified Chinese. Maintainers will
+  answer in English, and code changes are reviewed against the English sources.
+- User-facing strings must be English so that a log pasted into an issue is readable to
+  everyone. Internal comments in a contributor's own fork are their business, but a PR is
+  expected to bring them to English.
+
+## 8. Code style
 
 **Python**
 
-- PEP 8, 100-column lines. Chinese comments are fine and common in this codebase
+- PEP 8, 100-column lines. Comments and docstrings in English, per §7
 - Always log through `boschlog`; never use bare `print` (especially in library code)
 - Public functions need docstrings that mention side effects and raised exceptions
 - Don't add third-party dependencies unless there is no standard-library alternative.
@@ -181,7 +195,7 @@ Firmware-only releases keep the same tag with a suffix, e.g. `v0.2.0-fw2.1`.
 
 ---
 
-## 8. Reporting issues
+## 9. Reporting issues
 
 Please include:
 
@@ -196,7 +210,7 @@ be filed as public issues. Report them privately per [`SECURITY.md`](SECURITY.md
 
 ---
 
-## 9. License
+## 10. License
 
 By submitting, you agree that your contribution is released under the [MIT](LICENSE)
 license, and you confirm you have the right to do so.

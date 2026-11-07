@@ -641,7 +641,7 @@ class BoschDevice:
                 if attempt == 2:
                     LOG.error("[CONN] 订阅 FIFO 失败（服务枚举未就绪）: %s",
                               type(e).__name__)
-                    raise RuntimeError("GATT 未就绪")
+                    raise RuntimeError("GATT not ready")
                 LOG.info("[CONN] 服务未就绪，1s 后重试订阅（%d/3）", attempt + 1)
                 await asyncio.sleep(1.0)
         await asyncio.sleep(0.2)          # App: postDelayed(200ms) 后订 CREDITS
@@ -783,7 +783,7 @@ class BoschDevice:
     async def send(self, cmd: int, data: bytes = b"",
                    receiver: int = RECV_BIZ, tag: str = ""):
         if self.client is None or not self.client.is_connected:
-            raise RuntimeError("未连接")
+            raise RuntimeError("not connected")
         frame = BoschProtocol.build(SENDER, receiver, self.mid, cmd, data)
         self.mid = (self.mid + 1) & 0xFF
         wire = BoschProtocol.stuff(frame)
