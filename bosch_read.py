@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""bosch_read.py —— 博世 Therm 4800i 壁挂炉 BLE 读取器（已验证可用）
+"""bosch_read.py —— 博世 Therm 4800i 燃气热水器 BLE 读取器（已验证可用）
 
 关键流程（缺一不可）：
   1. 订阅 FIFO(b2) / CREDITS(b3)，CCCD = notify(01 00)

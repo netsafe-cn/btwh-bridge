@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "btwh-bridge"
 version = "0.1.0"
-description = "BLE interoperability implementation for Bosch BTWH-001 series gas water heaters, with an ESP32 gateway"
+description = "BLE interoperability implementation for the Bosch Therm 4800i gas water heater (BLE module BTWH-001), with an ESP32 gateway"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "netsafe", email = "netsafe@126.com" }]
-keywords = ["bosch", "btwh", "water-heater", "ble", "bluetooth", "esp32", "home-assistant"]
+keywords = ["bosch", "therm-4800i", "btwh", "water-heater", "ble", "bluetooth", "esp32", "home-assistant"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",

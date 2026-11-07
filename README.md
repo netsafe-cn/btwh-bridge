@@ -2,9 +2,13 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-> **Unofficial project.** A BLE interoperability implementation for Bosch
-> `BTWH-001` series gas water heaters — a Python reference implementation plus an
+> **Unofficial project.** A BLE interoperability implementation for the Bosch
+> **Therm 4800i** gas water heater — a Python reference implementation plus an
 > always-on ESP32 gateway, targeting **Home Assistant** as the primary integration.
+>
+> Verified on real hardware: **Bosch Therm 4800i**, whose BLE module advertises
+> itself as `BTWH-001-xxxx` (the identifier the code actually matches on).
+>
 > Not affiliated with, authorised by, or endorsed by Robert Bosch GmbH or its
 > affiliates in any way.
 
@@ -291,7 +295,8 @@ close other Bluetooth software or restart the Bluetooth service.
 
 ## Known limitations
 
-- Only verified on the `BTWH-001` series; other models or firmware may use different fields
+- Only verified on the **Bosch Therm 4800i** (BLE module `BTWH-001-xxxx`); other models
+  or firmware may use different field offsets, and the parser is the first thing to re-check
 - The panel code must be entered **within the pairing window** the first time. Once a code
   has paired successfully, the device keeps that authorisation long-term and the same code
   can reconnect later (verified 11 minutes after the window closed; the upper bound is

@@ -1,6 +1,8 @@
 # 博世燃气热水器 BLE 协议笔记
 
-> 面向博世 `BTWH-001-xxxx` 系列蓝牙模块（本文实测机型：`BTWH-001-6F5F`，博世 App 包名 `com.bosch.de.tt.prowaterheater`）。
+> 面向博世 **Therm 4800i** 燃气热水器。其蓝牙模块广播名为 `BTWH-001-xxxx`
+> （代码按此名字匹配设备）。本文实测机型：**Bosch Therm 4800i**，广播名 `BTWH-001-6F5F`，
+> 博世 App 包名 `com.bosch.de.tt.prowaterheater`。
 >
 > **声明**：本文内容由抓包与实机对照得出，**非官方协议**。仅限自有设备研究与自用，不得用于商业破解或篡改他人设备。协议可能随固件升级失效。
 
