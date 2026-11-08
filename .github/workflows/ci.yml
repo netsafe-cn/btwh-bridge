@@ -85,6 +85,22 @@ jobs:
             exit 1
           fi
           echo "OK: components are application-free"
+      # ADR-008 says proto/ is the only layer that avoids Arduino and NimBLE, and that is the
+      # only reason it can ever be tested off-target. A stray include quietly destroys that.
+      - name: proto layer stays framework-free
+        shell: bash
+        run: |
+          bad=$(grep -rnE '#include[[:space:]]*[<"](Arduino|NimBLE|Preferences|esp_)' \
+                  firmware/bridge/src/proto || true)
+          if [ -n "$bad" ]; then
+            echo "$bad"
+            echo "::error::firmware/bridge/src/proto must not include Arduino, NimBLE or ESP-IDF"
+            exit 1
+          fi
+          echo "OK: proto/ has no framework includes"
+      - name: generated vectors match the spec
+        shell: bash
+        run: python firmware/bridge/tools/gen_vectors.py --check
       - name: every contract file is valid JSON
         shell: bash
         run: |

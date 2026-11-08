@@ -201,7 +201,7 @@ net/   ─┼─>  app/  ──>  auth/  ──>  ble/  ──>  proto/
         └─ anyone may use config; nothing may use diag
 ```
 
-| Layer | May include | Must not know about | Testable on a PC |
+| Layer | May include | Must not know about | Testable off-target |
 |---|---|---|---|
 | `proto/` | `<stdint.h>`, `<string.h>` | Arduino, NimBLE, MQTT | **yes** — this is the point |
 | `ble/` | NimBLE | pairing semantics, MQTT | no |
@@ -213,8 +213,16 @@ net/   ─┼─>  app/  ──>  auth/  ──>  ble/  ──>  proto/
 Two rules carry most of the value:
 
 - **`proto/` is the only code that can be tested without hardware.** It is also the only code that
-  has a machine-readable spec (`spec/protocol_vectors.json`), so it gets a native test that runs
-  in CI. Nothing else in the firmware can claim that.
+  has a machine-readable spec (`spec/protocol_vectors.json`). Nothing else in the firmware can
+  claim that.
+
+  Honest caveat: the toolchain here is Xtensa-only, so today the vectors are executed **on the
+  board** (`selftest`) rather than on a host. That still beats a manual check — it validates the
+  exact binary that ships — but it means a broken codec is caught after a flash, not before a
+  commit. CI covers what it can without a compiler: the generated header must match the spec, and
+  `proto/` must not gain a framework include. The day a host compiler is available,
+  `proto/selftest.cpp` already takes a log callback instead of `Serial`, so the same test runs
+  unchanged.
 - **Nothing may depend on `diag/`.** Diagnostics are the outermost layer; the moment a business
   path calls into the console, the console becomes load-bearing.
 

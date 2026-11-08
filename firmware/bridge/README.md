@@ -19,16 +19,26 @@ ones measured on 2026-11-01.
 
 ```
 firmware/bridge/
-├── src/main.cpp               firmware source, v2.0
-├── arduino_sketch/            the .ino arduino-cli needs (copied from main.cpp)
+├── src/
+│   ├── main.cpp               setup / loop / command dispatch (Arduino + NimBLE)
+│   └── proto/                 frames and A0 parsing - no Arduino, no NimBLE
+│       ├── frame.h  frame.cpp     codec: build, stuff, XOR, checksum, reassembly
+│       ├── a0.h     a0.cpp        A0 broadcast -> A0State
+│       ├── selftest.h  selftest.cpp   runs the golden vectors on the board
+│       └── vectors_gen.h      GENERATED from spec/protocol_vectors.json
 ├── platformio.ini             PlatformIO configuration (NimBLE pinned to 1.4.3)
 ├── tools/
 │   ├── gateway_cli.py         build / flash / serial console / logging in one command
+│   ├── gen_vectors.py         spec/protocol_vectors.json -> src/proto/vectors_gen.h
 │   ├── esp32_panel.py         always-on-top control panel (enter the six-digit code)
 │   ├── pair_once.py           pair in one command and report a verdict
 │   └── log_diag.py            serial log diagnosis
 └── README.md                  this file
 ```
+
+There is no committed `.ino`. `gateway_cli.py` generates a sketch shell around `src/` at build
+time — an `.ino` containing only a comment, plus a copy of `src/`. Two build systems read one copy
+of the code, so nothing can drift.
 
 Not committed, created on first build: `toolchain/` (arduino-cli and packages), `logs/`
 (serial captures), `legacy_v1/` (the superseded feasibility firmware).
@@ -37,20 +47,20 @@ This is one application in a directory of applications. It publishes against
 [`spec/mqtt.json`](../../spec/mqtt.json); a touch panel that only consumes that contract lives
 in [`firmware/panel/`](../panel/), and it must never link anything here.
 
-### 2.1 Internal structure (target)
+### 2.1 Internal structure
 
-Today all 672 lines live in `src/main.cpp`. The target is a split by **what a module is allowed
-to know**, so dependency arrows only point one way (ADR-008):
+Split by **what a module is allowed to know**, so dependency arrows only point one way (ADR-008).
+`proto/` has landed; the rest is the next step.
 
 ```
 src/
-├── main.cpp        setup / loop / command dispatch       ~80 lines
-├── proto/          frames, A0 fields      ← no Arduino, no NimBLE, PC-testable
-├── ble/            NimBLE: connect, subscribe, SMP       ← the only place NimBLE appears
-├── auth/           A2/07 + A2/08 + window state          ← uses proto, not NimBLE
-├── app/            session lifecycle, NVS config, state snapshot
-├── net/            (empty) wifi, mqtt, ha_discovery, ota
-└── diag/           serial console                        ← nothing may depend on this
+├── main.cpp        setup / loop / command dispatch       (604 lines, still holds the session)
+├── proto/          frames, A0 fields      ← done: no Arduino, no NimBLE
+├── ble/            NimBLE: connect, subscribe, SMP       ← planned
+├── auth/           A2/07 + A2/08 + window state          ← planned
+├── app/            session lifecycle, NVS config, state snapshot   ← planned
+├── net/            (empty) wifi, mqtt, ha_discovery, ota           ← planned
+└── diag/           serial console                        ← planned
 ```
 
 Why this order and not "bluetooth part / protocol part / config part":
@@ -69,6 +79,27 @@ ESP-IDF, the same directories become `components/` and include paths stay put.
 
 Splitting is not free: it changes every call site and needs a rebuild plus a reflash to prove the
 board still links. Do it as one commit, with the golden vectors as the judge.
+
+### 2.2 Proving `proto/` still correct
+
+The toolchain here only produces Xtensa binaries, so the golden vectors run **on the board**,
+not on the host. After flashing, type:
+
+```
+selftest
+```
+
+It rebuilds every frame from its parameters, stuffs it, XORs it fragment by fragment, feeds the
+fragments back through the reassembler, corrupts a checksum on purpose, and compares every A0
+field against `spec/protocol_vectors.json`. One line per failure, a count at the end.
+
+```bash
+python firmware/bridge/tools/gen_vectors.py          # spec -> src/proto/vectors_gen.h
+python firmware/bridge/tools/gen_vectors.py --check  # CI: fail if the header is stale
+```
+
+`vectors_gen.h` is committed so a build never depends on running Python first; `--check` is what
+stops it drifting from the JSON.
 
 ## 3. First run (one command)
 

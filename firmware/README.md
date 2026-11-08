@@ -24,8 +24,10 @@ net/   ─┼─>  app/  ──>  auth/  ──>  ble/  ──>  proto/
         └─ nothing may depend on diag
 ```
 
-The single most useful property: `proto/` includes no Arduino and no NimBLE, so it compiles and
-runs on a PC against `spec/protocol_vectors.json`. Every other layer needs a board to be sure.
+The single most useful property: `proto/` includes no Arduino and no NimBLE, so it can be
+compiled and run off-target. Today that means the on-board `selftest` command, which replays
+`spec/protocol_vectors.json` against the shipping binary; every other layer needs a board to be
+sure of anything.
 
 Arduino compiles every `.cpp` under `src/` recursively, so this costs no build-system change —
 and the same directories become `components/` under ESP-IDF later.

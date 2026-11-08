@@ -28,6 +28,12 @@
 #include <ctype.h>
 #include <string.h>
 
+// Protocol layer: pure C++, no Arduino and no NimBLE, so it can be checked by the on-target
+// self test (see proto/selftest.cpp). Layer rules: ADR-008.
+#include "proto/a0.h"
+#include "proto/frame.h"
+#include "proto/selftest.h"
+
 // ---------------------------------------------------------------- defaults
 // Placeholders. First run: scan, then `addr <heater MAC>` and `mac <host MAC>`.
 static const char* DEF_DEVICE_MAC = "AA:BB:CC:DD:EE:FF";   // heater BLE address (placeholder)
@@ -38,12 +44,8 @@ static const char* SVC_UUID  = "ff4396a6-50a8-4fc0-bcf6-228e82dfedb0";
 static const char* FIFO_UUID = "ff4396a6-50a8-4fc0-bcf6-228e82dfedb2";
 static const char* CRED_UUID = "ff4396a6-50a8-4fc0-bcf6-228e82dfedb3";
 
-static const uint8_t XOR_KEY[9] = {'1','a','g','3','.','-','f','s','7'};
-static const uint8_t SENDER     = 0x21;
-static const uint8_t RECV_LOGIN = 0xAB;
-static const uint8_t CMD_LOGIN  = 0xA2;
-static const uint8_t CMD_STATE  = 0xA0;
-static const size_t  CHUNK      = 20;
+// Protocol constants live in proto/frame.h so the codec and the self test cannot disagree.
+namespace pc = proto;
 
 // ---------------------------------------------------------------- global state
 static Preferences gPrefs;
@@ -55,8 +57,7 @@ static bool     gNeedRebond = false;
 static NimBLEClient*               gClient = nullptr;
 static NimBLERemoteCharacteristic* gFifo   = nullptr;
 
-static uint8_t gRxBuf[1024];
-static size_t  gRxLen = 0;
+static proto::RxStream gRx;              // fragment reassembly, owned by proto/frame.cpp
 static uint8_t gMid   = 0;
 
 static volatile int      gAuthResp   = -1;   // A2/07 data[1]
@@ -98,109 +99,47 @@ static String macToStr(const uint8_t m[6]) {
   return String(b);
 }
 
-// ---------------------------------------------------------------- protocol codec
-static void xorBuf(uint8_t* p, size_t n) {
-  for (size_t i = 0; i < n; i++) p[i] ^= XOR_KEY[i % 9];
-}
-
-// Logical frame: 7B7B | sender recv mid cmd data... | chk | 7D7D
-static size_t buildFrame(uint8_t* out, uint8_t recv, uint8_t mid,
-                         uint8_t cmd, const uint8_t* data, size_t dlen) {
-  size_t i = 0;
-  out[i++] = 0x7B; out[i++] = 0x7B;
-  out[i++] = SENDER; out[i++] = recv; out[i++] = mid; out[i++] = cmd;
-  for (size_t k = 0; k < dlen; k++) out[i++] = data[k];
-  uint8_t sum = 0;
-  for (size_t k = 2; k < i; k++) sum += out[k];
-  out[i++] = sum;
-  out[i++] = 0x7D; out[i++] = 0x7D;
-  return i;
-}
-
-// Stuffing: a 7B/7D inside frame[2 .. len-3] gets a 00 after it (chk included, as in Python)
-static size_t stuffFrame(const uint8_t* in, size_t n, uint8_t* out) {
-  if (n <= 4) { memcpy(out, in, n); return n; }
-  size_t o = 0;
-  out[o++] = in[0]; out[o++] = in[1];
-  for (size_t i = 2; i < n - 2; i++) {
-    out[o++] = in[i];
-    if (in[i] == 0x7B || in[i] == 0x7D) out[o++] = 0x00;
-  }
-  out[o++] = in[n-2]; out[o++] = in[n-1];
-  return o;
-}
-
-static size_t unstuffFrame(const uint8_t* in, size_t n, uint8_t* out) {
-  if (n <= 2) { memcpy(out, in, n); return n; }
-  size_t o = 0;
-  out[o++] = in[0]; out[o++] = in[1];
-  bool skip = false;
-  for (size_t i = 2; i < n - 2; i++) {
-    if (skip && in[i] == 0x00) { skip = false; continue; }
-    out[o++] = in[i];
-    skip = (in[i] == 0x7B || in[i] == 0x7D);
-  }
-  out[o++] = in[n-2]; out[o++] = in[n-1];
-  return o;
-}
-
-// ---------------------------------------------------------------- A0 parsing
-// Offsets calibrated against 148 captured frames on 2026-11-01 (BLE_PROTOCOL.md §6)
-static void dumpA0(const uint8_t* d, size_t n) {
-  auto b = [&](int i) -> int { return (i < (int)n) ? d[i] : 0; };
-  int  ftype = b(0);
-  bool t1    = (ftype == 1);
-  auto temp  = [&](int i) -> float { return b(i) + b(i+1) / 100.0f; };
-
-  float tIn   = temp(1);
-  float tChm  = temp(3);
-  float tBox  = temp(6);
-  int   setp  = b(5);
-  int   fault = b(11);
-  bool  ion   = (b(10) & 0x10) != 0;
-
-  // Offsets verified on Type1 only; Type0 keeps its own set
-  int   outI  = t1 ? 28 : 21;
-  float tOut  = (float)b(outI) + b(outI+1) / 100.0f;
-  float flow  = t1 ? b(21) / 10.0f : b(8) / 10.0f;
-  int   power = t1 ? b(13) : b(9);
-  int   fan   = t1 ? (b(15) * 100 + b(16)) : b(14);
-
-  Serial.printf("[A0] T%d out%.1f in%.1f chamber%.1f chassis%.1f set%d "
+// ---------------------------------------------------------------- A0 printing
+// Parsing lives in proto/a0.cpp; this only formats the result. Keeping them apart is what lets
+// the self test compare fields without a serial port.
+static void printA0(const proto::A0State& s) {
+  Serial.printf("[A0] T%u out%.1f in%.1f chamber%.1f chassis%.1f set%d "
                 "power%d%% flow%.1fL/min fan %drpm flame %s fault %s\n",
-                ftype, tOut, tIn, tChm, tBox, setp, power, flow, fan,
-                ion ? "yes" : "no", fault ? String(fault, HEX).c_str() : "none");
+                s.frame_type, s.temp_out, s.temp_in, s.chamber, s.temp_box, s.setpoint,
+                s.burner_power, s.water_flow, s.fan_speed,
+                s.flame ? "yes" : "no",
+                s.fault ? String(s.fault, HEX).c_str() : "none");
 
-  if (t1) {  // suspected fields, marked so they can be confirmed later
+  if (s.type1) {  // suspected fields, marked so they can be confirmed later
     Serial.printf("     [guess] ambient%.1f ambient_set%.1f gas_set%.1f "
-                  "pressure%dPa mode[%d]=%02X bath[%d]=%02X\n",
-                  temp(16), temp(18), temp(22), b(27) * 10, 32, b(32), 33, b(33));
-  }
-  if (gRawDump) {
-    Serial.print("     raw=");
-    for (size_t i = 0; i < n; i++) Serial.printf("%02x ", d[i]);
-    Serial.println();
+                  "pressure%dPa mode[32]=%02X bath[33]=%02X\n",
+                  s.ambient, s.ambient_set, s.gas_set, s.pressure,
+                  s.mode, (unsigned)(s.max_setpoint | (s.bathroom ? 0x80 : 0)));
   }
 }
 
 // ---------------------------------------------------------------- frame dispatch
 static void onFrame(const uint8_t* f, size_t n) {
   if (n < 9) return;
-  uint8_t sum = 0;
-  for (size_t i = 2; i < n - 3; i++) sum += f[i];
-  if (sum != f[n-3]) {
-    Serial.printf("[RX] dropping frame chk=%02X expect=%02X len=%d\n", f[n-3], sum, (int)n);
+  if (!proto::checksumOk(f, n)) {
+    Serial.printf("[RX] dropping frame chk=%02X expect=%02X len=%d\n",
+                  f[n-3], proto::checksum(f, n), (int)n);
     return;
   }
   uint8_t mid = f[4], cmd = f[5];
   const uint8_t* p = f + 6;
   size_t plen = n - 9;
 
-  if (cmd == CMD_STATE) {
+  if (cmd == pc::kCmdState) {
     gA0Count++;
     gLastA0Ms = millis();
-    dumpA0(p, plen);
-  } else if (cmd == CMD_LOGIN && plen >= 2) {
+    printA0(proto::parseA0(p, plen));
+    if (gRawDump) {
+      Serial.print("     raw=");
+      for (size_t i = 0; i < plen; i++) Serial.printf("%02x ", p[i]);
+      Serial.println();
+    }
+  } else if (cmd == pc::kCmdLogin && plen >= 2) {
     if (p[0] == 0x07) {
       gAuthResp = p[1];
       Serial.printf("[AUTH] + A2/07 reply = %02X  (%s)\n", p[1],
@@ -225,45 +164,20 @@ static void onFrame(const uint8_t* f, size_t n) {
   }
 }
 
-static void drainRx() {
-  while (gRxLen >= 4) {
-    size_t start = 0;
-    while (start + 1 < gRxLen &&
-           !(gRxBuf[start] == 0x7B && gRxBuf[start+1] == 0x7B)) start++;
-    if (start + 1 >= gRxLen) { gRxLen = 0; return; }
-    if (start > 0) {
-      memmove(gRxBuf, gRxBuf + start, gRxLen - start);
-      gRxLen -= start;
-    }
-    size_t end = 0;
-    for (size_t i = 2; i + 1 < gRxLen; i++) {
-      if (gRxBuf[i] == 0x7D && gRxBuf[i+1] == 0x7D) { end = i + 2; break; }
-    }
-    if (!end) return;
-
-    uint8_t plain[256];
-    size_t plen = unstuffFrame(gRxBuf, end, plain);
-    onFrame(plain, plen);
-    memmove(gRxBuf, gRxBuf + end, gRxLen - end);
-    gRxLen -= end;
-  }
+// FIFO and CREDITS share this callback, exactly as Python _on_notify does. All the reassembly
+// logic lives in proto::streamPush; this only forwards each complete frame.
+static void onFrameSink(void* ctx, const uint8_t* f, size_t n) {
+  (void)ctx;
+  onFrame(f, n);
 }
 
-// FIFO and CREDITS share this callback, exactly as Python _on_notify does
 static void onNotify(NimBLERemoteCharacteristic* ch, uint8_t* data,
                      size_t len, bool isNotify) {
   (void)ch; (void)isNotify;
   if (len == 0 || len > 64) return;
-  uint8_t tmp[64];
-  memcpy(tmp, data, len);
-  xorBuf(tmp, len);                       // each fragment restarts at KEY[0]
-  if (gRxLen + len > sizeof(gRxBuf)) {
+  if (proto::streamPush(&gRx, data, len, onFrameSink, nullptr) < 0) {
     Serial.println("[RX ] buffer overflow, clearing to resync");
-    gRxLen = 0;
   }
-  memcpy(gRxBuf + gRxLen, tmp, len);
-  gRxLen += len;
-  drainRx();
 }
 
 // ---------------------------------------------------------------- sending
@@ -273,19 +187,19 @@ static bool sendFrame(uint8_t recv, uint8_t cmd, const uint8_t* data, size_t dle
     return false;
   }
   uint8_t frame[160];
-  size_t flen = buildFrame(frame, recv, gMid++, cmd, data, dlen);
+  size_t flen = proto::buildFrame(frame, recv, gMid++, cmd, data, dlen);
   uint8_t wire[256];
-  size_t wlen = stuffFrame(frame, flen, wire);
+  size_t wlen = proto::stuffFrame(frame, flen, wire);
 
   Serial.printf("[TX ] mid=%d cmd=%02X : ", (uint8_t)(gMid - 1), cmd);
   for (size_t i = 0; i < flen; i++) Serial.printf("%02x ", frame[i]);
   Serial.println();
 
-  for (size_t off = 0; off < wlen; off += CHUNK) {
-    size_t n = (wlen - off < CHUNK) ? (wlen - off) : CHUNK;
-    uint8_t chunk[CHUNK];
+  for (size_t off = 0; off < wlen; off += pc::kChunk) {
+    size_t n = (wlen - off < pc::kChunk) ? (wlen - off) : pc::kChunk;
+    uint8_t chunk[pc::kChunk];
     memcpy(chunk, wire + off, n);
-    xorBuf(chunk, n);
+    proto::xorBuf(chunk, n);
     if (!gFifo->writeValue(chunk, n, true)) {
       Serial.println("[TX ] write failed");
       return false;
@@ -309,7 +223,7 @@ static bool loginStep(const uint8_t* data, size_t len, volatile int& resp,
                       const char* tag) {
   for (int attempt = 0; attempt < 5; attempt++) {
     resp = -1;
-    if (!sendFrame(RECV_LOGIN, CMD_LOGIN, data, len)) return false;
+    if (!sendFrame(pc::kRecvLogin, pc::kCmdLogin, data, len)) return false;
     if (waitResp(resp, 6000)) {
       Serial.printf("[AUTH] %s reply = %d\n", tag, (int)resp);
       return true;
@@ -355,7 +269,7 @@ static void disconnectClient() {
     gClient = nullptr;
   }
   gFifo = nullptr;
-  gRxLen = 0;
+  proto::streamReset(&gRx);
 }
 
 static bool connectAndPair() {
@@ -489,6 +403,22 @@ static void startSession(bool forceRebond) {
 }
 
 // ---------------------------------------------------------------- commands
+// Where proto::runSelfTest sends its lines. Keeping the printer outside proto/ is what lets the
+// same test run on a host later without dragging in Arduino.
+static void serialLine(void* ctx, const char* line) {
+  (void)ctx;
+  Serial.println(line);
+}
+
+static void doSelfTest() {
+  proto::SelfTestResult r = proto::runSelfTest(serialLine, nullptr);
+  if (r.failed == 0) {
+    Serial.printf("[TEST] proto self test passed: %d checks\n", r.total);
+  } else {
+    Serial.printf("[TEST] proto self test FAILED: %d of %d checks\n", r.failed, r.total);
+  }
+}
+
 static void doScan() {
   if (gClient && gClient->isConnected()) {
     Serial.println("[SCAN] already connected; disconnect before scanning");
@@ -534,6 +464,7 @@ static void printHelp() {
   Serial.println("  mac AA:BB:...     set the login MAC (the host on the whitelist)");
   Serial.println("  addr AA:BB:...    set the heater BLE address");
   Serial.println("  status            print configuration and runtime state");
+  Serial.println("  selftest          run the golden protocol vectors on the board");
   Serial.println("  raw on / raw off  show / hide raw A0 bytes");
   Serial.println("  reboot            reboot");
   Serial.println("  help              this help");
@@ -568,6 +499,7 @@ static void handleCommand(String line) {
   if (low.startsWith("pin "))  { setPin(line.substring(4)); return; }
   if (low == "help" || low == "?")   { printHelp(); return; }
   if (low == "status")               { printStatus(); return; }
+  if (low == "selftest")             { doSelfTest(); return; }
   if (low == "scan")                 { doScan(); return; }
   if (low == "go")                   { gNeedRebond = false; startSession(false); return; }
   if (low == "pair")                 { startSession(true); return; }

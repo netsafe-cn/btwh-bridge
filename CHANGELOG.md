@@ -7,6 +7,37 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `firmware/bridge/src/proto/` — the protocol layer as its own directory, with no Arduino and no
+  NimBLE include. `frame.{h,cpp}` holds framing, stuffing, per-fragment XOR, checksum and stream
+  reassembly; `a0.{h,cpp}` turns a broadcast into an `A0State`. Parsing is now separate from
+  printing, which is what makes it checkable at all.
+- `selftest` serial command — replays `spec/protocol_vectors.json` **on the board**: rebuilds
+  every frame from its parameters, stuffs it, XORs it fragment by fragment, feeds the fragments
+  back through the reassembler, corrupts a checksum on purpose, and compares every A0 field.
+  Verified on hardware, 60 checks.
+- `tools/gen_vectors.py` — generates `src/proto/vectors_gen.h` from the JSON contract.
+  `--check` fails when the header is stale, so the two cannot drift.
+- `AGENTS.md` and `MEMORY.md` — build commands, layer rules, and the facts that were expensive to
+  establish (the panel code is also the SMP passkey; `A2/07=00` means the window is closed, not
+  that the MAC is unauthorised; three failures trigger a three-minute rate limit).
+
+### Changed
+
+- `src/main.cpp` went from 672 to 604 lines by moving the codec out. The firmware still links the
+  same heater and still streams `A0` unchanged — verified after flashing, not assumed.
+- **No committed `.ino` any more.** `gateway_cli.py` generates a sketch shell around `src/` at
+  build time, so there is one copy of the sources instead of a hand-synced duplicate.
+- CI gained two guards: `proto/` may not include Arduino, NimBLE or ESP-IDF, and the generated
+  vector header must match `spec/protocol_vectors.json`.
+
+### Fixed
+
+- `scan` printed a literal `//n` instead of a newline (`devices://n`).
+- `parseA0` now exposes `fan_power`, `mode`, `max_setpoint` and `bathroom`, including the Type0
+  offsets that only existed in the Python reference. The printed `[A0]` line is unchanged.
+
 ### Planned
 
 - MQTT publishing from the bridge against `spec/mqtt.json`
