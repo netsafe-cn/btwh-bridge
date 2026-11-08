@@ -67,6 +67,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `redefinition of 'struct app::Config'`. Every header now carries a macro guard as well, and
   `gateway_cli.py` puts `src/` on the include path so `"app/session.h"` means the same thing to
   arduino-cli and to PlatformIO.
+- `log_diag.py` misdiagnosed the state measured on 2026-11-08: link up, both CCCDs subscribed,
+  `A2/07` silent, then the heater hangs up ~12 s later. It blamed GATT enumeration. It now
+  recognises the signature and says what actually fixes it — clear pairing on the panel and enter
+  a fresh code while the window is open. This is *not* the `A2/07 = 00` case; there was no reply
+  at all.
 
 ### Planned
 

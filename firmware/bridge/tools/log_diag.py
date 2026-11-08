@@ -74,8 +74,16 @@ def diagnose(text: str) -> list[tuple[str, str, str]]:
             out.append(("AUTH/A2-07", "? reply %s: undefined" % last07,
                         "record the value and report it; possibly new firmware"))
     else:
-        out.append(("AUTH/A2-07", "- no reply",
-                    "if SMP passed this is usually enumeration; check FIFO/CREDITS"))
+        # Measured 2026-11-08: after an abrupt reset of the bridge the heater came up at SMP,
+        # accepted both CCCDs, then never answered A2/07 and dropped the link ~12 s later. It
+        # kept doing that for minutes afterwards. Nothing local was wrong - it wanted a new code.
+        if re.search(r"link is down|\(link_failed\)", text):
+            advice = ("the heater accepted the link and then hung up without answering: it is "
+                      "not accepting this session. Clear pairing on the panel, read a new code "
+                      "and enter it while the window is open")
+        else:
+            advice = "if SMP passed this is usually enumeration; check FIFO/CREDITS"
+        out.append(("AUTH/A2-07", "- no reply", advice))
 
     if a2_08:
         last08 = a2_08[-1].upper()
