@@ -20,18 +20,23 @@ ones measured on 2026-11-01.
 ```
 firmware/bridge/
 ├── src/
-│   ├── main.cpp               setup / loop / command dispatch (Arduino + NimBLE)
-│   └── proto/                 frames and A0 parsing - no Arduino, no NimBLE
-│       ├── frame.h  frame.cpp     codec: build, stuff, XOR, checksum, reassembly
-│       ├── a0.h     a0.cpp        A0 broadcast -> A0State
-│       ├── selftest.h  selftest.cpp   runs the golden vectors on the board
-│       └── vectors_gen.h      GENERATED from spec/protocol_vectors.json
+│   ├── main.cpp               setup / loop / serial console
+│   ├── proto/                 frames and A0 parsing - no Arduino, no NimBLE
+│   │   ├── frame.h  frame.cpp     codec: build, stuff, XOR, checksum, reassembly
+│   │   ├── a0.h     a0.cpp        A0 broadcast -> A0State
+│   │   ├── selftest.h  selftest.cpp   runs the golden vectors on the board
+│   │   └── vectors_gen.h      GENERATED from spec/protocol_vectors.json
+│   ├── ble/                   link.h  link.cpp    the only place NimBLE appears
+│   ├── auth/                  login.h login.cpp   A2/07 + A2/08 behind a Transport
+│   └── app/                   config.{h,cpp}  NVS config
+│                              session.{h,cpp} connect order, A0 state, link watch
 ├── platformio.ini             PlatformIO configuration (NimBLE pinned to 1.4.3)
 ├── tools/
 │   ├── gateway_cli.py         build / flash / serial console / logging in one command
 │   ├── gen_vectors.py         spec/protocol_vectors.json -> src/proto/vectors_gen.h
 │   ├── esp32_panel.py         always-on-top control panel (enter the six-digit code)
 │   ├── pair_once.py           pair in one command and report a verdict
+│   ├── watch_a0.py            A0 broadcast as a table with per-field ranges
 │   └── log_diag.py            serial log diagnosis
 └── README.md                  this file
 ```
@@ -50,17 +55,16 @@ in [`firmware/panel/`](../panel/), and it must never link anything here.
 ### 2.1 Internal structure
 
 Split by **what a module is allowed to know**, so dependency arrows only point one way (ADR-008).
-`proto/` has landed; the rest is the next step.
 
 ```
 src/
-├── main.cpp        setup / loop / command dispatch       (604 lines, still holds the session)
-├── proto/          frames, A0 fields      ← done: no Arduino, no NimBLE
-├── ble/            NimBLE: connect, subscribe, SMP       ← planned
-├── auth/           A2/07 + A2/08 + window state          ← planned
-├── app/            session lifecycle, NVS config, state snapshot   ← planned
-├── net/            (empty) wifi, mqtt, ha_discovery, ota           ← planned
-└── diag/           serial console                        ← planned
+├── main.cpp        setup / loop / serial console          (~270 lines, board boundary only)
+├── proto/          frames, A0 fields                      done: no Arduino, no NimBLE
+├── ble/            NimBLE: connect, subscribe, reassemble, send   done
+├── auth/           A2/07 + A2/08 behind a Transport       done: no NimBLE, no Serial
+├── app/            session order, NVS config, A0 state    done
+├── net/            wifi, mqtt, ha_discovery, ota          planned
+└── diag/           (serial console stays in main.cpp)     planned
 ```
 
 Why this order and not "bluetooth part / protocol part / config part":
@@ -74,8 +78,11 @@ Why this order and not "bluetooth part / protocol part / config part":
   generated from `spec/mqtt.json`, and must never see a frame byte.
 
 **No build system change is needed.** Arduino compiles every `.cpp` under `src/` recursively, so
-these subdirectories work with the existing `gateway_cli.py`. When the firmware later moves to
-ESP-IDF, the same directories become `components/` and include paths stay put.
+these subdirectories work with the existing `gateway_cli.py`; the one thing it does add is
+`src/` itself to the C++ include path, because arduino-cli otherwise only exposes each
+subdirectory and an include written as `app/session.h` would fail one level down. When the
+firmware later moves to ESP-IDF, the same directories become `components/` and include paths
+stay put.
 
 Splitting is not free: it changes every call site and needs a rebuild plus a reflash to prove the
 board still links. Do it as one commit, with the golden vectors as the judge.
@@ -180,7 +187,7 @@ Code expired or rejected? **Read a new one and type it again** — no build invo
 | Login MAC | This host's Bluetooth address, set with `mac <MAC>` (placeholder `11:22:33:44:55:66`) |
 
 Protocol references: `docs/BLE_PROTOCOL.md` in the repository root (field calibration in §6, B0/D7 in
-§16), `docs/API.md`, and `python/bosch_api.py` (145 tests). The SMP pin behaviour is corroborated by captures
+§16), `docs/API.md`, and `python/bosch_api.py` (150 tests). The SMP pin behaviour is corroborated by captures
 on real hardware — see `docs/API.md §10`.
 
 ## 8. Build environment (new machine / reinstall)

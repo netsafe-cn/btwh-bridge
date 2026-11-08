@@ -33,6 +33,10 @@ HEADER = """\
 // These are the same bytes python/tests/test_contract.py checks, so a mismatch here means the
 // C++ codec and the Python codec have drifted apart.
 #pragma once
+// Macro guard too: arduino-cli compiles a copy of src/ under <build>/sketch/, so a header can be
+// reached through two paths and #pragma once alone does not dedupe it.
+#ifndef BTWH_PROTO_VECTORS_GEN_H
+#define BTWH_PROTO_VECTORS_GEN_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -162,7 +166,8 @@ def build() -> str:
         )
     out.append("};\nstatic const size_t kA0Count = %d;\n\n" % len(a0s))
 
-    out.append("}  // namespace vectors\n}  // namespace proto\n")
+    out.append("}  // namespace vectors\n}  // namespace proto\n\n"
+               "#endif  // BTWH_PROTO_VECTORS_GEN_H\n")
     return "".join(out)
 
 

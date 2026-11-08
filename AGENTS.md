@@ -6,8 +6,8 @@ Read this before changing firmware or protocol code. Project-wide conventions li
 ## Build and flash
 
 ```bash
-python run_tests.py                                    # 145 offline tests, no hardware
-python firmware/bridge/tools/gateway_cli.py --build    # compile only
+python run_tests.py                                    # 150 offline tests, no hardware
+python firmware/bridge/tools/gateway_cli.py --build    # compile only (~15 min cold)
 python firmware/bridge/tools/gateway_cli.py --flash    # compile, flash COM3, open console
 python firmware/bridge/tools/gateway_cli.py            # console only, no rebuild
 ```
@@ -18,6 +18,11 @@ python firmware/bridge/tools/gateway_cli.py            # console only, no rebuil
   CreateProcess has a path limit and the toolchain contains very long header names.
 - `firmware/bridge/src/` is the only copy of the firmware sources. `gateway_cli.py` materialises
   an arduino-cli sketch around it at build time; do not add a second `.ino` copy.
+- Every header carries **a macro guard as well as `#pragma once`**. arduino-cli compiles a copy of
+  `src/` under `<build>/sketch/`, and the `-I` flag resolves a layered include back to the
+  original tree. The same header then exists at two paths, `#pragma once` keys on the file rather
+  than the name, and the build fails with `redefinition of 'struct app::Config'`. Measured, not
+  theoretical: it cost two 15-minute builds to find.
 
 ## Before you touch protocol code
 
@@ -36,13 +41,18 @@ cover anything that needs the heater.
 | Directory | May include | Must not know |
 |---|---|---|
 | `src/proto/` | `<stdint.h> <stddef.h> <string.h>` | Arduino, NimBLE, MQTT |
-| `src/ble/` | NimBLE | pairing semantics, MQTT |
-| `src/auth/` | `proto/` + a send/wait callback | NimBLE types |
+| `src/ble/` | NimBLE, `proto/` | pairing semantics, MQTT |
+| `src/auth/` | `proto/` reply codes + a send/wait/log callback | NimBLE types, Arduino, `Serial` |
 | `src/app/` | ble, auth, proto, NVS | MQTT topics |
 | `src/net/` | app state, generated contract | frame bytes |
 
 `src/proto/` must stay free of Arduino includes — that is the only reason it can be tested on a
-PC later, and it is checked by review, not by CI (yet).
+PC later, and it is checked by review, not by CI (yet). `src/auth/` is the same story one level
+up: it takes a `Transport` of function pointers, so a fake one can answer `A2/07`/`A2/08` from a
+table and the whole failure matrix can be replayed without a heater.
+
+`src/main.cpp` is the board boundary only: `setup()`, `loop()` and the serial console. If you are
+adding logic there, it almost certainly belongs in `app/`.
 
 ## Never commit
 

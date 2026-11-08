@@ -84,7 +84,13 @@ def _cmd(*args):
 def build():
     sync_sketch()
     libs = ["--libraries", LIBS] if LIBS.is_dir() else []
-    return run(_cmd("compile", "--fqbn", FQBN, *libs,
+    # arduino-cli adds an include path for each subdirectory of src/ but not for src/ itself, so
+    # a layered include written as "app/session.h" resolves relative to the caller and then
+    # fails one level down (src/app/app/session.h). PlatformIO puts src/ on the path natively;
+    # this line makes arduino-cli agree, so both build systems read the same include lines.
+    # Needs a workspace path without spaces - the default ~/esp has none.
+    inc = ["--build-property", "compiler.cpp.extra_flags=-I" + str(SKETCH / "src")]
+    return run(_cmd("compile", "--fqbn", FQBN, *libs, *inc,
                     "--build-path", BUILD, SKETCH))
 
 

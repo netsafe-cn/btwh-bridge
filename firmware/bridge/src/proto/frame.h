@@ -8,6 +8,12 @@
 // made in both places, and spec/protocol_vectors.json is the judge.
 #pragma once
 
+// Classic guard as well as #pragma once: arduino-cli compiles a copy of src/ under
+// <build>/sketch/, so one header can be reached through two paths. #pragma once keys
+// on the file, not the name, and would let both copies through.
+#ifndef BTWH_PROTO_FRAME_H
+#define BTWH_PROTO_FRAME_H
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -58,3 +64,5 @@ int streamPush(RxStream* s, const uint8_t* fragment, size_t n, FrameSink sink, v
 void streamReset(RxStream* s);
 
 }  // namespace proto
+
+#endif  // BTWH_PROTO_FRAME_H

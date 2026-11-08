@@ -32,7 +32,7 @@ must never break a downstream import or invalidate `spec/api_contract.json`.
 ## Running things
 
 ```bash
-python run_tests.py                        # from the repository root, 136 tests
+python run_tests.py                        # from the repository root, 150 tests
 python python/tests/test_contract.py       # contract only
 python python/tools/bosch_ui.py            # desktop console
 python python/tools/bosch_read.py --json   # one-shot read, JSON out

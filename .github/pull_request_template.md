@@ -12,7 +12,7 @@
 
 ## Checklist
 
-- [ ] `python run_tests.py` is green (145 tests)
+- [ ] `python run_tests.py` is green (150 tests)
 - [ ] `CHANGELOG.md` updated under `[Unreleased]` (skip only for python/tests/CI/comment-only)
 - [ ] Version bump stated in the description: `patch` / `minor` / `major`, or `none`
 - [ ] Public API changed → `docs/API.md` updated, then `python python/tests/test_contract.py --update` run

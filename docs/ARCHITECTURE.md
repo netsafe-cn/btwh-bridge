@@ -227,9 +227,21 @@ Two rules carry most of the value:
   path calls into the console, the console becomes load-bearing.
 
 **Cost, and why it is not a build-system change**: Arduino compiles every `.cpp` under `src/`
-recursively, so subdirectories need no CMake, no `CMakeLists.txt`, and no change to
-`gateway_cli.py`. When the firmware later moves to ESP-IDF, these same directories become
-`components/` and the include paths do not change — the split is portable in both directions.
+recursively, so subdirectories need no CMake, no `CMakeLists.txt`, and — with one exception — no
+change to `gateway_cli.py`. The exception, found the hard way: arduino-cli does not put `src/`
+itself on the include path, only each subdirectory, so `#include "app/session.h"` resolves
+relative to the caller and then fails one level down. `gateway_cli.py` now passes `-I<src>` so a
+layered include means the same thing here and in PlatformIO. The second half of the same trap:
+arduino-cli compiles a *copy* of `src/` under `<build>/sketch/`, while that `-I` resolves back to
+the original tree, so one header exists at two paths and `#pragma once` — which keys on the file,
+not the name — lets both through. Every header therefore carries a macro guard as well. When the
+firmware later moves to ESP-IDF, these same directories become `components/` and the include
+paths do not change — the split is portable in both directions.
+
+**Status (2026-11-08)**: `proto/`, `ble/`, `auth/` and `app/` have landed; `main.cpp` is down to
+273 lines of `setup()` / `loop()` / serial console. `net/` (Wi-Fi provisioning, MQTT, HA
+discovery, OTA) and `diag/` are still empty. Each split was flashed and observed on the board
+before being committed, because compiling is not the same as still linking to the heater.
 
 **Rejected**: extracting `bosch_proto` into `firmware/components/` today. It has exactly one
 consumer (the bridge); the panel never touches BLE. A shared component with one user is a
@@ -279,7 +291,7 @@ share.
 python/                     Reference implementation
   python/bosch_api.py              codec / session / resident service
   python/device_fsm.py             provisioning + pairing state machine
-  tests/                    145 offline tests
+  tests/                    150 offline tests
   tools/                    console, headless bridge, capture
 
 firmware/                   One directory per application
@@ -336,7 +348,7 @@ breaking change.
 | Phase | Content | Exit criteria |
 |---|---|---|
 | **0 · done** | Protocol work, Python reference implementation, test suite, ESP32 feasibility firmware | Regression green; firmware boots |
-| **1 · done** | Real-heater verification (SMP / A2/07 / A2/08 / A0), runtime pairing code, power-cycle recovery, repository restructured for multiple applications | All three log stages pass on hardware; 145 tests green |
+| **1 · done** | Real-heater verification (SMP / A2/07 / A2/08 / A0), runtime pairing code, power-cycle recovery, repository restructured for multiple applications | All three log stages pass on hardware; 150 tests green |
 | **2 · current** | `bosch_proto` extracted into `firmware/components`, MQTT publishing against `spec/mqtt.json`, HA discovery | A panel can be built against the contract with no bridge changes |
 | **3** | Move to ESP-IDF, OTA, watchdog; touch panel in `firmware/panel`; ESPHome component | Seven days without a drop; OTA rollback works; second application shipped |
 | **3** | Optional ESPHome external component, field mapping for more models, more language bindings | At least two models verified by the community |

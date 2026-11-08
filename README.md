@@ -270,7 +270,7 @@ change is a patch, minor or major bump live in
 │   ├── bemfa.py                Bemfa cloud client (Mi Home channel)
 │   ├── boschlog.py             Logging: rotating file + in-memory ring buffer
 │   ├── singlelock.py           Single-instance guard for the background bridge
-│   ├── tests/                  ★ 145 offline tests, auto-discovered
+│   ├── tests/                  ★ 150 offline tests, auto-discovered
 │   └── tools/                  Console, headless bridge, capture, launchers
 │
 ├── firmware/                   One directory per application, no shared source

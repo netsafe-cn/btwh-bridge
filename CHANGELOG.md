@@ -25,21 +25,48 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `AGENTS.md` and `MEMORY.md` — build commands, layer rules, and the facts that were expensive to
   establish (the panel code is also the SMP passkey; `A2/07=00` means the window is closed, not
   that the MAC is unauthorised; three failures trigger a three-minute rate limit).
+- `firmware/bridge/src/ble/` — the only directory that includes NimBLE: connect, SMP callbacks,
+  FIFO/CREDITS subscribe, fragment reassembly, chunked writes, scan. It reports "encrypted /
+  bonded" and stops there; whether that means the heater accepted the code is not its business.
+- `firmware/bridge/src/auth/` — `A2/07` + `A2/08` as a state machine behind a `Transport` of three
+  function pointers (`send`, `wait`, `log`). No NimBLE, no Arduino, no `Serial`, so a fake
+  transport can replay the whole pairing-failure matrix without a heater in the room. The outcome
+  codes mirror `bosch_api.PAIR_FAIL_*` name for name, and `classify()` maps the two replies onto
+  them exactly as the Python side does.
+- `firmware/bridge/src/app/` — `config.{h,cpp}` (NVS, defaults are placeholders) and
+  `session.{h,cpp}` (order of operations, A0 state, link-drop recovery, 30 s watchdog).
+- `python/tests/test_firmware_contract.py` — five tests that fail when the firmware's reason codes
+  drift from the Python API, when `reasonText()` stops returning a code the Python side has, or
+  when the reply line stops printing two hex digits.
 
 ### Changed
 
-- `src/main.cpp` went from 672 to 604 lines by moving the codec out. The firmware still links the
-  same heater and still streams `A0` unchanged — verified after flashing, not assumed.
+- `src/main.cpp` went from 672 to 604 lines by moving the codec out, and now from 604 to 273 by
+  moving the radio, the login and the session out. What is left is `setup()`, `loop()` and the
+  serial console. The firmware still links the same heater and still streams `A0` unchanged —
+  verified after flashing, not assumed.
 - **No committed `.ino` any more.** `gateway_cli.py` generates a sketch shell around `src/` at
   build time, so there is one copy of the sources instead of a hand-synced duplicate.
-- CI gained two guards: `proto/` may not include Arduino, NimBLE or ESP-IDF, and the generated
-  vector header must match `spec/protocol_vectors.json`.
+- CI gained three guards: `proto/` and `auth/` may not include Arduino, NimBLE or ESP-IDF, and the
+  generated vector header must match `spec/protocol_vectors.json`. `auth/` is guarded for the same
+  reason as `proto/`: being testable off-target is the only thing that makes the layer worth its
+  own directory, and one `Serial.println()` ends that.
 
 ### Fixed
 
 - `scan` printed a literal `//n` instead of a newline (`devices://n`).
 - `parseA0` now exposes `fan_power`, `mode`, `max_setpoint` and `bathroom`, including the Type0
   offsets that only existed in the Python reference. The printed `[A0]` line is unchanged.
+- `A2/07` and `A2/08` replies were logged with `%d` in one of the two places that print them, so a
+  rate-limit reply `3C` came out as `60`. `log_diag.py` matches two hex digits, silently ignored
+  `60`, and fell back to an earlier line — the diagnosis looked healthy while the device was
+  refusing the code. Every reply is now printed as `%02X` from a single place.
+- Build: arduino-cli compiles a *copy* of `src/` under `<build>/sketch/`, while the layered
+  include path resolves back to the original tree. The same header then exists at two paths,
+  `#pragma once` keys on the file rather than the name, and the build died with
+  `redefinition of 'struct app::Config'`. Every header now carries a macro guard as well, and
+  `gateway_cli.py` puts `src/` on the include path so `"app/session.h"` means the same thing to
+  arduino-cli and to PlatformIO.
 
 ### Planned
 

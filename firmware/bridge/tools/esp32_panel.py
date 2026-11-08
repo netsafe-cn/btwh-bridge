@@ -124,6 +124,10 @@ class Panel:
         self.txt.see("end")
         self.logfile.write(line + "\n")
         if "authorised" in line: self.status.config(text="authorised, waiting for A0", fg="#137333")
+        elif "[result] x" in line:
+            # The firmware ends every failed attempt with the reason code, e.g. (window_closed).
+            m = re.search(r"\(([a-z_]+)\)", line)
+            self.status.config(text="failed: %s" % (m.group(1) if m else "see log"), fg="#c0392b")
         elif "rejected" in line: self.status.config(text="failed; read a new code and retry", fg="#c0392b")
         elif "[A0]" in line: self.status.config(text="running, receiving A0", fg="#137333")
 

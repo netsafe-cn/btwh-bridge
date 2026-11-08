@@ -98,6 +98,20 @@ jobs:
             exit 1
           fi
           echo "OK: proto/ has no framework includes"
+      # auth/ is fakeable for the same reason: it talks to a Transport of function pointers, so a
+      # table-driven fake can replay the whole pairing-failure matrix without a heater. One stray
+      # Serial.println() and that stops being true.
+      - name: auth layer stays hardware-free
+        shell: bash
+        run: |
+          bad=$(grep -rnE '#include[[:space:]]*[<"](Arduino|NimBLE|Preferences|esp_|HardwareSerial)' \
+                  firmware/bridge/src/auth || true)
+          if [ -n "$bad" ]; then
+            echo "$bad"
+            echo "::error::firmware/bridge/src/auth must not include Arduino, NimBLE or ESP-IDF"
+            exit 1
+          fi
+          echo "OK: auth/ is free of hardware includes"
       - name: generated vectors match the spec
         shell: bash
         run: python firmware/bridge/tools/gen_vectors.py --check

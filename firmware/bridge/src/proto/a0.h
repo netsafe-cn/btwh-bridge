@@ -9,6 +9,12 @@
 // the two disagree, the Python side and the vectors win.
 #pragma once
 
+// Classic guard as well as #pragma once: arduino-cli compiles a copy of src/ under
+// <build>/sketch/, so one header can be reached through two paths. #pragma once keys
+// on the file, not the name, and would let both copies through.
+#ifndef BTWH_PROTO_A0_H
+#define BTWH_PROTO_A0_H
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -49,3 +55,5 @@ struct A0State {
 A0State parseA0(const uint8_t* d, size_t n);
 
 }  // namespace proto
+
+#endif  // BTWH_PROTO_A0_H
