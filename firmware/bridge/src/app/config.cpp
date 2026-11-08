@@ -33,12 +33,37 @@ void Config::load() {
   copyTo(heater, sizeof(heater), h.c_str());
   copyTo(login, sizeof(login), l.c_str());
   copyTo(pin, sizeof(pin), p.c_str());
+
+  String s = prefs().getString("ssid", "");
+  String w = prefs().getString("wifipass", "");
+  String b = prefs().getString("broker", "");
+  copyTo(ssid, sizeof(ssid), s.c_str());
+  copyTo(wifiPass, sizeof(wifiPass), w.c_str());
+  copyTo(broker, sizeof(broker), b.c_str());
 }
 
 void Config::save() const {
   prefs().putString("devmac", heater);
   prefs().putString("loginmac", login);
   prefs().putString("pin", pin);
+}
+
+void Config::saveNetwork() const {
+  prefs().putString("ssid", ssid);
+  prefs().putString("wifipass", wifiPass);
+  prefs().putString("broker", broker);
+}
+
+void Config::wipe() {
+  prefs().clear();
+  // Restore the placeholders load() would have used, so a wipe while running behaves like a
+  // fresh board instead of leaving empty strings in the live struct.
+  copyTo(heater, sizeof(heater), kHeaterDefault);
+  copyTo(login, sizeof(login), kLoginDefault);
+  pin[0] = 0;
+  ssid[0] = 0;
+  wifiPass[0] = 0;
+  broker[0] = 0;
 }
 
 bool Config::pinValid() const {

@@ -21,11 +21,25 @@ struct Config {
   char login[18];    // host MAC on the heater whitelist (any value the panel accepts)
   char pin[8];       // six digits, or empty
 
+  // Provisioning fields. Written by the portal (or the wifi console command), read at boot:
+  // no ssid means "never provisioned", which is what turns the hotspot on.
+  char ssid[33];     // 32 chars is the 802.11 maximum
+  char wifiPass[65]; // 64 chars, the WPA2 maximum
+  char broker[129];  // host[:port]; empty = discovery only, no external broker
+
   // Reads NVS; fills in placeholders when a key is absent.
   void load();
 
-  // Writes all three keys. Cheap enough to call on every console change.
+  // Writes the pairing keys (heater / login / pin).
   void save() const;
+
+  // Writes the network keys (ssid / wifiPass / broker). Separate because the portal saves
+  // them together but the console edits them one at a time.
+  void saveNetwork() const;
+
+  // Erases both halves: BOOT held for 5 s does this. The heater keeps its own pairing record,
+  // so the user must still clear pairing on the panel - documented in the portal.
+  void wipe();
 
   bool pinValid() const;
   uint32_t pinValue() const;

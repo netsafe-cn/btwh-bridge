@@ -58,7 +58,10 @@ static const char PAGE[] PROGMEM = R"HTML(<!DOCTYPE html>
 
   <div class="step">2 &middot; Wi-Fi</div>
   <label for="ssid">Network</label>
-  <select name="ssid" id="ssid">@WIFI_OPTIONS@</select>
+  <select name="ssid" id="ssid" onchange="document.getElementById('manual').style.display =
+    this.value==='__other__' ? 'block' : 'none'">@WIFI_OPTIONS@</select>
+  <input name="ssidmanual" id="manual" placeholder="Network name (hidden networks)"
+         style="display:none; margin-top:6px">
   <label for="wifipass">Password</label>
   <input name="wifipass" id="wifipass" type="password" autocomplete="off">
   <div class="hint">Leave empty to keep the current settings when only re-pairing.</div>

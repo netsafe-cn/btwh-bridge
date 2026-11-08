@@ -37,6 +37,7 @@
 #include "app/session.h"
 #include "auth/login.h"
 #include "ble/link.h"
+#include "net/portal.h"
 #include "net/state_json.h"
 #include "proto/a0.h"
 #include "proto/frame.h"
@@ -48,6 +49,30 @@ static app::Config gCfg;
 static String      gSerialLine;
 
 static void banner(const char* s) { Serial.printf("\n===== %s =====\n", s); }
+
+// ---------------------------------------------------------------- provisioning
+// What the portal calls once the form is validated and stored. Runs after the AP is down.
+// Wi-Fi connecting and MQTT come later; what exists today is the pairing path, driven by the
+// code from the form exactly as if it had been typed into the console.
+static const char* onProvisioned(void* /*ctx*/, const net::ProvisionRequest& r) {
+  strncpy(gCfg.heater, r.heater, sizeof(gCfg.heater) - 1);
+  gCfg.heater[sizeof(gCfg.heater) - 1] = 0;
+  if (r.pairCode[0]) {
+    strncpy(gCfg.pin, r.pairCode, sizeof(gCfg.pin) - 1);
+    gCfg.pin[sizeof(gCfg.pin) - 1] = 0;
+  }
+  strncpy(gCfg.ssid, r.ssid, sizeof(gCfg.ssid) - 1);
+  gCfg.ssid[sizeof(gCfg.ssid) - 1] = 0;
+  if (r.wifiPass[0]) {
+    strncpy(gCfg.wifiPass, r.wifiPass, sizeof(gCfg.wifiPass) - 1);
+    gCfg.wifiPass[sizeof(gCfg.wifiPass) - 1] = 0;
+  }
+  gCfg.save();
+  gCfg.saveNetwork();
+
+  if (!gCfg.pinValid()) return "saved (no code given; Wi-Fi only)";
+  return app::start(false) ? "paired" : "pairing failed - see the serial log";
+}
 
 // ---------------------------------------------------------------- frame dispatch
 // ble/ hands over complete frames; routing them is all this does. Anything that needs a heater
@@ -169,6 +194,7 @@ static void printHelp() {
   Serial.println("  status            print configuration and runtime state");
   Serial.println("  selftest          run the golden protocol vectors on the board");
   Serial.println("  mqtt              print the payload this state would publish");
+  Serial.println("  portal            start the setup portal (AP + form, as at first boot)");
   Serial.println("  raw on / raw off  show / hide raw A0 bytes");
   Serial.println("  reboot            reboot");
   Serial.println("  help              this help");
@@ -214,6 +240,11 @@ static void handleCommand(String line) {
   if (low == "status")              { printStatus(); return; }
   if (low == "selftest")            { doSelfTest(); return; }
   if (low == "mqtt")                { printMqttPayload(); return; }
+  if (low == "portal") {
+    if (net::portalActive()) { Serial.println("[PORTAL] already running"); return; }
+    net::startPortal(onProvisioned, nullptr);
+    return;
+  }
   if (low == "scan")                { doScan(); return; }
   if (low == "go")                  { app::start(false); return; }
   if (low == "pair")                { app::start(true); return; }
@@ -306,6 +337,12 @@ void setup() {
                   gCfg.pin);
     app::start(false);
     Serial.println("[BOOT] if that fails, type a new code");
+  } else if (net::portalNeeded(gCfg.ssid)) {
+    // Fresh board (or a wipe): no Wi-Fi and no code. Offer the portal instead of asking for
+    // a serial console nobody has. The console path stays for development.
+    Serial.println("\n[BOOT] no Wi-Fi credentials: starting the setup portal");
+    Serial.println("       connect to the BTWH-Bridge-XXXX network and follow the page");
+    net::startPortal(onProvisioned, nullptr);
   } else {
     Serial.println("\nwaiting for input...");
   }
@@ -313,6 +350,7 @@ void setup() {
 
 void loop() {
   pollSerial();
+  net::portalPoll();
   app::poll();
   delay(10);
 }
