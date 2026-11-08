@@ -81,7 +81,12 @@ class Panel:
         try:
             self.ser = serial.Serial(self.port, 115200, timeout=0.1)
             self.q.put(("sys", "serial connected: " + self.port + " @ 115200"))
-            self.ser.write(b"reboot\n")
+            # Attach, do not reset. `ESP.restart()` cuts the BLE link at the radio level and the
+            # heater then keeps a half-open session, refusing the next connection for ~15 min
+            # (measured twice on 2026-11-08). Every close-and-reopen would cost that. `status`
+            # orients the log for free; the reboot button is there when a reset is really wanted.
+            self.q.put(("sys", "board left running - press reboot only if you need a clean start"))
+            self.ser.write(b"status\n")
             self.ser.flush()
         except Exception as e:
             self.ser = None

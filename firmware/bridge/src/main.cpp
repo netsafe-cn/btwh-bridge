@@ -177,7 +177,12 @@ static void handleCommand(String line) {
   if (low == "scan")                { doScan(); return; }
   if (low == "go")                  { app::start(false); return; }
   if (low == "pair")                { app::start(true); return; }
-  if (low == "reboot")              { Serial.println("rebooting..."); delay(200); ESP.restart(); }
+  if (low == "reboot") {
+    Serial.println("rebooting...");
+    app::shutdown();      // clean LL disconnect; a hard reset leaves the heater refusing us
+    delay(200);
+    ESP.restart();
+  }
   if (low == "raw on")              { app::setRawDump(true);  Serial.println("[CFG] raw=on");  return; }
   if (low == "raw off")             { app::setRawDump(false); Serial.println("[CFG] raw=off"); return; }
   if (low.startsWith("mac ")) {

@@ -129,7 +129,10 @@ def serial_session(port, baud):
 
     threading.Thread(target=reader, daemon=True).start()
     time.sleep(1)
-    ser.write(b"reboot\n")   # do not touch DTR/RTS; the board would enter the bootloader
+    # Attach, do not reset. `ESP.restart()` drops the BLE link at the radio level and the heater
+    # then refuses the next session for minutes - measured 2026-11-08: opening a console cost
+    # ~15 minutes of no service, twice. `status` gives the same orientation for free.
+    ser.write(b"status\n")   # do not touch DTR/RTS; the board would enter the bootloader
     ser.flush()
     try:
         while True:

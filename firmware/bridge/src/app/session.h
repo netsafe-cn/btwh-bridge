@@ -47,6 +47,12 @@ bool start(bool forceRebond);
 // Link-drop recovery and the "30 s with no A0" warning. Call from loop().
 void poll();
 
+// Orderly teardown before the CPU restarts. ESP.restart() drops the BLE link at the radio
+// level; the heater then keeps a half-open session and refuses the next connection for minutes
+// (measured twice on 2026-11-08: `reboot` under a live link cost ~15 minutes of no service).
+// Calling this first sends a proper LL disconnect instead.
+void shutdown();
+
 Status status();
 
 void setRawDump(bool on);

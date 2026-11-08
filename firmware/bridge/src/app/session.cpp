@@ -208,6 +208,16 @@ void poll() {
   }
 }
 
+void shutdown() {
+  gPhase = kWaitCode;          // stop poll() from reconnecting while we tear down
+  if (ble::isConnected()) {
+    Serial.println("[CONN] closing the link cleanly before restart");
+    ble::disconnect();
+    delay(300);                // let LL_TERMINATE_IND reach the heater before the CPU resets
+  }
+  gRunning = false;
+}
+
 Status status() {
   Status s;
   s.phase     = gPhase;

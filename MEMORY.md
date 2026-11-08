@@ -35,6 +35,14 @@ observed on real hardware unless marked otherwise. Protocol detail lives in
   same stored code and no panel action** — `A2/07=01` and `A2/08=01` came straight back and the
   stream resumed. Corollary: never read this signature as "the code is stale". The fix is to stop
   touching it and wait, which is why the bridge needs a backoff supervisor rather than a retry loop.
+- **The trigger is an abrupt reset, not the reboot itself — and a clean disconnect fixes it.**
+  Reproduced a second time the same day: closing the control panel at 15:32:54 (which held a
+  17-minute live session) and reopening it at 15:33:27 gave `cannot connect` within 2 s, because
+  both host consoles used to send `reboot` on attach, i.e. `ESP.restart()` with the BLE link still
+  up. **Verified by A/B on the same device, same code, same link**: old firmware `reboot` at 14:58
+  cost ~17 minutes of no service; new firmware (`app::shutdown()` sends LL_TERMINATE_IND and waits
+  300 ms first) at 15:47 went `link established` 2.2 s, `A2/08=01` 6.4 s, first `A0` 9.5 s after
+  the reboot command. Both consoles now attach with `status` instead of resetting the board.
 - **A0 offsets** were calibrated against 148 frames captured 2026-11-01. Type0 and Type1 differ
   except for the temperatures. See `docs/BLE_PROTOCOL.md` §6.
 - **`D7` first byte `0xEA` is a status byte, not a fault code.** The app showed no fault history

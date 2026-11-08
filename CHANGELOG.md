@@ -74,6 +74,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   clear pairing and enter a new code; that was wrong, and the same stored code authorised
   afterwards with no panel action. This is also *not* the `A2/07 = 00` case: there was no reply
   at all.
+- `reboot` used to call `ESP.restart()` with the BLE link still up. The radio drops, the heater
+  keeps a half-open session, and the next connection is refused for ~15 minutes — the longest
+  outage in this project so far, and it looked exactly like a broken pairing. Measured twice on
+  2026-11-08: a manual `reboot` at 14:58, and closing/reopening the control panel at 15:33.
+  `app::shutdown()` now sends a proper LL disconnect and waits 300 ms before the CPU resets.
+  A/B on the same device and the same stored code: the old path cost ~17 minutes, the new one
+  reached `A2/08=01` 6.4 s and the first `A0` 9.5 s after the command.
+- Both host consoles reset the board just by attaching, so every panel reopen paid that
+  15-minute cost. `esp32_panel.py` and `gateway_cli.py` now open the port and send `status`
+  instead of `reboot`; a reset is an explicit button, not a side effect of looking.
 
 ### Planned
 
