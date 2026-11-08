@@ -244,6 +244,8 @@ bool lastState(proto::A0State& out) {
   return true;
 }
 
+const char* configuredHeater() { return gCfg ? gCfg->heater : ""; }
+
 void onState(const uint8_t* payload, size_t len) {
   gA0Count++;
   gLastState = proto::parseA0(payload, len);

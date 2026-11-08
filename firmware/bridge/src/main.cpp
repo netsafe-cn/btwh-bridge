@@ -197,7 +197,8 @@ static void printHelp() {
   Serial.println("  status            print configuration and runtime state");
   Serial.println("  selftest          run the golden protocol vectors on the board");
   Serial.println("  mqtt              print the payload this state would publish");
-  Serial.println("  portal            start the setup portal (AP + form, as at first boot)");
+  Serial.println("  portal            start the setup portal (LAN page if already online, else AP)");
+  Serial.println("  wifi SSID PASS    join a network and save it (open network: wifi SSID -)");
   Serial.println("  raw on / raw off  show / hide raw A0 bytes");
   Serial.println("  reboot            reboot");
   Serial.println("  help              this help");
@@ -250,6 +251,47 @@ static void handleCommand(String line) {
   if (low == "portal") {
     if (net::portalActive()) { Serial.println("[PORTAL] already running"); return; }
     net::startPortal(onProvisioned, nullptr);
+    return;
+  }
+  if (low.startsWith("wifi")) {
+    // `wifi <ssid> <password>` writes NVS and joins immediately. The SSID keeps its case and
+    // may contain spaces (the split is on the last space), so `low` is used only to detect the
+    // command - everything after it comes from the original line.
+    String arg = line.substring(4);
+    arg.trim();
+    if (arg.length() == 0) {
+      char ip[20];
+      net::stationIp(ip, sizeof(ip));
+      Serial.printf("[WIFI] ssid=%s  state=%s  ip=%s\n",
+                    gCfg.ssid[0] ? gCfg.ssid : "(none)",
+                    net::stationUp() ? "connected" : "not connected", ip);
+      Serial.printf("[WIFI] clock=%s\n", net::nowEpoch() ? "synced" : "not synced");
+      Serial.println("[WIFI] usage: wifi <ssid> <password>");
+      return;
+    }
+    int sp = arg.lastIndexOf(' ');
+    if (sp < 1) {
+      Serial.println("[WIFI] usage: wifi <ssid> <password>   (open network: wifi <ssid> -)");
+      return;
+    }
+    String ssidArg = arg.substring(0, sp); ssidArg.trim();
+    String passArg = arg.substring(sp + 1); passArg.trim();
+    if (passArg == "-") passArg = "";        // explicit "no password" for an open network
+
+    strncpy(gCfg.ssid, ssidArg.c_str(), sizeof(gCfg.ssid) - 1);
+    gCfg.ssid[sizeof(gCfg.ssid) - 1] = 0;
+    strncpy(gCfg.wifiPass, passArg.c_str(), sizeof(gCfg.wifiPass) - 1);
+    gCfg.wifiPass[sizeof(gCfg.wifiPass) - 1] = 0;
+    gCfg.saveNetwork();
+
+    bool ok = net::stationConnect(gCfg.ssid, gCfg.wifiPass);
+    if (ok) {
+      char ip[20];
+      net::stationIp(ip, sizeof(ip));
+      Serial.printf("[WIFI] + ip=%s (time will follow via SNTP)\n", ip);
+    } else {
+      Serial.println("[WIFI] x not joined; check the name and the 2.4 GHz band");
+    }
     return;
   }
   if (low == "scan")                { doScan(); return; }
@@ -352,6 +394,14 @@ void setup() {
     net::startPortal(onProvisioned, nullptr);
   } else {
     Serial.println("\nwaiting for input...");
+  }
+
+  // Network comes last: the heater link is what this device exists for, and the Wi-Fi join
+  // blocks for a few seconds. A power cut must not need a human to bring Wi-Fi back either,
+  // so the stored credentials are used without asking.
+  if (gCfg.ssid[0] && !net::stationUp()) {
+    Serial.printf("[BOOT] stored Wi-Fi %s, joining\n", gCfg.ssid);
+    net::stationConnect(gCfg.ssid, gCfg.wifiPass);
   }
 }
 

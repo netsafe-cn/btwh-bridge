@@ -64,6 +64,10 @@ bool rawDump();
 // returns the protocol structure, not an MQTT snapshot: app/ must not depend on net/.
 bool lastState(proto::A0State& out);
 
+// The heater address in use. The provisioning page needs it when a link is already up and a
+// scan cannot run - net/ may read app state, never the other way round.
+const char* configuredHeater();
+
 // Hooks installed on the link, called from the NimBLE task.
 void onState(const uint8_t* payload, size_t len);
 void onLoginReply(uint8_t sub, uint8_t value);

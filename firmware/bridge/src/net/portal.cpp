@@ -6,6 +6,7 @@
 
 #include <string.h>
 
+#include "app/session.h"
 #include "ble/link.h"
 #include "net/portal_html.h"
 
@@ -16,6 +17,11 @@ WebServer* gServer = nullptr;
 DNSServer* gDns    = nullptr;
 ProvisionedFn gOnProvisioned = nullptr;
 void* gCtx = nullptr;
+
+// True when the page is served on the LAN instead of over its own hotspot. Matters at stop
+// time: tearing down an AP also means turning the radio off, which must never happen to a
+// station link that the rest of the bridge depends on.
+bool gLanMode = false;
 
 // The last validation error, shown on the form after a rejected submit.
 char gError[96] = {0};
@@ -37,15 +43,29 @@ void appendEscaped(String& out, const char* text) {
 }
 
 String heaterOptions() {
-  // The scan costs 5 s of radio time and cannot run while a BLE session is up; the portal is
-  // only up when there is no session, so this is safe by construction. If it ever returns
-  // nothing the form still renders - with one placeholder row and the "move closer" hint.
+  // Two situations, and they need different answers:
+  //
+  //   session up    A BLE scan cannot see anything while the link is busy (measured
+  //                 2026-11-08: LAN-mode page returned zero heaters with the link up and one
+  //                 heater with it down). Offer the heater we are already working with -
+  //                 that is what a re-pair targets anyway.
+  //   session down  Scan. First boot and post-wipe are always in this state.
+  String out;
+  if (app::status().linkUp) {
+    const char* addr = app::configuredHeater();
+    out += "<option value=\"";
+    appendEscaped(out, addr);
+    out += "\">";
+    appendEscaped(out, addr);
+    out += " (currently paired)</option>";
+    return out;
+  }
+
   ble::ScanEntry found[8];
   int n = ble::scanHeaters(found, (int)(sizeof(found) / sizeof(found[0])), 5);
 
-  String out;
   if (n == 0) {
-    out += "<option value=\"\">(no heater found - reload)</option>";
+    out += "<option value=\"\">(no heater found - move closer, then reload)</option>";
     return out;
   }
   for (int i = 0; i < n; i++) {
@@ -69,6 +89,12 @@ String wifiOptions(const char* storedSsid) {
   for (int i = 0; i < n; i++) {
     String ssid = WiFi.SSID(i);
     if (ssid.length() == 0) continue;
+    // ESP32 radios are 2.4 GHz only. A 5 GHz-only neighbour in this list would be a choice
+    // that cannot work, so it is not offered.
+    if (WiFi.channel(i) > 14) continue;
+    // The same name shows up once per BSSID (2.4 + 5 GHz, or a mesh node). One row is enough.
+    if (out.indexOf("<option value=\"" + ssid + "\"") >= 0)
+      continue;
     if (storedSsid && ssid == storedSsid) storedSeen = true;
     out += "<option value=\"";
     appendEscaped(out, ssid.c_str());
@@ -175,6 +201,29 @@ void startPortal(ProvisionedFn onProvisioned, void* ctx) {
   gOnProvisioned = onProvisioned;
   gCtx = ctx;
 
+  // Two shapes, chosen by whether the board already has a network:
+  //
+  //   AP mode   no credentials yet (first boot, or after a wipe). Brings up its own
+  //             hotspot; the phone switches to it deliberately.
+  //   LAN mode  already joined. Serve the same page on the LAN address, so re-pairing or
+  //             changing networks does not require anything to leave its current network -
+  //             in particular not a PC with a single Wi-Fi radio, which cannot be on the
+  //             bridge's hotspot and the internet at the same time (measured 2026-11-08).
+  //
+  // LAN mode is only reachable on demand (`portal` on the console) and never left running by
+  // itself: that keeps a page that can re-provision the device from being permanently exposed.
+  if (WiFi.status() == WL_CONNECTED) {
+    gLanMode = true;
+    gServer = new WebServer(80);
+    gServer->on("/", HTTP_GET, handleRoot);
+    gServer->on("/save", HTTP_POST, handleSave);
+    gServer->onNotFound(handleNotFound);
+    gServer->begin();
+    Serial.printf("[PORTAL] LAN mode: http://%s/  (same network, nothing to switch)\n",
+                  WiFi.localIP().toString().c_str());
+    return;
+  }
+
   // AP name ties the unit to the heater it will serve: BTWH-Bridge-XXXX with the last two
   // MAC bytes, the same convention the heater itself uses.
   uint8_t mac[6];
@@ -183,8 +232,23 @@ void startPortal(ProvisionedFn onProvisioned, void* ctx) {
   snprintf(apName, sizeof(apName), "BTWH-Bridge-%02X%02X", mac[4], mac[5]);
 
   WiFi.mode(WIFI_AP);
-  WiFi.softAP(apName);
-  Serial.printf("[PORTAL] AP up: %s  ->  http://192.168.4.1/\n", apName);
+  // Modem sleep drops beacons and defers broadcast handling exactly when a client is trying
+  // to associate and DHCP itself - with BLE coexistence on top it made every association fall
+  // apart (measured 2026-11-08: PC associated, three captive probes answered, zero DHCP
+  // offers). The portal lives for minutes on a powered board; power is not the constraint,
+  // reliability is.
+  WiFi.setSleep(false);
+  // PSRAM is off in this build, so the default max_clients=4 keeps the heap happy; a setup
+  // session only ever has one phone on it.
+  // WPA2 rather than an open AP: the captive-portal handshake on several older phone/PC
+  // drivers (measured on a Marvell AVASTAR) associates to an open ESP32 AP but never
+  // completes DHCP, while the same hardware joins a WPA2 one cleanly. The passcode is printed
+  // below and spoken in the manual; it is a speed bump, not a lock - the provisioning form is
+  // what carries the real credentials.
+  bool ap = WiFi.softAP(apName, "bridge123");
+  Serial.printf("[PORTAL] AP up: %s  ->  http://%s/  (softAP=%d ch=%d)\n",
+                apName, WiFi.softAPIP().toString().c_str(), (int)ap,
+                (int)WiFi.channel());
 
   gDns = new DNSServer();
   gDns->start(53, "*", WiFi.softAPIP());
@@ -199,6 +263,11 @@ void startPortal(ProvisionedFn onProvisioned, void* ctx) {
 void stopPortal() {
   if (gServer) { gServer->stop(); delete gServer; gServer = nullptr; }
   if (gDns)    { gDns->stop();    delete gDns;    gDns = nullptr; }
+  if (gLanMode) {
+    // Just close the page. The station link is what the bridge runs on - leave it alone.
+    gLanMode = false;
+    return;
+  }
   WiFi.softAPdisconnect(true);
   WiFi.mode(WIFI_OFF);
 }

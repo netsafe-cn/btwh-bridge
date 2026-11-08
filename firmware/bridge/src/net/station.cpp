@@ -2,6 +2,7 @@
 
 #include <WiFi.h>
 #include <esp_sntp.h>
+#include <stdio.h>
 #include <time.h>
 
 namespace net {
@@ -46,6 +47,11 @@ int64_t nowEpoch() {
   // renderer already maps to an omitted ts field - the same contract rule, no special case.
   time_t t = time(nullptr);
   return (t < 1000000000) ? 0 : (int64_t)t;   // reject pre-2001 as "not synced yet"
+}
+
+void stationIp(char* out, size_t cap) {
+  if (!out || cap == 0) return;
+  snprintf(out, cap, "%s", WiFi.localIP().toString().c_str());
 }
 
 }  // namespace net

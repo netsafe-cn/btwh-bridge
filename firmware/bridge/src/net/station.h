@@ -18,6 +18,7 @@
 #ifndef BTWH_NET_STATION_H
 #define BTWH_NET_STATION_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 namespace net {
@@ -33,6 +34,10 @@ bool stationUp();
 // Epoch seconds, or 0 when the clock has not synced yet. 0 is exactly the value the state
 // payload treats as "omit the ts field".
 int64_t nowEpoch();
+
+// Writes the current IPv4 address as text ("0.0.0.0" when not joined). Plain C on purpose:
+// the console lives in main.cpp and should not have to include <WiFi.h> to print an address.
+void stationIp(char* out, size_t cap);
 
 }  // namespace net
 
