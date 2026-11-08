@@ -1,30 +1,31 @@
 # firmware/components/ — shared C, no application
 
-Code here is reusable by any application in `firmware/`, and by nothing outside it. Two rules
-keep this directory from turning into a junk drawer:
+**Currently empty, and that is deliberate.**
 
-1. **A component may not depend on an application.** No `#include "../bridge/..."`, ever.
-2. **A component may not depend on a framework.** No Arduino, no ESP-IDF headers in the core
-   logic — so it compiles on a PC and can be unit-tested without a board.
+Code belongs here only when **two or more applications** need the same implementation. Today none
+does: `bosch_proto` (frames, A0 fields) has exactly one consumer, the bridge — the panel never
+touches BLE, because the heater accepts a single connection and would evict the bridge.
 
-## bosch_proto (planned)
+A shared library with one user is a directory, not a library. So `bosch_proto` lives in
+`firmware/bridge/src/proto/`, where its single consumer can see it, and it stays free of Arduino
+and NimBLE includes so it can be compiled on a PC (see ADR-008).
 
-The protocol layer that currently lives inline in `firmware/bridge/src/main.cpp`:
+## The rules, for the day something does land here
 
-| Function | Role |
+1. **A component may not include anything from an application.** No `#include "../../bridge/..."`,
+   ever. The `layout` CI job fails on it.
+2. **A component may not depend on a framework** — no Arduino, no ESP-IDF, no NimBLE in the core
+   logic. That is what lets it compile on a PC and be tested without a board.
+3. **A component ships with its own test**, runnable with a host compiler. If it cannot be tested
+   off-target, it is not a component, it is application code in the wrong place.
+
+## What would legitimately move here
+
+| Candidate | Trigger |
 |---|---|
-| `buildFrame` / `stuffFrame` / `xorBuf` | logical frame -> wire bytes, stuffing, per-fragment XOR |
-| `decodeStream` | plaintext stream -> complete frames |
-| `parseA0` | 34-byte broadcast -> field struct |
+| `bosch_proto` | a second application that genuinely reads frames — e.g. a USB diagnostic dongle |
+| A shared config-portal UI | a second device that also needs Wi-Fi onboarding |
+| Common telemetry serialisation | more than one publisher, so the format has to be agreed |
 
-Moving it here is the next firmware step, and it buys three things:
-
-- the golden vectors in [`spec/protocol_vectors.json`](../../spec/protocol_vectors.json) can be
-  run as a native test, so a codec change fails on the PC before it reaches a board
-- the bridge's `main.cpp` drops to session and command handling
-- if a future application genuinely needs the bytes (a diagnostic dongle, say), it links the
-  same code instead of copying it
-
-Until then the codec lives in `firmware/bridge/src/main.cpp` and is correct there — it has been
-verified against real hardware. This move is a refactor with a test harness as the exit
-criterion, not a rewrite.
+Note what is *not* on the list: the MQTT topic strings. Those are not code — they are
+`spec/mqtt.json`, and both sides generate from it rather than sharing an implementation.

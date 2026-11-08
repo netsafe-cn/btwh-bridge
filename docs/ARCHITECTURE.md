@@ -182,6 +182,85 @@ CI job keeps the firmware boundaries intact.
 
 ---
 
+### ADR-008 Firmware is layered by dependency direction, not by feature
+
+**Context**: the firmware is one 672-line `main.cpp`. Adding MQTT, Wi-Fi provisioning and OTA to
+it would produce a file nobody can review, and a protocol change would risk the network code.
+The obvious split — "bluetooth part, protocol part, config part" — is wrong, because "protocol"
+means two different things (BLE frames and MQTT/HA discovery) and they sit at opposite ends of
+the dependency chain.
+
+**Decision**: split by what a module is allowed to know, so the dependency arrows only ever
+point one way.
+
+```
+diag/  ─┐
+net/   ─┼─>  app/  ──>  auth/  ──>  ble/  ──>  proto/
+        │   (session,   (A2/07,    (NimBLE)   (frames,
+        │    config)     A2/08)                A0 fields)
+        └─ anyone may use config; nothing may use diag
+```
+
+| Layer | May include | Must not know about | Testable on a PC |
+|---|---|---|---|
+| `proto/` | `<stdint.h>`, `<string.h>` | Arduino, NimBLE, MQTT | **yes** — this is the point |
+| `ble/` | NimBLE | pairing semantics, MQTT | no |
+| `auth/` | `proto/` frame API, a `send/wait` callback | NimBLE types | yes, with a fake transport |
+| `app/` | `ble/`, `auth/`, `proto/`, NVS | MQTT topics | partly |
+| `net/` | `app/` state snapshot, generated contract constants | NimBLE, frame bytes | no |
+| `diag/` | everything | — | no |
+
+Two rules carry most of the value:
+
+- **`proto/` is the only code that can be tested without hardware.** It is also the only code that
+  has a machine-readable spec (`spec/protocol_vectors.json`), so it gets a native test that runs
+  in CI. Nothing else in the firmware can claim that.
+- **Nothing may depend on `diag/`.** Diagnostics are the outermost layer; the moment a business
+  path calls into the console, the console becomes load-bearing.
+
+**Cost, and why it is not a build-system change**: Arduino compiles every `.cpp` under `src/`
+recursively, so subdirectories need no CMake, no `CMakeLists.txt`, and no change to
+`gateway_cli.py`. When the firmware later moves to ESP-IDF, these same directories become
+`components/` and the include paths do not change — the split is portable in both directions.
+
+**Rejected**: extracting `bosch_proto` into `firmware/components/` today. It has exactly one
+consumer (the bridge); the panel never touches BLE. A shared component with one user is a
+directory, not a library. It moves the day a second consumer exists — and that day is
+unlikely, which is itself the argument.
+
+---
+
+### ADR-009 A separate repository is a release decision, not a structure decision
+
+**Context**: the touchscreen panel may eventually deserve its own repository. Getting this
+wrong in either direction is expensive: splitting too early means the MQTT contract has to be
+synchronised across two repos while it is still `draft`; splitting too late means rewriting the
+history and breaking every existing link.
+
+**Decision**: keep the panel in `firmware/panel/` and revisit when **two or more** of these hold.
+
+| Condition | Today |
+|---|---|
+| Its own release cadence (panel firmware version independent of the bridge) | no |
+| Its own dependency tree (LVGL, a different board support package) | partly — LVGL is real |
+| Its own contributor group (display/UI people rather than protocol people) | unknown |
+| The contract stable enough to publish as a versioned artefact | **no** — `spec/mqtt.json` is `draft` |
+
+**Why the structure question and the repository question are separate**: coupling is already
+prevented by the `layout` CI job (no `#include` may cross an application boundary) and by
+`test_mqtt_contract.py` (a field renamed in code fails unless the contract follows). Those work
+inside one repository. Whether the panel ships from the same repo changes nothing about whether
+it is coupled — it only changes where its version number lives.
+
+**If it is split later**: `spec/` becomes the seam. Either it is duplicated with a CI check that
+the two copies match, or it becomes a small versioned package both repos depend on. That cost is
+paid once, and only if the panel earns it.
+
+**Rejected**: splitting now, to "keep things clean". A repository boundary added before either
+side has shipped is a second place to make the same mistake.
+
+---
+
 ## 3. Repository layout
 
 Landed in 0.2.0. The repository is a monorepo split by **role**, not by file type: an
@@ -275,4 +354,5 @@ breaking change.
 | Date | Change |
 |---|---|
 | 2026-11-07 | First version: layers, six ADRs, target layout, roadmap, risk table |
+| 2026-11-08 | Firmware layering (ADR-008) and the repository-split criteria (ADR-009); the panel stays in-repo until it earns its own release cadence |
 | 2026-11-08 | Layout restructured by role (ADR-007): `python/`, `firmware/{components,bridge,panel}`, `spec/`, `integrations/`; `spec/mqtt.json` added as the bridge/consumer contract; 136 -> 145 tests |

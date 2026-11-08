@@ -37,6 +37,39 @@ This is one application in a directory of applications. It publishes against
 [`spec/mqtt.json`](../../spec/mqtt.json); a touch panel that only consumes that contract lives
 in [`firmware/panel/`](../panel/), and it must never link anything here.
 
+### 2.1 Internal structure (target)
+
+Today all 672 lines live in `src/main.cpp`. The target is a split by **what a module is allowed
+to know**, so dependency arrows only point one way (ADR-008):
+
+```
+src/
+├── main.cpp        setup / loop / command dispatch       ~80 lines
+├── proto/          frames, A0 fields      ← no Arduino, no NimBLE, PC-testable
+├── ble/            NimBLE: connect, subscribe, SMP       ← the only place NimBLE appears
+├── auth/           A2/07 + A2/08 + window state          ← uses proto, not NimBLE
+├── app/            session lifecycle, NVS config, state snapshot
+├── net/            (empty) wifi, mqtt, ha_discovery, ota
+└── diag/           serial console                        ← nothing may depend on this
+```
+
+Why this order and not "bluetooth part / protocol part / config part":
+
+- `proto/` is the only layer that can be tested on a PC, and the only one with a machine-readable
+  spec (`spec/protocol_vectors.json`). Keeping it free of Arduino includes is what makes a native
+  test possible — that single property is worth the directory.
+- `auth/` sits above `ble/`, not inside it, because the pairing handshake is protocol logic that
+  happens to use a BLE send/wait callback. It should be testable with a fake transport.
+- `net/` (MQTT, HA discovery) sits at the top: it consumes a state snapshot and the constants
+  generated from `spec/mqtt.json`, and must never see a frame byte.
+
+**No build system change is needed.** Arduino compiles every `.cpp` under `src/` recursively, so
+these subdirectories work with the existing `gateway_cli.py`. When the firmware later moves to
+ESP-IDF, the same directories become `components/` and include paths stay put.
+
+Splitting is not free: it changes every call site and needs a rebuild plus a reflash to prove the
+board still links. Do it as one commit, with the golden vectors as the judge.
+
 ## 3. First run (one command)
 
 ```bash

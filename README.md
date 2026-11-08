@@ -36,10 +36,30 @@ apart silently.
 
 ---
 
-## Two ways to run it
+## Who this is for
 
-| | Python direct | ESP32 gateway (recommended) |
-|---|---|---|
+Three layers, and they are cumulative — layer 3 is built on layer 1's findings, and layer 2 is
+how you debug layer 3 without a soldering iron.
+
+| Layer | If you want | Take | Requires |
+|---|---|---|---|
+| **1** | The protocol, documented | [`docs/BLE_PROTOCOL.md`](docs/BLE_PROTOCOL.md) + [`spec/protocol_vectors.json`](spec/protocol_vectors.json) | nothing — reimplement in Rust, Go or JS and check yourself against the vectors |
+| **2** | A working client today | [`python/`](python/) — `pip install btwh-bridge`, `import bosch_api` | Python 3.9+ and Bluetooth: laptop, Raspberry Pi, NAS |
+| **3** | A device that just works | [`firmware/bridge/`](firmware/bridge/) — flash once | An ESP32-S3 board; the pairing code is entered once, then it survives power loss |
+
+**Layer 1 is not "just documentation".** Every field offset in the protocol notes has a matching
+byte string in `spec/protocol_vectors.json`, so an implementation in another language can prove
+itself correct rather than guess. That is also what keeps the Python and C++ versions honest with
+each other.
+
+**Layer 2 also ships the debugging tools** — the desktop console, the frame capture, the log
+analyser. Layer 3 was built with them, and you will want them the first time something misbehaves.
+
+**Layer 3 is the target state**: the heater shows up in Home Assistant, and afterwards no laptop
+is involved at all.
+
+---
+|---|---|
 | Hardware | Laptop / Raspberry Pi / NAS | Waveshare ESP32-S3-DEV-KIT-N8R8 or similar |
 | Good for | Experiments, capture, ad-hoc control | 24/7 operation, feeding HA / Mi Home |
 | Pairing code | Re-enter each start | Flash once, enter at runtime, persisted in NVS |

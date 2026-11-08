@@ -12,6 +12,24 @@ firmware/
 └── panel/               ESP32-S3 + touchscreen, any floor: MQTT only, never touches BLE.
 ```
 
+## How an application is layered internally
+
+Each application splits by **dependency direction**, not by feature (ADR-008):
+
+```
+diag/  ─┐
+net/   ─┼─>  app/  ──>  auth/  ──>  ble/  ──>  proto/
+        │   (session,   (A2/07,    (NimBLE)   (frames)
+        │    config)     A2/08)
+        └─ nothing may depend on diag
+```
+
+The single most useful property: `proto/` includes no Arduino and no NimBLE, so it compiles and
+runs on a PC against `spec/protocol_vectors.json`. Every other layer needs a board to be sure.
+
+Arduino compiles every `.cpp` under `src/` recursively, so this costs no build-system change —
+and the same directories become `components/` under ESP-IDF later.
+
 ## The rule that keeps them apart
 
 ```
