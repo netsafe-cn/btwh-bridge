@@ -218,7 +218,7 @@ Pushed by the device on its own; the app **never requests it** (it reads a cache
 | `[6][7]` | **Chassis temperature** (ambient reference) | `[6] + [7]/100` | ✅ |
 | `[8]` | (flow/10 in Type0; always 0 in Type1) | — | 🔶 |
 | `[9]` | (power in Type0; always 0 in Type1) | — | 🔶 |
-| `[10]` | Ionisation / flame detection bit | `& 0x10` | 🔶 |
+| `[10]` | Ionisation / flame detection bit | `& 0x10` | ✅ measured §6.4 |
 | `[11]` | **Active fault code** | 0 = no fault | 🔶 |
 | `[12]` | Gas ratio (0–7) | — | 🔶 |
 | **`[13]`** | **Burner power %** (`[14]` is the fraction) | 0–100 | ✅ measured |
@@ -259,6 +259,28 @@ else                  -> idle
 
 Measured: fully open 10–11 L/min at 44–47%; the moment the tap closes power drops to 15–17%
 and the fan goes from 1410 to 705 rpm.
+
+### 6.4 Flame bit `[10] & 0x10` (verified 2026-11-08)
+
+It tracks combustion, at any power level — not only a settled high flame. One tap cycle, 4 s per
+frame:
+
+| Time | power | flow | fan | flame |
+|---|---|---|---|---|
+| 15:55:01 | 0 % | 0.2 | 0 | no |
+| 15:55:13 | **19 %** | 6.7 | 704 | **yes** |
+| 15:55:29 | 43 % | 10.9 | 1411 | yes |
+| 15:56:05 | 47 % | 11.5 | 1612 | yes |
+| 15:56:09 | 40 % | 5.2 | 1008 | **no** |
+| 15:56:14 | 28 % | 0.3 | 708 | no |
+
+So the bit rises with the 19 % ignition frame and falls while power is still 40 %, i.e. when the
+flame actually goes out, not when the load drops. Earlier sessions showed `flame no` only because
+they sampled standby (0 %) or missed the burn; the field was never wrong.
+
+Caution for consumers: the frame at 15:55:17 reported `out 24.5` between 32.2 and 39.3, with all
+temperatures depressed at once. One frame of that shape appears right after ignition; treat the
+first 4–8 s after flow starts as unreliable for temperatures (待验证 — seen once).
 
 ---
 

@@ -47,6 +47,10 @@ observed on real hardware unless marked otherwise. Protocol detail lives in
   except for the temperatures. See `docs/BLE_PROTOCOL.md` §6.
 - **`D7` first byte `0xEA` is a status byte, not a fault code.** The app showed no fault history
   while the parser reported one.
+- **`[10] & 0x10` is the flame bit and it tracks combustion at any power** — it was never wrong,
+  just never sampled while burning. 2026-11-08 tap cycle (4 s frames): 0 % → `no`, first burning
+  frame at **19 %** → `yes`, last burning frame at 47 %, and the very next frame went `no` while
+  power was still 40 % (flame out, load not yet released). Full trace in `docs/BLE_PROTOCOL.md` §6.4.
 
 ## Current firmware state
 
@@ -56,6 +60,8 @@ observed on real hardware unless marked otherwise. Protocol detail lives in
   unattended recovery after a reboot.
 - Steady-state baseline (2026-11-08 15:15-15:24, panel log): **101 `A0` frames in 8.6 minutes**,
   interval min 3 s / median 4 s / max 9 s, no gap over 10 s, no dropped checksums, no link drop.
+- Opening the host console no longer disturbs the bridge: verified 15:50:43, the panel attached to
+  a session that already had 59 frames, printed `board left running`, and the stream continued.
 - `selftest` runs the golden vectors on the board (framing, stuffing, XOR, checksum, reassembly,
   A0 fields).
 
