@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""test_service.py —— BoschService 常驻服务层单元测试
+"""test_service.py - BoschService resident-layer tests
 
-全离线：不启动 asyncio 线程、不连蓝牙、不写真实 config.json。
-只验「对外同步接口」的队列语义、配置热更新、配对码校验与优雅停机信号。
+Fully offline: no asyncio thread, no Bluetooth, and the real config.json is never written.
+Covers the synchronous surface only: queue semantics, live config reload, code validation.
 
-运行：  python -m unittest test_service -v
+Run:  python run_tests.py -v   (from the repository root)
 """
 import threading
 import unittest
@@ -57,7 +57,7 @@ class TestServiceCommandQueues(unittest.TestCase):
         self.assertEqual(self.svc._req_q.get_nowait(), ("errors", 10))
 
     def test_queues_are_independent(self):
-        """温度命令和只读查询不能串到同一个队列"""
+        """Temperature commands and read-only queries must not share one queue"""
         self.svc.set_temperature(45)
         self.svc.query_errors(5)
         self.assertEqual(self.svc._cmd_q.get_nowait(), 45)
@@ -109,7 +109,7 @@ class TestServiceConfigHotReload(unittest.TestCase):
             save.assert_called_once_with()
 
     def test_save_false_never_writes_disk(self):
-        """测试绝不能污染用户真实的 config.json"""
+        """Tests must never touch the user's real config.json"""
         with mock.patch.object(self.svc.cfg, "save") as save:
             self.svc.set_pair_code_and_reconnect("888888", save=False)
             save.assert_not_called()
@@ -126,7 +126,7 @@ class TestServiceLifecycle(unittest.TestCase):
         self.assertIsNone(self.svc._cmd_q.get_nowait())
 
     def test_start_is_idempotent(self):
-        """重复 start 不能起第二个后台线程（否则两个 BLE 客户端抢设备）"""
+        """A second start must not spawn a second thread, or two clients fight for the device"""
         gate = threading.Event()
 
         def fake_run(self):
@@ -155,7 +155,7 @@ class TestServiceLifecycle(unittest.TestCase):
 
 
 class TestServicePairFailure(unittest.TestCase):
-    """Service 层必须把配对失败原因透出给 GUI / 上报，不能只留在日志里。"""
+    """The service must surface the pairing failure reason, not only log it."""
 
     def setUp(self):
         self.svc = BoschService(make_cfg())

@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""test_session.py —— 会话层单元测试（全离线，用假 BLE 客户端）
+"""test_session.py - session-layer tests (fully offline, fake BLE client)
 
-覆盖 BoschDevice 的登录状态机、单飞收发、应答路由、坏帧过滤。
-不连设备、不依赖 Windows 蓝牙。
+Covers the BoschDevice login state machine, single-flight send/receive, reply routing
+and bad-frame filtering. No device, no Windows Bluetooth.
 
-运行：  python -m unittest test_session -v
+Run:  python run_tests.py -v   (from the repository root)
 """
 import asyncio
 import unittest
@@ -17,7 +17,7 @@ from bosch_api import (
 
 
 class FakeClient:
-    """最小可用的假 BLE 客户端：记录写入，并按 responder 注入应答。"""
+    """A minimal fake BLE client: records writes and injects replies via responder."""
 
     def __init__(self):
         self.is_connected = True
@@ -79,7 +79,7 @@ class SessionBase(unittest.IsolatedAsyncioTestCase):
         self._patch_client.stop()
 
     def reply(self, mapping):
-        """mapping: {(cmd, subcmd): payload} —— subcmd 取 data[0]。"""
+        """mapping: {(cmd, subcmd): payload} - subcmd is data[0]."""
         def responder(cmd, mid, data):
             sub = data[0] if data else None
             return mapping.get((cmd, sub))
@@ -89,59 +89,59 @@ class SessionBase(unittest.IsolatedAsyncioTestCase):
 class TestLogin(SessionBase):
 
     async def test_login_ok(self):
-        """07→01（免密）+ 08→01 → 成功"""
+        """07->01 (no password) + 08->01 => success"""
         self.reply({(0xA2, 0x07): bytes([0x07, 0x01]),
                     (0xA2, 0x08): bytes([0x08, 0x01])})
         self.assertTrue(await self.dev.login())
         self.assertTrue(self.dev.login_state.startswith("authorised"))
 
     async def test_login_need_code(self):
-        """07→02 表示要密码，有码则继续"""
+        """07->02 means a code is required; continue when one is configured"""
         self.reply({(0xA2, 0x07): bytes([0x07, 0x02]),
                     (0xA2, 0x08): bytes([0x08, 0x01])})
         self.assertTrue(await self.dev.login())
 
     async def test_login_00_still_tries_code(self):
-        """07→00（MAC 未授权）也应继续走密码流程（与 App 行为一致）"""
+        """07->00 (window closed) still enters the code flow, as the app does"""
         self.reply({(0xA2, 0x07): bytes([0x07, 0x00]),
                     (0xA2, 0x08): bytes([0x08, 0x01])})
         self.assertTrue(await self.dev.login())
 
     async def test_login_no_code_configured(self):
-        """07→02 但配置里没有配对码 → 失败并提示"""
+        """07->02 but no code configured => fail with a hint"""
         self.cfg.pair_code = ""
         self.reply({(0xA2, 0x07): bytes([0x07, 0x02])})
         self.assertFalse(await self.dev.login())
         self.assertIn("pairing code", self.dev.login_state)
 
     async def test_login_wrong_code(self):
-        """08→00 表示密码被拒（可能是码过期或窗口未开）"""
+        """08->00 means the code was rejected (expired, or the window never opened)"""
         self.reply({(0xA2, 0x07): bytes([0x07, 0x02]),
                     (0xA2, 0x08): bytes([0x08, 0x00])})
         self.assertFalse(await self.dev.login())
         self.assertIn("rejected", self.dev.login_state)
 
     async def test_login_cooldown_3c(self):
-        """3C = 设备冷却 30 秒"""
+        """3C = the device is cooling down for 30 s"""
         self.reply({(0xA2, 0x07): bytes([0x07, 0x3C])})
         self.assertFalse(await self.dev.login())
         self.assertIn("cooling", self.dev.login_state)
         self.assertEqual(self.dev.cooldown_sec, 30.0)
 
     async def test_login_cooldown_5a(self):
-        """5A = 要求等 90 秒"""
+        """5A = the device asks for 90 s"""
         self.reply({(0xA2, 0x07): bytes([0x07, 0x5A])})
         self.assertFalse(await self.dev.login())
         self.assertEqual(self.dev.cooldown_sec, 90.0)
 
     async def test_login_unknown_answer(self):
-        """未知应答应失败而不是当作成功"""
+        """An unknown reply must fail rather than pass as success"""
         self.reply({(0xA2, 0x07): bytes([0x07, 0x77])})
         self.assertFalse(await self.dev.login())
         self.assertIn("unknown reply", self.dev.login_state)
 
     async def test_login_sends_mac_and_code(self):
-        """两帧都应发往登录地址 0xAB，且密码为 nibble 编码"""
+        """Both frames go to the login address 0xAB, and the code is nibble encoded"""
         self.reply({(0xA2, 0x07): bytes([0x07, 0x01]),
                     (0xA2, 0x08): bytes([0x08, 0x01])})
         await self.dev.login()
@@ -149,49 +149,49 @@ class TestLogin(SessionBase):
                   for w in self.fake.written]
         receivers = [p[3] for p in plains]
         self.assertTrue(all(r == RECV_LOGIN for r in receivers))
-        # 第二帧 data = 08 + 831152 的 nibble
+        # second frame data = 08 followed by the nibbles of 831152
         self.assertEqual(plains[-1][6:-3],
                          bytes([0x08, 0x08, 0x03, 0x01, 0x01, 0x05, 0x02]))
 
     async def test_login_no_response_retries(self):
-        """无应答时按 5 次重发后失败"""
+        """Five resends, then failure when nothing answers"""
         self.fake.responder = None
         with mock.patch.object(self.dev, "_wait_login",
                                mock.AsyncMock(return_value=False)):
             self.assertFalse(await self.dev.login())
-        # MAC 帧重发 5 次
+        # the MAC frame is sent 5 times
         self.assertEqual(len(self.fake.written), 5)
 
 
 class TestSendAndWait(SessionBase):
 
     async def test_receives_reply(self):
-        """收到应答即返回，且按 mid 路由"""
+        """A reply returns immediately and is routed by mid"""
         self.reply({(0xD8, 0x01): bytes([0x01, 0x01, 0x41, 0x13])})
         r = await self.dev.send_and_wait(0xD8, bytes([0x01]), RECV_BIZ,
-                                         "版本", timeout=1.0, retries=1)
+                                         "version", timeout=1.0, retries=1)
         self.assertEqual(r, bytes([0x01, 0x01, 0x41, 0x13]))
 
     async def test_timeout_raises(self):
-        """无应答且重试耗尽 → TimeoutError"""
+        """Exhausted retries with no reply raises TimeoutError"""
         self.fake.responder = None
         with self.assertRaises(TimeoutError):
             await self.dev.send_and_wait(0xD8, bytes([0x01]), RECV_BIZ,
-                                         "版本", timeout=0.05, retries=2)
+                                         "version", timeout=0.05, retries=2)
 
     async def test_retry_uses_new_msgid(self):
-        """重发必须换 msgId（规格 §3.5），否则设备当同一请求去重"""
+        """A resend must use a fresh msgId (spec 3.5), or the device dedupes it"""
         self.fake.responder = None
         with self.assertRaises(TimeoutError):
             await self.dev.send_and_wait(0xD8, bytes([0x01]), RECV_BIZ,
-                                         "版本", timeout=0.05, retries=3)
+                                         "version", timeout=0.05, retries=3)
         mids = [BoschProtocol.unstuff(BoschProtocol.decrypt_chunk(w))[4]
                 for w in self.fake.written]
         self.assertEqual(len(mids), 3)
-        self.assertEqual(len(set(mids)), 3)      # 三个不同 msgId
+        self.assertEqual(len(set(mids)), 3)      # three distinct msgIds
 
     async def test_set_temperature_ok(self):
-        """设温走 send_and_wait，拿到应答不抛"""
+        """set_temperature goes through send_and_wait and returns without raising"""
         self.reply({(0xD3, 0x02): bytes([0x02, 0x55, 0x01])})
         await self.dev.set_temperature(42)
         plain = BoschProtocol.unstuff(BoschProtocol.decrypt_chunk(
@@ -200,7 +200,7 @@ class TestSendAndWait(SessionBase):
         self.assertEqual(plain[6:-3], bytes([0x02, 0x55, 0x00, 42]))
 
     async def test_set_temperature_clamped(self):
-        """超出范围应被夹到 35~60"""
+        """Out-of-range values are clamped to 35-60"""
         self.reply({(0xD3, 0x02): bytes([0x02, 0x55, 0x01])})
         await self.dev.set_temperature(99)
         plain = BoschProtocol.unstuff(BoschProtocol.decrypt_chunk(
@@ -208,11 +208,11 @@ class TestSendAndWait(SessionBase):
         self.assertEqual(plain[-3 - 1], 60)
 
     async def test_set_temperature_timeout_raises(self):
-        """未获确认时抛 TimeoutError（上层据此提示，但不断会话）"""
+        """No confirmation raises TimeoutError (the UI reports it; the session stays up)"""
         self.fake.responder = None
         with self.assertRaises(TimeoutError):
             await self.dev.send_and_wait(0xD3, b"\x02\x55\x00\x2a", RECV_BIZ,
-                                         "设置", timeout=0.05, retries=1)
+                                         "setpoint", timeout=0.05, retries=1)
 
 
 class TestNotify(SessionBase):
@@ -223,7 +223,7 @@ class TestNotify(SessionBase):
             BoschProtocol.stuff(frame))))
 
     def test_state_frame_updates(self):
-        """A0 帧应更新 state"""
+        """An A0 frame updates state"""
         self.feed(0xA0, bytes.fromhex(
             "01 19 50 1a 5a 2a 1a 46 00 00 0f 00 00 00 00 00 00 00 00 00 00 00 "
             "00 00 00 00 00 00 19 50 00 00 00 00"))
@@ -232,20 +232,20 @@ class TestNotify(SessionBase):
         self.assertEqual(self.dev.state.setpoint, 42)
 
     def test_bad_checksum_discarded(self):
-        """校验和错误的帧应被丢弃，不污染 state"""
+        """A frame with a bad checksum is dropped and does not pollute state"""
         frame = bytearray(BoschProtocol.build(0x00, 0x21, 5, 0xA0,
                                               b"\x01" * 34))
-        frame[-3] ^= 0xFF                    # 故意破坏校验和
+        frame[-3] ^= 0xFF                    # deliberately corrupt the checksum
         self.dev._on_notify(None, bytearray(BoschProtocol.xor(
             BoschProtocol.stuff(bytes(frame)))))
         self.assertIsNone(self.dev.state)
 
     async def test_history_reply_routed(self):
-        """B0 应答应被 send_and_wait 按 mid 拿到"""
+        """A B0 reply reaches send_and_wait, routed by mid"""
         self.reply({(0xB0, 0x02): bytes([0x02, 0x00, 0x00, 0x12, 0x67,
                                          0x00, 0x00, 0x05, 0xB6])})
         r = await self.dev.send_and_wait(0xB0, bytes([0x02]), RECV_BIZ,
-                                         "历史", 1.0, 1)
+                                         "history", 1.0, 1)
         self.assertEqual(r.hex(" "), "02 00 00 12 67 00 00 05 b6")
 
 

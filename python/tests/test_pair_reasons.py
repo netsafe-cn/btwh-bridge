@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""test_pair_reasons.py —— 配对失败原因码契约测试
+"""test_pair_reasons.py - contract tests for the pairing failure reasons
 
-2026-11-07 ESP32-S3 真机实测确定的语义：`A2/07` 的应答位是「配对窗口状态」，
-不是「MAC 授权状态」。本文件把这条语义钉死，防止以后又被改回
-「00 = MAC 未授权」而误导用户去改 `login_mac`。
+Semantics established on ESP32-S3 hardware, 2026-11-07: the A2/07 reply byte reports
+the PAIRING WINDOW, not the MAC state. These tests pin that down, so it cannot drift
+back to "00 = MAC unauthorised" and send users off to edit login_mac.
 
-运行：  python -m unittest test_pair_reasons -v
+Run:  python run_tests.py -v   (from the repository root)
 """
 import unittest
 from unittest import mock
@@ -16,7 +16,7 @@ from tests.test_session import SessionBase
 
 
 class TestPairFailReasons(SessionBase):
-    """复用 test_session 的假 BLE 客户端，全离线、不连硬件。"""
+    """Reuses the fake BLE client from test_session; fully offline."""
 
     async def test_success_clears_reason(self):
         self.reply({(0xA2, 0x07): bytes([0x07, 0x02]),
@@ -26,7 +26,7 @@ class TestPairFailReasons(SessionBase):
         self.assertEqual(self.dev.pair_fail_hint(), "")
 
     async def test_window_closed_when_a2_07_is_00(self):
-        """00 = 窗口没开，而不是 MAC 未授权"""
+        """00 means the window is closed, not that the MAC is unauthorised"""
         self.reply({(0xA2, 0x07): bytes([0x07, 0x00]),
                     (0xA2, 0x08): bytes([0x08, 0x00])})
         self.assertFalse(await self.dev.login())
@@ -34,7 +34,7 @@ class TestPairFailReasons(SessionBase):
                          bosch_api.PAIR_FAIL_WINDOW_CLOSED)
 
     async def test_code_rejected_when_window_open(self):
-        """窗口开着(02) 但码失效(00) → 才是 code_rejected"""
+        """Window open (02) but the code rejected (00) => this is code_rejected"""
         self.reply({(0xA2, 0x07): bytes([0x07, 0x02]),
                     (0xA2, 0x08): bytes([0x08, 0x00])})
         self.assertFalse(await self.dev.login())
@@ -42,7 +42,7 @@ class TestPairFailReasons(SessionBase):
                          bosch_api.PAIR_FAIL_CODE_REJECTED)
 
     async def test_a2_08_00_does_not_override_window_closed(self):
-        """关键回归：窗口没开时，A2/08 的 00 不能覆盖根因"""
+        """Key regression: with the window closed, A2/08=00 must not overwrite the cause"""
         self.reply({(0xA2, 0x07): bytes([0x07, 0x00]),
                     (0xA2, 0x08): bytes([0x08, 0x00])})
         await self.dev.login()
@@ -59,9 +59,9 @@ class TestPairFailReasons(SessionBase):
                          bosch_api.PAIR_FAIL_CODE_MISMATCH)
 
     async def test_a2_07_01_still_needs_code(self):
-        """实测 2026-11-07：A2/07=01 只表示 MAC 已登记，A2/08 仍可能被拒。
+        """Measured 2026-11-07: A2/07=01 only means the MAC is registered; A2/08 can still
 
-        原实现把 01 当「免密授权」，导致 19:15:22 那次真机失败无法归因。
+        The old code treated 01 as passwordless, so the 19:15:22 hardware failure could not be
         """
         self.reply({(0xA2, 0x07): bytes([0x07, 0x01]),
                     (0xA2, 0x08): bytes([0x08, 0x00])})
@@ -72,7 +72,7 @@ class TestPairFailReasons(SessionBase):
                             bosch_api.PAIR_FAIL_WINDOW_CLOSED)
 
     async def test_a2_07_01_then_success(self):
-        """01 之后 A2/08=01 才是真正的成功"""
+        """Only A2/08=01 after the 01 counts as success"""
         self.reply({(0xA2, 0x07): bytes([0x07, 0x01]),
                     (0xA2, 0x08): bytes([0x08, 0x01])})
         self.assertTrue(await self.dev.login())
@@ -80,10 +80,10 @@ class TestPairFailReasons(SessionBase):
 
 
 class TestAuthState(SessionBase):
-    """结构化认证状态：上层据此决策，不解析中文文案。"""
+    """Structured auth state: the layers above decide on this, not on prose."""
 
     async def test_first_pair_when_a2_07_is_02(self):
-        """02 = 设备第一次见这个 MAC，必须窗口内的码"""
+        """02 = first time the device sees this MAC, so the code must come from the window"""
         self.reply({(0xA2, 0x07): bytes([0x07, 0x02]),
                     (0xA2, 0x08): bytes([0x08, 0x01])})
         await self.dev.login()
@@ -91,7 +91,7 @@ class TestAuthState(SessionBase):
         self.assertEqual(self.dev.pair_kind, "first_pair")
 
     async def test_rebind_when_a2_07_is_01(self):
-        """01 = 设备已登记该 MAC，属于复用凭证重连"""
+        """01 = the MAC is registered, so this is a reconnection with a stored credential"""
         self.reply({(0xA2, 0x07): bytes([0x07, 0x01]),
                     (0xA2, 0x08): bytes([0x08, 0x01])})
         await self.dev.login()
@@ -120,7 +120,7 @@ class TestAuthState(SessionBase):
         self.assertIsNone(self.dev.pair_code_verified_at)
 
     async def test_state_reset_between_attempts(self):
-        """第二次失败不能残留上一次成功的 authorized=True"""
+        """A second failure must not keep the previous authorized=True"""
         self.reply({(0xA2, 0x07): bytes([0x07, 0x02]),
                     (0xA2, 0x08): bytes([0x08, 0x01])})
         await self.dev.login()
@@ -166,7 +166,7 @@ class TestAuthState(SessionBase):
         self.assertEqual(self.dev.cooldown_sec, 90.0)
 
     async def test_reason_reset_between_attempts(self):
-        """上一次失败的原因不能残留到下一次尝试"""
+        """The previous failure reason must not survive into the next attempt"""
         self.reply({(0xA2, 0x07): bytes([0x07, 0x00]),
                     (0xA2, 0x08): bytes([0x08, 0x00])})
         await self.dev.login()
@@ -179,7 +179,7 @@ class TestAuthState(SessionBase):
         self.assertIsNone(self.dev.pair_fail_reason)
 
     def test_every_reason_has_a_hint(self):
-        """每个原因码都必须配一句可展示的动作建议"""
+        """Every reason code needs one user-facing action attached to it"""
         found = [n for n in dir(bosch_api) if n.startswith("PAIR_FAIL_")]
         self.assertGreaterEqual(len(found), 6)
         for name in found:

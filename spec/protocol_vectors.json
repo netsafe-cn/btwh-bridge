@@ -1,11 +1,11 @@
 {
   "contract_version": "v1.0",
   "generated_by": "python test_contract.py --update",
-  "usage": "ESP32 C++ 固件单测直接读这些 hex，逐字节对照自己的组帧/填充/加密实现",
+  "usage": "the ESP32 C++ tests read these hex strings and compare their own framing",
   "cases": [
     {
       "name": "a2_07_submit_mac",
-      "note": "登录第 1 步：提交已授权设备 MAC（receiver=0xAB）",
+      "note": "Login step 1: submit the authorised host MAC (receiver=0xAB)",
       "frame_hex": "7b7b21ab05a207c0335e0ff68a5a7d7d",
       "stuffed_hex": "7b7b21ab05a207c0335e0ff68a5a7d7d",
       "chunks_hex": [
@@ -14,7 +14,7 @@
     },
     {
       "name": "a2_08_submit_code",
-      "note": "登录第 2 步：提交面板 6 位码，每位 1 字节",
+      "note": "Login step 2: submit the six-digit panel code, one byte per digit",
       "frame_hex": "7b7b21ab06a2080301010502028a7d7d",
       "stuffed_hex": "7b7b21ab06a2080301010502028a7d7d",
       "chunks_hex": [
@@ -23,7 +23,7 @@
     },
     {
       "name": "d3_set_temperature_42",
-      "note": "写设定温度 42 度",
+      "note": "Write the 42 C setpoint",
       "frame_hex": "7b7b210010d302552a857d7d",
       "stuffed_hex": "7b7b210010d302552a857d7d",
       "chunks_hex": [
@@ -32,7 +32,7 @@
     },
     {
       "name": "b0_read_history",
-      "note": "读运行统计",
+      "note": "Read the run statistics",
       "frame_hex": "7b7b210011b002e47d7d",
       "stuffed_hex": "7b7b210011b002e47d7d",
       "chunks_hex": [
@@ -41,7 +41,7 @@
     },
     {
       "name": "stuff_7b_7d",
-      "note": "填充边界：数据区出现 7B/7D 时后插 00",
+      "note": "Stuffing boundary: a 7B/7D inside the data area gets a 00 after it",
       "frame_hex": "7b7b210012a07b7d0001cc7d7d",
       "stuffed_hex": "7b7b210012a07b007d000001cc7d7d",
       "chunks_hex": [
@@ -50,7 +50,7 @@
     },
     {
       "name": "a0_state_type1",
-      "note": "A0 34 字节 Type1：字段偏移依据 2026-11-01 实测采集；ts 已排除",
+      "note": "A0 34-byte Type1; offsets from the 2026-11-01 capture, ts excluded",
       "payload_hex": "0114001e002a1a0000001000232300080000000000500000000000002d000000013c",
       "state": {
         "frame_type": 1,

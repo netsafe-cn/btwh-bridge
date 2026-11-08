@@ -3,7 +3,7 @@ chcp 65001 >nul
 cd /d "%~dp0"
 title Bosch Water Heater Bridge
 
-rem 用 PATH 里的 python；虚拟环境请先 activate
+rem use python from PATH; activate a virtualenv first if you have one
 set PY=python
 where python >nul 2>nul || set PY=py
 

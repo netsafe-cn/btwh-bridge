@@ -9,7 +9,7 @@ jobs:
     name: py${{ matrix.python }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     env:
-      # Windows runner 默认 cp1252，而测试会打印中文，强制 UTF-8 避免 UnicodeEncodeError
+      # Windows runners default to cp1252 and the suite emits non-ASCII, so force UTF-8
       PYTHONIOENCODING: utf-8
     strategy:
       fail-fast: false
@@ -24,7 +24,7 @@ jobs:
           cache: pip
       - name: Install minimal test deps
         run: pip install -r requirements-dev.txt
-      # 全部离线：不连蓝牙、不连网络；WinRT 相关用例在非 Windows 自动 skip
+      # Fully offline: no Bluetooth, no network; WinRT cases skip on other platforms
       - name: Full regression (incl. signature contract + golden vectors)
         run: python run_tests.py
 
@@ -37,23 +37,23 @@ jobs:
         shell: bash
         run: |
           if git ls-files --error-unmatch config.json >/dev/null 2>&1; then
-            echo "::error::config.json 含真实 MAC / 配对码 / 云 UID，禁止提交"
+            echo "::error::config.json holds a real MAC / pairing code / cloud UID; never commit it"
             exit 1
           fi
-          echo "OK: config.json 未被纳入版本控制"
+          echo "OK: config.json is not tracked"
       - name: Scan for hardcoded cloud UID / pair code in tracked sources
         shell: bash
         run: |
-          # 测试里用的是假夹具（123456 / 654321 / 831152），不算密钥泄漏；
-          # 库代码里出现才是事故。所以 test_*.py 不参与扫描。
+          # test fixtures use fake values (123456 / 654321 / 831152) and are not leaks;
+          # a credential in library code is the accident. So test files are out of scope.
           hits=$(git grep -nE 'bemfa_uid\s*=\s*"[0-9a-f]{16,}"|pair_code\s*=\s*"[0-9]{6}"' \
                    -- '*.py' ':!config.example.json' ':!python/tests/' ':!test_*.py' || true)
           if [ -n "$hits" ]; then
             echo "$hits"
-            echo "::error::源码里疑似硬编码了真实密钥，请改为环境变量注入"
+            echo "::error::a real credential looks hardcoded; inject it from the environment"
             exit 1
           fi
-          echo "OK: 未发现硬编码密钥（测试夹具已排除）"
+          echo "OK: no hardcoded credentials (test fixtures excluded)"
 
   layout:
     name: directory boundaries hold

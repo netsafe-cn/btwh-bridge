@@ -2,7 +2,7 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 
-rem 用 PATH 里的 pythonw（无控制台窗口）；找不到就退回 python
+rem use pythonw from PATH (no console window); fall back to python
 set PY=pythonw
 where pythonw >nul 2>nul || set PY=python
 

@@ -124,7 +124,7 @@ except Exception:
 
 
 def parse_mac(address: str) -> int:
-    """'AA:BB:CC:DD:EE:FF' -> int。"""
+    """'AA:BB:CC:DD:EE:FF' -> int."""
     return int(address.replace(":", "").replace("-", ""), 16)
 
 

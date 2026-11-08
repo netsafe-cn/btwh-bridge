@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
-"""API 层单元测试（配置、状态、云客户端解析）
+"""API-layer tests: configuration, state, cloud client parsing
 
-运行：  python -m unittest test_api -v
-全部离线，不碰硬件、不连网络。
+Run:  python run_tests.py -v   (from the repository root)
+Fully offline: no hardware, no network.
 """
 import json
 import os
 import pathlib
 import tempfile
 import unittest
-from unittest import mock          # 标准库，CI 无需 pip install mock
+from unittest import mock          # stdlib, so CI needs no extra install
 
 import bosch_api
 from bemfa import BemfaClient
@@ -32,14 +32,14 @@ class TestConfig(unittest.TestCase):
             self.tmp.unlink()
 
     def test_validate_empty(self):
-        """空配置应报三个必填项"""
+        """An empty config reports the three required fields"""
         errs = Config().validate()
         self.assertEqual(len(errs), 3)
         self.assertTrue(any("heater Bluetooth address" in e for e in errs))
         self.assertTrue(any("pairing code" in e for e in errs))
 
     def test_validate_ok(self):
-        """完整配置应无报错"""
+        """A complete config reports nothing"""
         c = Config(device_address="AA:BB:CC:DD:EE:FF",
                    login_mac="112233445566",
                    pair_code="123456")
@@ -76,10 +76,10 @@ class TestConfig(unittest.TestCase):
         c = Config.load(self.tmp)
         self.assertEqual(c.pair_code, "999999")
         self.assertEqual(c.bemfa_uid, "envuid")
-        self.assertEqual(c.device_address, "AA:BB")   # 文件值仍生效
+        self.assertEqual(c.device_address, "AA:BB")   # the file value still applies
 
     def test_unknown_key_in_file_ignored(self):
-        self.tmp.write_text(json.dumps({"device_address": "X", "不存在的键": 1}),
+        self.tmp.write_text(json.dumps({"device_address": "X", "unknown_key": 1}),
                             encoding="utf-8")
         c = Config.load(self.tmp)
         self.assertEqual(c.device_address, "X")
@@ -105,7 +105,7 @@ class TestDeviceState(unittest.TestCase):
         self.assertEqual(DeviceState(failure=0xEA).failure_text, "EA")
 
     def test_compat_properties(self):
-        """旧字段名仍可用（界面/外部代码兼容）"""
+        """Legacy field names still work, for the UI and external callers"""
         st = DeviceState(temp_out=45.5, temp_in=20.1, chamber=30.0, burner_power=50)
         self.assertEqual(st.outlet, 45.5)
         self.assertEqual(st.inlet, 20.1)
@@ -121,7 +121,7 @@ class TestDeviceState(unittest.TestCase):
 
 
 class TestBemfaParsing(unittest.TestCase):
-    """只测纯解析逻辑，不建立连接"""
+    """Parsing only; no connection is made"""
 
     def setUp(self):
         self.cli = BemfaClient("uid", ["boschset004", "boschup006"])
@@ -138,14 +138,14 @@ class TestBemfaParsing(unittest.TestCase):
         self.assertEqual(self.got, [])
 
     def test_echo_suppressed(self):
-        """自己刚发的消息回环应该被丢弃"""
+        """A message we published ourselves must be dropped"""
         import time
         self.cli._echo[("boschset004", "#38")] = time.time()
         self.cli._on_line("cmd=2&uid=uid&topic=boschset004&msg=#38")
         self.assertEqual(self.got, [])
 
     def test_echo_expired(self):
-        """超过窗口期的相同消息应正常处理"""
+        """The same message after the window is processed normally"""
         import time
         from bemfa import ECHO_WINDOW
         self.cli._echo[("boschset004", "#38")] = time.time() - ECHO_WINDOW - 1
@@ -158,13 +158,13 @@ class TestBemfaParsing(unittest.TestCase):
 
     def test_push_without_uid_ignored(self):
         cli = BemfaClient("", ["t"])
-        cli.push("t", "x")          # 不应抛异常
+        cli.push("t", "x")          # must not raise
         self.assertEqual(cli._send_q.qsize(), 0)
 
 
 class TestPairing(unittest.TestCase):
-    """系统配对：2026-11-01 教训——Windows 解绑后设备会静默丢弃明文会话，
-    连接前必须保持配对。"""
+    """OS-level pairing: after Windows unpairs, the device silently drops plaintext
+        sessions, so the pairing must be kept before connecting."""
 
     def test_parse_mac(self):
         from bosch_api import parse_mac
@@ -173,7 +173,7 @@ class TestPairing(unittest.TestCase):
         self.assertEqual(parse_mac("AA-BB-CC-DD-EE-FF"), 0xAABBCCDDEEFF)
 
     def test_ensure_paired_non_windows_degrades_true(self):
-        """非 Windows（无 WinRT）应降级为 True，不阻塞连接流程"""
+        """Non-Windows (no WinRT) degrades to True and never blocks the connection"""
         import bosch_api
         import asyncio
         with mock.patch.object(bosch_api, "_WINRT_OK", False):
@@ -188,9 +188,9 @@ class TestPairing(unittest.TestCase):
                 asyncio.run(bosch_api.paired_state("AA:BB:CC:DD:EE:FF")),
                 "unknown")
 
-    @unittest.skipUnless(bosch_api._WINRT_OK, "需要 Windows WinRT")
+    @unittest.skipUnless(bosch_api._WINRT_OK, "requires Windows WinRT")
     def test_ensure_paired_device_unreachable_is_ok(self):
-        """设备不在系统缓存（休眠）→ 放行，交给连接流程处理"""
+        """Device not in the system cache (asleep): let the connect path handle it"""
         import bosch_api
         import asyncio
         fake = mock.MagicMock()
@@ -200,9 +200,9 @@ class TestPairing(unittest.TestCase):
             self.assertTrue(
                 asyncio.run(bosch_api.ensure_paired("AA:BB:CC:DD:EE:FF")))
 
-    @unittest.skipUnless(bosch_api._WINRT_OK, "需要 Windows WinRT")
+    @unittest.skipUnless(bosch_api._WINRT_OK, "requires Windows WinRT")
     def test_ensure_paired_already_paired_short_circuit(self):
-        """已配对 → 直接 True，不发起配对"""
+        """Already paired: True without starting a pairing"""
         import bosch_api
         import asyncio
         pairing = mock.MagicMock()
@@ -219,9 +219,9 @@ class TestPairing(unittest.TestCase):
                 asyncio.run(bosch_api.ensure_paired("AA:BB:CC:DD:EE:FF")))
         pairing.custom.pair_async.assert_not_called()
 
-    @unittest.skipUnless(bosch_api._WINRT_OK, "需要 Windows WinRT")
+    @unittest.skipUnless(bosch_api._WINRT_OK, "requires Windows WinRT")
     def test_ensure_paired_unpaired_uses_confirm_only(self):
-        """未配对 → 走 custom.pair_async(CONFIRM_ONLY) 并接受请求"""
+        """Unpaired: custom.pair_async(CONFIRM_ONLY), then accept the request"""
         import bosch_api
         import asyncio
 
@@ -256,7 +256,7 @@ class TestPairing(unittest.TestCase):
             ok = asyncio.run(bosch_api.ensure_paired("AA:BB:CC:DD:EE:FF"))
         self.assertTrue(ok)
         custom.pair_async.assert_awaited_once()
-        # 验证注册的回调会接受 CONFIRM_ONLY 请求
+        # the registered handler must accept a CONFIRM_ONLY request
         args = mock.MagicMock()
         args.pairing_kind = DevicePairingKinds.CONFIRM_ONLY
         captured["fn"](None, args)

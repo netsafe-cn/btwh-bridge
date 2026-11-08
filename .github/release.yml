@@ -1,6 +1,6 @@
-# GitHub 自动生成 Release notes 的分类规则。
-# 依据 PR 上的 label 归类；没有 label 的 PR 落到最后一项。
-# 生成的是草稿，发版前必须人工改写（尤其是「为什么」）。
+# Categories for the release notes GitHub generates.
+# Pull requests are grouped by label; anything unlabelled lands in the last category.
+# The output is a draft: rewrite it before publishing, especially the "why".
 changelog:
   exclude:
     labels:

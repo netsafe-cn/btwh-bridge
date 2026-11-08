@@ -532,7 +532,7 @@ class App:
             messagebox.showinfo("Faults", "no fault records (all slots empty)")
             self.hint.config(text="faults: none", fg=MUTED)
             return
-        txt = "、".join("%02X" % c for c in codes)
+        txt = ", ".join("%02X" % c for c in codes)
         messagebox.showinfo("Faults",
                             "%d records://n//n%s//n//nRaw reply: %s"
                             % (len(codes), txt, (raw or b"").hex(" ")))

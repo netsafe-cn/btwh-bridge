@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""test_fsm.py —— 配网/配对状态机单元测试
+"""test_fsm.py - provisioning/pairing state machine tests
 
-重点验「正交性」：配网失败 / 重置配网，绝不能影响热水器配对状态与 bond。
-全部确定性，不连硬件、不用真实时钟（now 由用例注入）。
+The point is orthogonality: a provisioning failure or reset must never touch the heater
+pairing state or the bond. Fully deterministic: no hardware, no real clock (now injected).
 
-运行：  python -m unittest test_fsm -v
+Run:  python run_tests.py -v   (from the repository root)
 """
 import unittest
 
@@ -27,7 +27,7 @@ class TestBoot(unittest.TestCase):
         self.assertEqual(f.wifi, WifiState.CONNECTING)
 
     def test_bond_and_pin_skip_smp(self):
-        """重启后已绑定且码还在 → 直接走应用层登录，不必再去面板"""
+        """After a reboot, bonded with the code stored: go straight to application login"""
         f = BridgeFsm()
         f.on_boot(True, True, True)
         self.assertEqual(f.pair, PairState.PIN_READY)
@@ -88,7 +88,7 @@ class TestWifiAxis(unittest.TestCase):
 
 
 class TestOrthogonality(unittest.TestCase):
-    """本状态机最核心的设计约束：两条轴互不干扰。"""
+    """The core design constraint: the two axes never interfere."""
 
     def setUp(self):
         self.f = BridgeFsm(FsmConfig(wifi_fail_limit=2))
@@ -107,7 +107,7 @@ class TestOrthogonality(unittest.TestCase):
         self.assertTrue(self.f.has_pin)
 
     def test_reset_wifi_only_keeps_bond_and_pin(self):
-        """换路由器不需要再去面板清除配对"""
+        """Changing the router must not require clearing the pairing at the panel"""
         self.f.reset_wifi_only()
         self.assertEqual(self.f.mode, DeviceMode.SETUP)
         self.assertEqual(self.f.wifi, WifiState.PROVISIONING)
@@ -121,7 +121,7 @@ class TestOrthogonality(unittest.TestCase):
         self.assertEqual(self.f.pair, PairState.ONLINE)
 
     def test_pairing_works_even_in_setup_mode(self):
-        """没配 WiFi 时也能先跟热水器配对（串口调试阶段就是这么用的）"""
+        """The heater can be paired before Wi-Fi exists, which is how serial debugging works"""
         f = BridgeFsm()
         f.on_boot(False, False, False)
         f.request_pairing(now=0)
@@ -129,7 +129,7 @@ class TestOrthogonality(unittest.TestCase):
         self.assertEqual(f.smp_result(True), PairState.LOGIN)
 
     def test_nvs_bond_managed_externally(self):
-        """NimBLE bond 不能由配网流程删除"""
+        """The provisioning flow must never delete the NimBLE bond"""
         self.assertEqual(NVS_LAYOUT["bond"]["managed_by"], "NimBLE")
         self.assertNotIn("bond", NVS_LAYOUT["wifi"]["keys"])
         self.assertNotIn("bond", NVS_LAYOUT["heater"]["keys"])

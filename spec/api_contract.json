@@ -1,6 +1,6 @@
 {
   "contract_version": "v1.0",
-  "note": "API.md v1.0 签名快照；只允许末尾追加带默认值的可选参数",
+  "note": "docs/API.md v1.0 signature snapshot; only a trailing default may be added",
   "signatures": {
     "parse_mac": [
       {
