@@ -1,0 +1,269 @@
+{
+  "schema_version": 1,
+  "status": "draft",
+  "note": "Contract between the bridge firmware and everything that consumes it (panel firmware, Home Assistant, Mi Home, Node-RED). Neither side imports the other's code; both are generated from or validated against this file.",
+  "base_topic": "btwh",
+  "device_id": "btwh_<last6>",
+  "device_id_note": "Last 6 hex digits of the heater BLE address, lower case. Stable across reflashes, so entities survive a firmware update.",
+  "qos": 0,
+  "retain": {
+    "state": true,
+    "availability": true,
+    "attributes": true
+  },
+  "topics": {
+    "state": {
+      "topic": "btwh/{device_id}/state",
+      "direction": "bridge -> consumer",
+      "payload": "json",
+      "purpose": "Full device snapshot, published when a value changes or every keepalive interval."
+    },
+    "availability": {
+      "topic": "btwh/{device_id}/availability",
+      "direction": "bridge -> consumer",
+      "payload": "text",
+      "values": [
+        "online",
+        "offline"
+      ],
+      "purpose": "Last will is 'offline'. A consumer must treat a missing state plus 'offline' as unknown, not as zero."
+    },
+    "set_temperature": {
+      "topic": "btwh/{device_id}/set/temperature",
+      "direction": "consumer -> bridge",
+      "payload": "text",
+      "range": [
+        35,
+        60
+      ],
+      "unit": "C",
+      "purpose": "Setpoint. The bridge ignores out-of-range values rather than clamping."
+    },
+    "command": {
+      "topic": "btwh/{device_id}/cmd",
+      "direction": "consumer -> bridge",
+      "payload": "json",
+      "values": [
+        "refresh",
+        "reboot",
+        "unpair"
+      ],
+      "purpose": "Operational commands. 'refresh' asks for an immediate state publish."
+    },
+    "attributes": {
+      "topic": "btwh/{device_id}/attributes",
+      "direction": "bridge -> consumer",
+      "payload": "json",
+      "purpose": "Slow-changing metadata: firmware version, heater address, uptime, pairing state. Separate topic so it is not repeated in every state message."
+    }
+  },
+  "state_fields": [
+    {
+      "key": "temp_out",
+      "type": "float",
+      "unit": "C",
+      "precision": 1,
+      "range": [
+        0,
+        90
+      ],
+      "device_class": "temperature",
+      "state_class": "measurement",
+      "label": "Outlet water temperature",
+      "source": "DeviceState.temp_out"
+    },
+    {
+      "key": "temp_in",
+      "type": "float",
+      "unit": "C",
+      "precision": 1,
+      "range": [
+        0,
+        90
+      ],
+      "device_class": "temperature",
+      "state_class": "measurement",
+      "label": "Inlet water temperature",
+      "source": "DeviceState.temp_in"
+    },
+    {
+      "key": "chamber",
+      "type": "float",
+      "unit": "C",
+      "precision": 1,
+      "range": [
+        0,
+        200
+      ],
+      "device_class": "temperature",
+      "state_class": "measurement",
+      "label": "Combustion chamber temperature",
+      "source": "DeviceState.chamber"
+    },
+    {
+      "key": "temp_box",
+      "type": "float",
+      "unit": "C",
+      "precision": 1,
+      "range": [
+        0,
+        90
+      ],
+      "device_class": "temperature",
+      "state_class": "measurement",
+      "label": "Chassis temperature",
+      "source": "DeviceState.temp_box"
+    },
+    {
+      "key": "setpoint",
+      "type": "int",
+      "unit": "C",
+      "range": [
+        35,
+        60
+      ],
+      "device_class": "temperature",
+      "state_class": "setpoint",
+      "label": "Setpoint temperature",
+      "source": "DeviceState.setpoint"
+    },
+    {
+      "key": "water_flow",
+      "type": "float",
+      "unit": "L/min",
+      "precision": 1,
+      "range": [
+        0,
+        30
+      ],
+      "state_class": "measurement",
+      "label": "Water flow",
+      "source": "DeviceState.water_flow"
+    },
+    {
+      "key": "burner_power",
+      "type": "int",
+      "unit": "%",
+      "range": [
+        0,
+        100
+      ],
+      "state_class": "measurement",
+      "label": "Burner power",
+      "source": "DeviceState.burner_power"
+    },
+    {
+      "key": "fan_speed",
+      "type": "int",
+      "unit": "rpm",
+      "range": [
+        0,
+        6000
+      ],
+      "state_class": "measurement",
+      "label": "Fan speed",
+      "source": "DeviceState.fan_speed"
+    },
+    {
+      "key": "flame",
+      "type": "bool",
+      "label": "Flame detected",
+      "device_class": "running",
+      "source": "DeviceState.ionized"
+    },
+    {
+      "key": "mode",
+      "type": "enum",
+      "values": [
+        "idle",
+        "burning",
+        "comfort",
+        "unknown"
+      ],
+      "label": "Operating mode",
+      "source": "DeviceState.mode"
+    },
+    {
+      "key": "fault",
+      "type": "string",
+      "label": "Active fault code",
+      "note": "Two upper-case hex digits, or 'none'. Never an empty string - a consumer drawing a fault badge needs a definite value.",
+      "source": "DeviceState.failure_text"
+    },
+    {
+      "key": "ts",
+      "type": "int",
+      "unit": "s",
+      "label": "Bridge timestamp (epoch)",
+      "note": "Set by the bridge, not by the heater. Consumers detect a stalled bridge by an ageing ts.",
+      "source": null
+    }
+  ],
+  "attributes_fields": [
+    {
+      "key": "fw",
+      "type": "string",
+      "label": "Bridge firmware version"
+    },
+    {
+      "key": "hw",
+      "type": "string",
+      "label": "Bridge board, e.g. esp32s3"
+    },
+    {
+      "key": "heater",
+      "type": "string",
+      "label": "Heater BLE address"
+    },
+    {
+      "key": "pair_state",
+      "type": "enum",
+      "values": [
+        "unpaired",
+        "paired",
+        "reconnecting"
+      ],
+      "label": "Pairing state"
+    },
+    {
+      "key": "uptime",
+      "type": "int",
+      "unit": "s",
+      "label": "Bridge uptime"
+    },
+    {
+      "key": "rssi",
+      "type": "int",
+      "unit": "dBm",
+      "label": "BLE signal strength"
+    }
+  ],
+  "home_assistant": {
+    "discovery_prefix": "homeassistant",
+    "device": {
+      "identifiers": [
+        "btwh_{device_id}"
+      ],
+      "manufacturer": "Bosch",
+      "model": "Therm 4800i",
+      "name": "Water heater"
+    },
+    "entity_note": "One entity per state field. Sensors use state_class measurement; setpoint is a number entity; flame is a binary_sensor; mode is an enum sensor; fault is a sensor with an icon template."
+  },
+  "consumer_rules": [
+    "A missing field means 'not reported yet'. Do not print it as 0 - an unheated heater and an unreachable bridge must look different.",
+    "fault == 'none' is healthy; any other value is a fault code, not text.",
+    "availability == 'offline' overrides state: show 'unavailable' and stop drawing the last value as current.",
+    "Never hard-code the base topic in firmware: generate it from this file or read it from the bridge's attributes."
+  ],
+  "producers": {
+    "spec/mqtt.json": "hand-written contract, reviewed like code",
+    "python/tools/": "a reference publisher, useful when testing a panel without a bridge"
+  },
+  "consumers": {
+    "firmware/panel/": "planned touch panel; generates its UI binding from state_fields",
+    "integrations/homeassistant/": "planned integration; generates entities from the same list",
+    "firmware/bridge/": "publishes; must pass the contract test before release"
+  },
+  "source_of_truth": "state_fields keys are checked against python/bosch_api.py::DeviceState by python/tests/test_mqtt_contract.py; renaming a field there without updating this file fails CI."
+}

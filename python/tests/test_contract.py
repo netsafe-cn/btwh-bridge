@@ -12,7 +12,7 @@
      Python 参考实现与 ESP32 C++ 固件逐字节对照，防止两端协议漂移
 
 更新快照（仅在有意做兼容扩展、且已审过 API.md 变更记录时）：
-    python tests/test_contract.py --update
+    python python/tests/test_contract.py --update
 """
 from __future__ import annotations
 
@@ -32,9 +32,10 @@ import bosch_api as api
 from bosch_api import BoschProtocol
 
 HERE = pathlib.Path(__file__).resolve().parent
-ROOT = HERE.parent                      # tests/ lives one level below the repo root
-CONTRACT = ROOT / "api_contract.json"
-VECTORS = ROOT / "protocol_vectors.json"
+ROOT = HERE.parents[1]                  # python/tests -> repository root
+SPEC = ROOT / "spec"                    # cross-language contracts live here
+CONTRACT = SPEC / "api_contract.json"
+VECTORS = SPEC / "protocol_vectors.json"
 
 # API.md 声明的全部公开符号。新增公开 API 时，除了写文档也要加进这里。
 API_SYMBOLS = [

@@ -1,7 +1,5 @@
 # BLE protocol notes — Bosch gas water heaters
 
-**English** | [简体中文](BLE_PROTOCOL.zh-CN.md)
-
 > For the Bosch **Therm 4800i** gas water heater. Its Bluetooth module advertises as
 > `BTWH-001-xxxx` (the identifier the code matches on). Measured on **Bosch Therm 4800i**,
 > advertised name `BTWH-001-6F5F`; the vendor app package is
@@ -457,11 +455,11 @@ name or the `d1` characteristic, but it does not buy much.
 
 | File | Purpose |
 |---|---|
-| `tools/bosch_ui.py` | Desktop console (BLE + Bemfa cloud + config + pairing-code login) |
-| `tools/bosch_bridge.py` | Headless Bemfa bridge |
-| `tools/bosch_read.py` | One-shot read; protocol constants and codec live here |
-| `tools/collector.py` | Continuously capture A0 into a per-frame CSV |
-| `tools/analyze_collect.py` | Analyse a collected CSV |
+| `python/tools/bosch_ui.py` | Desktop console (BLE + Bemfa cloud + config + pairing-code login) |
+| `python/tools/bosch_bridge.py` | Headless Bemfa bridge |
+| `python/tools/bosch_read.py` | One-shot read; protocol constants and codec live here |
+| `python/tools/collector.py` | Continuously capture A0 into a per-frame CSV |
+| `python/tools/analyze_collect.py` | Analyse a collected CSV |
 
 ---
 

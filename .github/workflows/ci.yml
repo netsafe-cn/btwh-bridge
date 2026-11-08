@@ -47,10 +47,48 @@ jobs:
           # 测试里用的是假夹具（123456 / 654321 / 831152），不算密钥泄漏；
           # 库代码里出现才是事故。所以 test_*.py 不参与扫描。
           hits=$(git grep -nE 'bemfa_uid\s*=\s*"[0-9a-f]{16,}"|pair_code\s*=\s*"[0-9]{6}"' \
-                   -- '*.py' ':!config.example.json' ':!tests/' ':!test_*.py' || true)
+                   -- '*.py' ':!config.example.json' ':!python/tests/' ':!test_*.py' || true)
           if [ -n "$hits" ]; then
             echo "$hits"
             echo "::error::源码里疑似硬编码了真实密钥，请改为环境变量注入"
             exit 1
           fi
           echo "OK: 未发现硬编码密钥（测试夹具已排除）"
+
+  layout:
+    name: directory boundaries hold
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The panel is an application ON TOP OF the bridge, never a variant of it. These
+      # greps are empty today because firmware/panel has no source yet; they exist so the
+      # first person to add one cannot quietly link the bridge.
+      - name: panel must not link bridge source or the protocol component
+        shell: bash
+        run: |
+          bad=$(grep -rn -E '#include.*(bridge|bosch_proto)|bosch_proto' firmware/panel \
+                  --include='*.c' --include='*.cpp' --include='*.h' --include='*.hpp' || true)
+          if [ -n "$bad" ]; then
+            echo "$bad"
+            echo "::error::firmware/panel may only consume spec/mqtt.json; it must not link bridge or bosch_proto"
+            exit 1
+          fi
+          echo "OK: panel has no bridge dependency"
+      - name: no application may be included by a component
+        shell: bash
+        run: |
+          bad=$(grep -rn -E '#include.*(\.\./)+(bridge|panel)/' firmware/components \
+                  --include='*.c' --include='*.cpp' --include='*.h' || true)
+          if [ -n "$bad" ]; then
+            echo "$bad"
+            echo "::error::firmware/components must not depend on an application"
+            exit 1
+          fi
+          echo "OK: components are application-free"
+      - name: every contract file is valid JSON
+        shell: bash
+        run: |
+          for f in spec/*.json; do
+            python -c "import json,sys; json.load(open(sys.argv[1], encoding='utf-8'))" "$f" || exit 1
+            echo "OK: $f"
+          done

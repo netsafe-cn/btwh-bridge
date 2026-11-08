@@ -84,27 +84,28 @@ probe_report.txt
 esp32_bosch_ble.ino
 
 # 第三方板卡索引（体积大，可用 fetch_packages.py 重建）
-esp32/toolchain/package_esp32_*.json
+firmware/bridge/toolchain/package_esp32_*.json
 
 # 编译产物与本地工具链（体积大、平台相关，用 fetch_packages.py / install_local.py 重建）
-esp32/toolchain/index/packages/
-esp32/toolchain/arduino_data/
-esp32/gateway/.pio/
-esp32/gateway/.build/
+firmware/bridge/toolchain/index/packages/
+firmware/bridge/toolchain/arduino_data/
+firmware/**/.pio/
+firmware/**/.build/
 build/
 *.bin
 
-# 第三方二进制与版权文档：不重新分发，按 esp32/manual/README.md 指引自行下载
-esp32/toolchain/*.exe
-esp32/manual/*.pdf
-esp32/manual/*.7z
-esp32/manual/*.zip
-esp32/manual/api_ref/
-esp32/manual/微雪官方文档_摘录.md
+# 第三方二进制与版权文档：不重新分发，按 docs/hardware/README.md 指引自行下载
+firmware/bridge/toolchain/*.exe
+docs/hardware/*.pdf
+docs/hardware/*.7z
+docs/hardware/*.zip
+docs/hardware/api_ref/
+docs/hardware/微雪官方文档_摘录.md
 
 # ESP32 本地工具链与弃用固件：环境相关 / 硬编码真实设备标识，均不入库
-esp32/toolchain/
-esp32/bosch_gateway/
+firmware/bridge/toolchain/
+firmware/bridge/legacy_v1/
+firmware/bridge/logs/
 
 # 本地实验脚本与无关工具（不属于项目本体，仅本机保留）
 analyze_frames.py

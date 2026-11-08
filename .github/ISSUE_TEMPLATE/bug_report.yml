@@ -60,7 +60,7 @@ body:
       label: Logs
       description: |
         Paste the redacted `logs/*.log`, plus the output of
-        `python esp32/gateway/log_diag.py`. This field renders as a code block.
+        `python firmware/bridge/tools/log_diag.py`. This field renders as a code block.
       render: text
     validations:
       required: false

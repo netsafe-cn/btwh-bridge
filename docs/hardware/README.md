@@ -82,5 +82,5 @@ COM4 and the logs appear to vanish.
 - On-board auto-download circuit: **no need to hold BOOT**
 
 This project drives the build from the command line rather than the Arduino IDE, so compilation,
-flashing and log capture can be scripted. See [`../README.md`](../README.md) for the exact
+flashing and log capture can be scripted. See [`../../firmware/bridge/README.md`](../../firmware/bridge/README.md) for the exact
 arduino-cli commands and pinned versions.

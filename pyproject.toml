@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "btwh-bridge"
-version = "0.1.0"
+version = "0.2.0"
 description = "BLE interoperability implementation for the Bosch Therm 4800i gas water heater (BLE module BTWH-001), with an ESP32 gateway"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -32,6 +32,7 @@ Changelog = "https://github.com/netsafe-cn/btwh-bridge/blob/main/CHANGELOG.md"
 dev = ["pyserial>=3.5"]
 
 [tool.setuptools]
-# Only the importable library modules are packaged; the GUI, bridge and CLI helpers are
-# run from the repository as scripts.
-py-modules = ["bosch_api", "boschlog", "bemfa", "device_fsm"]
+# The library lives in python/, but the import names stay flat (`import bosch_api`), so
+# moving files around never breaks a downstream import or the frozen contract.
+package-dir = { "" = "python" }
+py-modules = ["bosch_api", "boschlog", "bemfa", "device_fsm", "singlelock"]

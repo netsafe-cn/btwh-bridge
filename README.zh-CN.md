@@ -22,11 +22,11 @@ ESP32 C++ 实现，三者用同一组十六进制向量对齐，防止两端实�
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
-| Python 协议库 `bosch_api` | ✅ 可用 | **136 项**回归全绿，含签名冻结契约与黄金向量 |
+| Python 协议库 `bosch_api` | ✅ 可用 | **145 项**回归全绿，含签名冻结契约与黄金向量 |
 | 桌面控制台 / 米家桥接 | ✅ 可用 | tkinter GUI + 巴法云 |
 | ESP32-S3 网关固件 v2 | ✅ 已验证 | 实机连通通过：SMP 加密 → `A2/07` → `A2/08=01` → `A0` 稳定刷帧；断电重启自动恢复 |
 | MQTT / Home Assistant 自动发现 | ⏳ 计划中 | 见 [架构与路线图](docs/ARCHITECTURE.md) |
-| 配网（Improv WiFi） | 📐 契约已定 | 以 `device_fsm.py` + [API.md §9](API.md) 为准 |
+| 配网（Improv WiFi） | 📐 契约已定 | 以 `python/device_fsm.py` + [API.md §9](docs/API.md) 为准 |
 
 ---
 
@@ -52,7 +52,7 @@ ESP32 C++ 实现，三者用同一组十六进制向量对齐，防止两端实�
 | 历史与故障 | B0 运行统计 / 洗浴记录，D7 故障列表 |
 | 桌面控制台 | 单窗口 GUI，四路温度 + 曲线 + 历史弹窗 |
 | 米家小爱 | 经巴法云同步，语音查询与调温（可选） |
-| 通用 API | `bosch_api.py` 可被任意 Python 程序复用，自带回归测试 |
+| 通用 API | `python/bosch_api.py` 可被任意 Python 程序复用，自带回归测试 |
 
 ---
 
@@ -129,15 +129,23 @@ svc.set_temperature(42)
 svc.stop()
 ```
 
-接口契约见 [`API.md`](API.md)。**原则是只增不改**：已发布签名冻结，由
+接口契约见 [`API.md`](docs/API.md)。**原则是只增不改**：已发布签名冻结，由
 `tests/test_contract.py` + `api_contract.json` 在 CI 上强制校验，任何 breaking change 会让回归变红。
 
 ---
 
 ## ESP32 网关
 
-固件、工具链、板卡手册都在 [`esp32/`](esp32/)，操作步骤见
-[`esp32/README.md`](esp32/README.md)。
+固件在 [`firmware/`](firmware/) 下，一个应用一个目录：
+
+| 目录 | 是什么 |
+|---|---|
+| [`firmware/bridge/`](firmware/bridge/) | ESP32-S3 无屏版，装在热水器旁边。BLE 进，MQTT 出。 |
+| [`firmware/panel/`](firmware/panel/) | 预留：ESP32-S3 + 触摸屏，装在任何楼层。只走 MQTT，**不碰 BLE，也不链接桥的任何代码**。 |
+| [`firmware/components/`](firmware/components/) | 多个固件共享的 C，不依赖框架，能在 PC 上单测。 |
+
+桥的操作步骤见 [`firmware/bridge/README.md`](firmware/bridge/README.md)；
+板卡手册与工具链说明在 [`docs/hardware/`](docs/hardware/)。
 
 v2 相对早期可行性固件修掉了三个关键点：
 
@@ -150,8 +158,8 @@ v2 相对早期可行性固件修掉了三个关键点：
 排查失败时先跑日志诊断器，它把失败对照表变成了可执行规则：
 
 ```bash
-python esp32/gateway/log_diag.py            # 自动取最新 logs/*.log
-python esp32/gateway/log_diag.py <日志路径>
+python firmware/bridge/tools/log_diag.py            # 自动取最新 logs/*.log
+python firmware/bridge/tools/log_diag.py <日志路径>
 ```
 
 ---
@@ -214,29 +222,41 @@ CI 覆盖 Linux + Windows × Python 3.11/3.12，另有一个 job 检查 `config.
 
 ```
 .
-├── bosch_api.py            ★ 核心库：协议 / 设备会话 / 常驻服务
-├── boschlog.py             统一日志（轮转文件 + 内存环形缓冲）
-├── bemfa.py                巴法云 TCP 客户端（米家通道）
-├── device_fsm.py           ★ 配网 / 配对状态机（框架无关的可执行规范）
-├── singlelock.py           后台桥接的单实例锁
-├── run_tests.py            回归入口（全离线，不碰硬件）
-├── tests/                  ★ 单元测试，自动纳入回归
-├── tools/                  可运行的工具：控制台、桥接、采集、Windows 启动器
-├── api_contract.json       ★ 签名冻结快照（由 tests/test_contract.py 生成）
-├── protocol_vectors.json   ★ 跨端黄金向量（Python ↔ ESP32 逐字节对照）
-├── API.md                  接口契约（只增不改）
-├── BLE_PROTOCOL.md         协议笔记：帧格式、字段表、待挖掘能力
-├── docs/                   架构与决策记录
-├── esp32/                  ESP32 网关：固件 / 工具链 / 手册下载指引
-├── config.example.json     配置模板（不含任何真实信息）
-├── pyproject.toml          打包元数据（`pip install .`）
-├── CHANGELOG.md            版本记录
-├── CODE_OF_CONDUCT.md      社区行为准则
-└── LICENSE                 MIT
+├── python/                     参考实现
+│   ├── bosch_api.py            ★ 协议编解码 / 设备会话 / 常驻服务
+│   ├── device_fsm.py           ★ 配网 / 配对状态机
+│   ├── bemfa.py                巴法云客户端（米家通道）
+│   ├── boschlog.py             日志：轮转文件 + 内存环形缓冲
+│   ├── singlelock.py           后台桥接的单实例锁
+│   ├── tests/                  ★ 145 项离线测试，自动发现
+│   └── tools/                  控制台、无界面桥接、采集、启动器
+│
+├── firmware/                   一个应用一个目录，互不共享源码
+│   ├── components/             可复用的 C，无框架依赖，能在 PC 上单测
+│   ├── bridge/                 ESP32-S3 桥：热水器 BLE -> MQTT（无屏）
+│   └── panel/                  预留：触摸屏面板，只走 MQTT，不碰 BLE
+│
+├── spec/                       ★ 跨语言契约，CI 机械校验
+│   ├── api_contract.json       签名冻结快照
+│   ├── protocol_vectors.json   跨端黄金向量（Python <-> ESP32 逐字节）
+│   └── mqtt.json               桥 <-> 面板契约：主题、字段、单位
+│
+├── docs/                       API.md、BLE_PROTOCOL.md、ARCHITECTURE.md、hardware/
+├── integrations/               预留：Home Assistant、Node-RED、ESPHome
+├── run_tests.py                一条命令跑 145 项，全离线
+├── pyproject.toml              打包元数据（`pip install .`）
+├── config.example.json         配置模板（不含任何真实信息）
+├── CHANGELOG.md  CONTRIBUTING.md  SECURITY.md  CODE_OF_CONDUCT.md  LICENSE
 ```
 
-界面只负责显示，蓝牙逻辑全在 `bosch_api`，云同步全在 `bemfa`。
-换界面（Qt / Web / 命令行）不需要动协议代码。
+三条边界是刻意划的，且由 CI 守住：
+
+1. **`python/` 不 import 固件。** `import bosch_api` 通过 `pyproject.toml` 里的
+   `package-dir` 保持扁平名字，所以搬目录不会变成 breaking change。
+2. **`firmware/panel` 不链接 `firmware/bridge` 或 `components/`。** 面板是桥**之上**的
+   应用：只说 MQTT，完全不知道 BLE 的存在。两个楼层的面板是平等的消费者，不是分支。
+3. **`spec/` 是两侧唯一共享的东西。** `mqtt.json` 是桥 <-> 消费者的契约，桥按它发布，
+   面板和任何集成按它渲染。任何一方改名，CI 会一直红到所有消费者跟上。
 
 ---
 

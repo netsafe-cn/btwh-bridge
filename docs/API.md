@@ -14,7 +14,7 @@ capability arrives as new functions or new optional parameters with defaults.
 | Signatures frozen | No deletions, no renames, no new required parameters; new parameters must have defaults |
 | Semantics frozen | The meaning of `True`/`False`, the exception types, and the shape of return values do not change |
 | Extension | Only via new functions or new optional parameters |
-| Regression gate | `python run_tests.py` must be green after any change (136 tests today) |
+| Regression gate | `python run_tests.py` must be green after any change (145 tests today) |
 | Breaking change | Requires a major version bump and a migration note in this document |
 
 ---
@@ -186,7 +186,7 @@ elif state == "paired":            # but the device disagrees -> clear and retry
 ### 7.4 Data capture
 
 ```bash
-python tools/collector.py --out collect.csv     # one CSV row per A0 frame
+python python/tools/collector.py --out collect.csv     # one CSV row per A0 frame
 ```
 
 ---
@@ -196,15 +196,15 @@ python tools/collector.py --out collect.csv     # one CSV row per A0 frame
 | Date | Version | Change |
 |---|---|---|
 | 2026-11-01 | v1.0 | First contract: pairing helpers (ensure_paired/paired_state/unpair_device), B0/D7 parsing, the nineteen A0 fields |
-| 2026-11-07 | v1.0.1 | `set_pair_code_and_reconnect` used to raise `AttributeError` on non-string input; now `ValueError` (bugfix, **signature unchanged**). Added the signature-freeze contract `api_contract.json`, cross-platform golden vectors `protocol_vectors.json`, service and state-machine tests; regression grew 59 → 136 tests |
+| 2026-11-07 | v1.0.1 | `set_pair_code_and_reconnect` used to raise `AttributeError` on non-string input; now `ValueError` (bugfix, **signature unchanged**). Added the signature-freeze contract `spec/api_contract.json`, cross-platform golden vectors `spec/protocol_vectors.json`, service and state-machine tests; regression grew 59 → 136 tests |
 | 2026-11-07 | v1.0.2 | Documented structured authentication state (`authorized`, `mac_registered`, `pair_kind`, `pair_summary()`) and `BoschService.pair_fail_reason` / `pair_fail_hint()`. Corrrected the `A2/07 = 01` semantics in §10.2 — no signature changes |
 
 ---
 
 ## 9. Device-side state machine contract (ESP32 bridge)
 
-**Reference implementation**: `device_fsm.py` (framework-agnostic, unit-tested), with the
-suite in `tests/test_fsm.py`. The C++ firmware must mirror it. Change this specification
+**Reference implementation**: `python/device_fsm.py` (framework-agnostic, unit-tested), with the
+suite in `python/tests/test_fsm.py`. The C++ firmware must mirror it. Change this specification
 and run the regression *before* changing the firmware.
 
 ### 9.1 Provisioning and pairing are orthogonal

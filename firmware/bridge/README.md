@@ -1,7 +1,7 @@
 # ESP32 gateway v2 — Waveshare ESP32-S3-DEV-KIT-N8R8
 
 > Built 2026-11-07. Board identified as COM3 = CH343 (flash + logs), COM4 = native USB.
-> Vendor manuals, schematics and datasheets: see [`manual/`](manual/).
+> Vendor manuals, schematics and datasheets: see [`docs/hardware/`](../../docs/hardware/).
 
 ## 1. Two defects fixed in v2
 
@@ -10,7 +10,7 @@
 | 1 | **v1 ignored the BLE SMP pin entirely** | Measured on hardware: the panel code is **both the BLE passkey and the application-layer password**, and the device requests `PROVIDE_PIN` while the pairing window is open. v1 used `NoInputNoOutput` + Just Works, so SMP failed and `A2/08` could only answer `00` | Implement `onPassKeyRequest()` to return the six-digit panel code; set IO capability to `KEYBOARD_ONLY` (falls back to Just Works when the peer has no IO) |
 | 2 | **The pairing code was compiled in** | A panel code expires within minutes; changing it meant a rebuild plus reflash of two minutes or more — far too slow in practice | **Enter the code at runtime** over serial; configuration is persisted in NVS, so one flash covers unlimited retries |
 
-The protocol was also re-checked byte for byte against `bosch_api.py`: the stuffed range
+The protocol was also re-checked byte for byte against `python/bosch_api.py`: the stuffed range
 includes the checksum, XOR restarts per fragment, FIFO and CREDITS share one callback, `A2`
 resends five times at six-second intervals with a fresh msgId, and the A0 field offsets are the
 ones measured on 2026-11-01.
@@ -18,24 +18,30 @@ ones measured on 2026-11-01.
 ## 2. Layout
 
 ```
-esp32/
-├── gateway/                       main project (PlatformIO / arduino-cli)
-│   ├── src/main.cpp               firmware source, v2.0
-│   ├── arduino_sketch/            the .ino arduino-cli needs (copied from main.cpp)
-│   ├── platformio.ini             PlatformIO configuration (NimBLE pinned to 1.4.3)
-│   ├── gateway_cli.py             build / flash / serial console / logging in one command
-│   ├── esp32_panel.py             always-on-top control panel (enter the six-digit code)
-│   ├── pair_once.py               pair in one command and report a verdict
-│   └── log_diag.py                serial log diagnosis
-├── manual/                        board documentation download guide (PDFs not shipped)
-└── README.md                      this file
+firmware/bridge/
+├── src/main.cpp               firmware source, v2.0
+├── arduino_sketch/            the .ino arduino-cli needs (copied from main.cpp)
+├── platformio.ini             PlatformIO configuration (NimBLE pinned to 1.4.3)
+├── tools/
+│   ├── gateway_cli.py         build / flash / serial console / logging in one command
+│   ├── esp32_panel.py         always-on-top control panel (enter the six-digit code)
+│   ├── pair_once.py           pair in one command and report a verdict
+│   └── log_diag.py            serial log diagnosis
+└── README.md                  this file
 ```
+
+Not committed, created on first build: `toolchain/` (arduino-cli and packages), `logs/`
+(serial captures), `legacy_v1/` (the superseded feasibility firmware).
+
+This is one application in a directory of applications. It publishes against
+[`spec/mqtt.json`](../../spec/mqtt.json); a touch panel that only consumes that contract lives
+in [`firmware/panel/`](../panel/), and it must never link anything here.
 
 ## 3. First run (one command)
 
 ```bash
-cd esp32/gateway
-python gateway_cli.py --flash
+cd firmware/bridge
+python tools/gateway_cli.py --flash
 ```
 
 It finds the CH343 port, builds, flashes and opens the serial console.
@@ -109,18 +115,18 @@ Code expired or rejected? **Read a new one and type it again** — no build invo
 | Heater address | Found with `scan`, then persisted with `addr <MAC>` (placeholder `AA:BB:CC:DD:EE:FF`) |
 | Login MAC | This host's Bluetooth address, set with `mac <MAC>` (placeholder `11:22:33:44:55:66`) |
 
-Protocol references: `BLE_PROTOCOL.md` in the repository root (field calibration in §6, B0/D7 in
-§16), `API.md`, and `bosch_api.py` (136 tests). The SMP pin behaviour is corroborated by captures
-on real hardware — see `API.md §10`.
+Protocol references: `docs/BLE_PROTOCOL.md` in the repository root (field calibration in §6, B0/D7 in
+§16), `docs/API.md`, and `python/bosch_api.py` (145 tests). The SMP pin behaviour is corroborated by captures
+on real hardware — see `docs/API.md §10`.
 
 ## 8. Build environment (new machine / reinstall)
 
-No Arduino IDE: **arduino-cli on the command line**, so `python gateway_cli.py --flash` covers
+No Arduino IDE: **arduino-cli on the command line**, so `python tools/gateway_cli.py --flash` covers
 build + flash + log.
 
 | Component | Version / requirement |
 |---|---|
-| arduino-cli | ≥ 1.0, on `PATH` or at `esp32/toolchain/arduino-cli.exe` (the local toolchain is not committed) |
+| arduino-cli | ≥ 1.0, on `PATH` or at `firmware/bridge/toolchain/arduino-cli.exe` (the local toolchain is not committed) |
 | arduino-esp32 core | **2.0.17** (3.x ships no bundled NimBLE and changed the callbacks) |
 | NimBLE-Arduino | **1.4.3** (2.x is incompatible — pinned) |
 | Board FQBN | `esp32:esp32:esp32s3:FlashSize=8M` |
@@ -167,7 +173,7 @@ finished when it is not.
 
 > ⚠️ Do not run `gateway_cli.py --flash` casually: changing the FQBN triggers a full rebuild that
 > takes over 20 minutes on Windows, and it flashes a firmware whose boot has not been verified
-> yet. To just watch the console use `python gateway_cli.py` with no arguments, or the control
+> yet. To just watch the console use `python tools/gateway_cli.py` with no arguments, or the control
 > panel.
 
 ### Next cut once the PSRAM upgrade is done

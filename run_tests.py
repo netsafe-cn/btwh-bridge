@@ -33,8 +33,12 @@ def _walk(suite):
 def main():
     verbosity = 2 if "-v" in sys.argv else 1
     loader = unittest.TestLoader()
-    suite = loader.discover(start_dir=str(HERE / "tests"), pattern="test_*.py",
-                            top_level_dir=str(HERE))
+    # python/ holds the library and its tests; put it on sys.path so `import bosch_api`
+    # resolves without an editable install, and use it as the package root.
+    pkg_root = HERE / "python"
+    sys.path.insert(0, str(pkg_root))
+    suite = loader.discover(start_dir=str(pkg_root / "tests"), pattern="test_*.py",
+                            top_level_dir=str(pkg_root))
 
     # Guard against a false pass when the directory or pattern is wrong
     if suite.countTestCases() == 0:

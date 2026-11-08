@@ -1,15 +1,15 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # Bosch heater ESP32 gateway - build / flash / serial console / logging
-#   python gateway_cli.py --flash   build, flash, then open the console (first run)
-#   python gateway_cli.py           console only
-#   python gateway_cli.py --build   build only
+#   python firmware/bridge/tools/gateway_cli.py --flash   build, flash, console
+#   python firmware/bridge/tools/gateway_cli.py           console only
+#   python firmware/bridge/tools/gateway_cli.py --build   build only
 from __future__ import annotations
 import argparse, datetime, os, pathlib, shutil, subprocess, sys, threading, time
 
-ROOT = pathlib.Path(__file__).resolve().parent
-TOOLCHAIN = ROOT.parent / "toolchain"
-LOGDIR = ROOT.parent / "logs"
+ROOT = pathlib.Path(__file__).resolve().parent.parent   # firmware/bridge
+TOOLCHAIN = ROOT / "toolchain"
+LOGDIR = ROOT / "logs"
 
 # arduino-cli: prefer the one on PATH, fall back to the bundled toolchain/ (not committed)
 CLI = pathlib.Path(shutil.which("arduino-cli") or (TOOLCHAIN / "arduino-cli.exe"))

@@ -18,7 +18,7 @@ make sure your change respects the red lines below.
 
 **Accepted**: a **restatement** of protocol format and field semantics — for example
 "offset 13 is burner power percentage" — as long as no vendor artefact is attached.
-Such findings belong in `BLE_PROTOCOL.md` and should cite measurement wherever possible.
+Such findings belong in `docs/BLE_PROTOCOL.md` and should cite measurement wherever possible.
 
 > The test is simple: could someone use this to attack **someone else's** device?
 > If yes, don't submit it.
@@ -33,7 +33,7 @@ pip install -r requirements-dev.txt
 python run_tests.py                              # should be all green
 ```
 
-For the ESP32 side see [`esp32/README.md`](esp32/README.md). The toolchain installs
+For the ESP32 side see [`firmware/bridge/README.md`](firmware/bridge/README.md). The toolchain installs
 itself into a short-path workspace — Windows `CreateProcess` has a hard path-length
 limit that cannot be worked around.
 
@@ -45,9 +45,9 @@ limit that cannot be worked around.
 
 | Your change | You must also |
 |---|---|
-| Add or modify a public API | Update `API.md`, then run `python tests/test_contract.py --update` to refresh the signature snapshot |
-| Change protocol encoding/decoding | Update `protocol_vectors.json` and make the ESP32-side vector tests pass with the same data |
-| Change the state machine | Update `device_fsm.py` and `API.md §9` first, then the C++ implementation |
+| Add or modify a public API | Update `docs/API.md`, then run `python python/tests/test_contract.py --update` to refresh the signature snapshot |
+| Change protocol encoding/decoding | Update `spec/protocol_vectors.json` and make the ESP32-side vector tests pass with the same data |
+| Change the state machine | Update `python/device_fsm.py` and `docs/API.md §9` first, then the C++ implementation |
 | Fix a bug | Add a test that reproduces it (red first, then green) |
 
 ### Naming conventions (CI depends on them)
@@ -63,7 +63,7 @@ This project has actually hit that.
 
 Unit tests must not open real Bluetooth connections, touch the network, or read/write
 files outside the repository. Model BLE interaction with the `FakeClient` pattern in
-`tests/test_session.py`, and inject time via the `now` parameter (see `device_fsm.py`) rather
+`python/tests/test_session.py`, and inject time via the `now` parameter (see `python/device_fsm.py`) rather
 than sleeping inside tests.
 
 ---
@@ -72,7 +72,7 @@ than sleeping inside tests.
 
 ```
 1. Change the Python reference implementation + tests   ← this is the source of truth
-2. python tests/test_contract.py --update                     ← regenerate golden vectors
+2. python python/tests/test_contract.py --update                     ← regenerate golden vectors
 3. Change the ESP32 C++ implementation, run the same vectors
 4. Both sides green → open a PR
 ```
@@ -101,7 +101,7 @@ A PR description should answer three things:
 3. **How you verified it** (command, log excerpt, or screenshot)
 
 UI changes should include a screenshot. ESP32 changes should include a serial log —
-`python esp32/gateway/log_diag.py` produces a structured diagnosis you can paste.
+`python firmware/bridge/tools/log_diag.py` produces a structured diagnosis you can paste.
 
 ---
 
@@ -113,7 +113,7 @@ Three things carry a version, and they are bumped for different reasons:
 |---|---|---|
 | Python package | `pyproject.toml` → `[project] version` | SemVer |
 | Gateway firmware | `FW_VERSION`, printed in the boot banner | SemVer, `MAJOR.MINOR` |
-| API surface | `api_contract.json`, checked by CI | frozen by contract, not by a number |
+| API surface | `spec/api_contract.json`, checked by CI | frozen by contract, not by a number |
 
 SemVer here is judged from the **published API contract**, not from how many lines moved:
 
@@ -123,7 +123,7 @@ SemVer here is judged from the **published API contract**, not from how many lin
 | **MINOR** | New public function or constant with a default; new optional trailing parameter; extra parsed field; new firmware command | adding `pair_summary()` |
 | **PATCH** | Bug fix that keeps signature and wire format; docs; internal refactor | raising `ValueError` instead of `AttributeError` |
 
-Rows 1 and 2 are enforced mechanically: `python tests/test_contract.py` fails if you break the
+Rows 1 and 2 are enforced mechanically: `python python/tests/test_contract.py` fails if you break the
 contract without refreshing the snapshot. So "did I break the API?" is answered by the
 build, not by opinion — but **deciding the bump number is still your call**, and it goes
 in the PR description.
@@ -203,7 +203,7 @@ Please include:
 - Symptom and reproduction steps
 - `logs/panel_*.log` or `logs/esp32_*.log` — **strip MAC addresses, pairing codes and
   cloud UIDs first**
-- Output of `python esp32/gateway/log_diag.py`
+- Output of `python firmware/bridge/tools/log_diag.py`
 
 Security issues (for example plaintext key leakage or unauthorised control) should **not**
 be filed as public issues. Report them privately per [`SECURITY.md`](SECURITY.md).

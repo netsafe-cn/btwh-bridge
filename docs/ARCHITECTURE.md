@@ -104,7 +104,7 @@ users who only want YAML.
 **Context**: it is tempting to treat "get the ESP32 online" and "make the heater trust it" as one
 "pairing mode".
 
-**Decision**: two independent state axes; see `device_fsm.py` and `API.md §9`.
+**Decision**: two independent state axes; see `python/device_fsm.py` and `API.md §9`.
 
 | Axis | States | Persistence |
 |---|---|---|
@@ -155,26 +155,92 @@ press the panel to open the window).
 
 ---
 
-## 3. Target repository layout
+### ADR-007 Monorepo split by role, with the panel as a separate application
+
+**Context**: a second ESP32 is planned — a touchscreen panel on another floor. It needs the same
+numbers but not the same code: the heater allows one BLE connection, so a panel that talked to it
+directly would evict the bridge and need the pairing window at the heater's own front panel.
+
+**Decision**: one repository, split by role rather than by file type.
+
+- `firmware/<application>/` — one directory per buildable application; applications never link
+  each other
+- `firmware/components/` — the only place C is shared, and it may not depend on an application
+- `spec/` — the only thing applications share: topics, field names, units and ranges, as JSON
+- `python/` — reference implementation, with `package-dir` keeping `import bosch_api` flat
+
+**Alternatives rejected**: two repositories (the panel would need `spec/` via submodule or a
+release cadence, which is hostile to outside contributors); a single firmware with a compile-time
+`#ifdef PANEL` (both applications would carry the other's dependencies, and a panel bug could only
+be reproduced by flashing a bridge).
+
+**Cost**: contributors have to learn where things belong — mitigated by a CI job that fails on an
+`#include` crossing a boundary, and by a `README.md` in every top-level directory.
+
+**Enforcement**: `test_mqtt_contract.py` keeps `mqtt.json` aligned with `DeviceState`; the `layout`
+CI job keeps the firmware boundaries intact.
+
+---
+
+## 3. Repository layout
+
+Landed in 0.2.0. The repository is a monorepo split by **role**, not by file type: an
+implementation, a set of applications that run on different hardware, and the contracts they
+share.
 
 ```
-├── bosch_proto/            C protocol library (no framework) + vector tests
-├── firmware/               ESP-IDF project
-│   ├── main/
-│   │   ├── provisioning/   Improv Wi-Fi + captive portal fallback
-│   │   ├── pairing/        SMP + A2/07 + A2/08 state machine
-│   │   ├── telemetry/      state cache / MQTT Discovery
-│   │   └── proto_port/     IDF adapter for bosch_proto
-│   └── test/               host-side firmware tests
-├── python/                 Python reference implementation and tools
-├── tests/                  vector and contract tests
-├── docs/                   this directory: architecture, protocol, roadmap
-└── tools/                  log_diag, capture analysis, vector generation
+python/                     Reference implementation
+  python/bosch_api.py              codec / session / resident service
+  python/device_fsm.py             provisioning + pairing state machine
+  tests/                    145 offline tests
+  tools/                    console, headless bridge, capture
+
+firmware/                   One directory per application
+  components/               reusable C, framework-free, host-testable
+  bridge/                   ESP32-S3, no display: BLE in, MQTT out
+  panel/                    reserved: ESP32-S3 + touchscreen, MQTT in only
+
+spec/                       Cross-language contracts, checked in CI
+  api_contract.json         Python signature freeze
+  protocol_vectors.json     Python <-> C byte vectors
+  mqtt.json                 bridge <-> consumer contract
+
+docs/                       API, protocol notes, this file, hardware guides
+integrations/               reserved: Home Assistant, Node-RED, ESPHome
 ```
 
-The library modules currently sit at the repository root, with `tests/` and `tools/` alongside
-them. Moving them into the layout above would break every published import, so it lands in phase 2
-as a single change — no gradual migration.
+### Why the panel is an application, not a module
+
+The heater accepts one BLE connection. If a wall panel talked to it directly it would evict the
+bridge, need the pairing window at the heater's front panel, and carry a second copy of the
+protocol. So the split is:
+
+```
+heater --BLE--> bridge --MQTT--> panel (any floor)
+                          `---> Home Assistant / Mi Home / Node-RED
+```
+
+- `firmware/panel` may not link `firmware/bridge` or `firmware/components` — the boundary is
+  checked by a CI job that greps for such an include
+- `firmware/components` may not depend on any application
+- the only shared artefact is `spec/mqtt.json`: the bridge publishes against it, consumers
+  render from it, and `python/tests/test_mqtt_contract.py` fails if a field named there stops
+  existing on `DeviceState`
+
+### Why `import bosch_api` did not move
+
+The library sits in `python/`, but `pyproject.toml` sets `package-dir = {"" = "python"}`, so the
+import name stays flat and `spec/api_contract.json` stays valid. A layout change must never be a
+breaking change.
+
+### What the layout still anticipates
+
+| Future | Where it lands | What it may touch |
+|---|---|---|
+| ESP-IDF migration | `firmware/bridge/` (same directory, new build) | nothing outside it |
+| `bosch_proto` extracted from `main.cpp` | `firmware/components/bosch_proto/` | bridge links it; panel still must not |
+| Home Assistant integration | `integrations/homeassistant/` | `spec/mqtt.json` only |
+| A third controller (knob, e-ink) | `firmware/<name>/` | `spec/mqtt.json` only |
 
 ---
 
@@ -182,9 +248,10 @@ as a single change — no gradual migration.
 
 | Phase | Content | Exit criteria |
 |---|---|---|
-| **0 · done** | Protocol work, Python reference implementation, test suite (136 tests), ESP32 feasibility firmware | Regression green; firmware boots |
-| **1 · current** | Real-heater verification → provisioning/pairing module → MQTT Discovery | All three log stages pass (SMP / A2 / A0); HA discovers the entities |
-| **2** | Move to ESP-IDF, OTA, watchdog, hardened reconnection, repository restructure | Seven days without a drop; OTA rollback works |
+| **0 · done** | Protocol work, Python reference implementation, test suite, ESP32 feasibility firmware | Regression green; firmware boots |
+| **1 · done** | Real-heater verification (SMP / A2/07 / A2/08 / A0), runtime pairing code, power-cycle recovery, repository restructured for multiple applications | All three log stages pass on hardware; 145 tests green |
+| **2 · current** | `bosch_proto` extracted into `firmware/components`, MQTT publishing against `spec/mqtt.json`, HA discovery | A panel can be built against the contract with no bridge changes |
+| **3** | Move to ESP-IDF, OTA, watchdog; touch panel in `firmware/panel`; ESPHome component | Seven days without a drop; OTA rollback works; second application shipped |
 | **3** | Optional ESPHome external component, field mapping for more models, more language bindings | At least two models verified by the community |
 
 ---
@@ -208,3 +275,4 @@ as a single change — no gradual migration.
 | Date | Change |
 |---|---|
 | 2026-11-07 | First version: layers, six ADRs, target layout, roadmap, risk table |
+| 2026-11-08 | Layout restructured by role (ADR-007): `python/`, `firmware/{components,bridge,panel}`, `spec/`, `integrations/`; `spec/mqtt.json` added as the bridge/consumer contract; 136 -> 145 tests |
