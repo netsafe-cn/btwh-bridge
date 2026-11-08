@@ -36,7 +36,11 @@ def diagnose(text: str) -> list[tuple[str, str, str]]:
     # ---- layer 1: BLE link and SMP
     smp_ok = bool(re.search(r"authentication complete.*link encrypted", text))
     pin_asked = "asks for the PIN" in text or "PROVIDE_PIN" in text
-    smp_fail = bool(re.search(r"authentication complete.*not encrypted|SMP.*fail", text))
+    # Anchored on the real line: the boot banner's own hint - "watch [SMP]/[AUTH]/[A0]; on
+    # failure read a new code" - contains both "SMP" and "fail" and used to make every log look
+    # like a PIN-stage failure, including logs where no pairing was ever attempted.
+    smp_fail = bool(re.search(r"authentication complete: not encrypted|^\[[^\]]*\]\s*\[SMP[^\]]*\].*fail",
+                              text, re.M))
     connected = bool(re.search(r"\[CONN\]|link established|Connected", text, re.I))
 
     if smp_ok:
@@ -74,13 +78,15 @@ def diagnose(text: str) -> list[tuple[str, str, str]]:
             out.append(("AUTH/A2-07", "? reply %s: undefined" % last07,
                         "record the value and report it; possibly new firmware"))
     else:
-        # Measured 2026-11-08: after an abrupt reset of the bridge the heater came up at SMP,
-        # accepted both CCCDs, then never answered A2/07 and dropped the link ~12 s later. It
-        # kept doing that for minutes afterwards. Nothing local was wrong - it wanted a new code.
-        if re.search(r"link is down|\(link_failed\)", text):
-            advice = ("the heater accepted the link and then hung up without answering: it is "
-                      "not accepting this session. Clear pairing on the panel, read a new code "
-                      "and enter it while the window is open")
+        # Measured 2026-11-08 14:58 -> 15:15: after an abrupt reset of the bridge the heater came
+        # up at SMP, accepted both CCCDs, then never answered A2/07 and hung up ~12 s later; later
+        # it would not connect at all. Retries every 2-3 minutes did not help. It recovered on its
+        # own after ~15 minutes with the SAME stored code and no panel action. So the advice is to
+        # stop touching it - sending the user to clear pairing sends them to the wrong place.
+        if re.search(r"link is down|\(link_failed\)|cannot connect", text):
+            advice = ("the heater is refusing sessions, not the code. Stop retrying and leave it "
+                      "alone for 10-15 min: measured, a bridge reset left it refusing that long and "
+                      "then the same stored code worked with no panel action")
         else:
             advice = "if SMP passed this is usually enumeration; check FIFO/CREDITS"
         out.append(("AUTH/A2-07", "- no reply", advice))
@@ -100,7 +106,9 @@ def diagnose(text: str) -> list[tuple[str, str, str]]:
                     "confirm the six digits reached the serial console"))
 
     # ---- layer 3: state broadcast
-    a0_hits = len(re.findall(r"\[A0\]", text))
+    # `[A0] T1` / `[A0] T0` is what a parsed broadcast starts with. A bare "[A0]" also appears in
+    # the boot banner's hint line, which used to count as one received frame in every log.
+    a0_hits = len(re.findall(r"\[A0\] T\d", text))
     if a0_hits:
         out.append(("A0", "+ %d state frames received" % a0_hits,
                     "expect flow 0-11 L/min, power 0-50%, fan 700-1500 rpm;"
@@ -149,7 +157,7 @@ def main() -> int:
     # The verdict must rest on A2/08=01 (application auth), never on A2/07 - measured:
     # A2/07=01 only means the MAC is registered, and A2/08 can still be rejected.
     ok = (bool(re.search(r"A2/08\s*reply\s*=\s*01", text))
-          and "[A0]" in text)
+          and bool(re.search(r"\[A0\] T\d", text)))
     print("overall: %s" % ("+ all three criteria met, link verified" if ok
                        else "x not working yet; follow the first x above"))
     return 0 if ok else 2

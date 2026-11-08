@@ -27,6 +27,14 @@ observed on real hardware unless marked otherwise. Protocol detail lives in
   authorised.
 - **Three consecutive connection failures trigger device-side rate limiting**, recovering after
   about 3 minutes. Do not retry in a tight loop.
+- **An abrupt reset of the bridge can leave the heater refusing sessions for ~15 minutes, and
+  retrying makes it feel worse.** Measured 2026-11-08 14:58 → 15:15: after the board restarted
+  under a live link, the heater accepted the connection, completed SMP, accepted both CCCDs, then
+  never answered `A2/07` and hung up 12 s later; by 15:11 it would not even connect (`cannot
+  connect` in 1 s). Retries at 15:03, 15:06, 15:08 and 15:11 all failed. At 15:15 — with **the
+  same stored code and no panel action** — `A2/07=01` and `A2/08=01` came straight back and the
+  stream resumed. Corollary: never read this signature as "the code is stale". The fix is to stop
+  touching it and wait, which is why the bridge needs a backoff supervisor rather than a retry loop.
 - **A0 offsets** were calibrated against 148 frames captured 2026-11-01. Type0 and Type1 differ
   except for the temperatures. See `docs/BLE_PROTOCOL.md` §6.
 - **`D7` first byte `0xEA` is a status byte, not a fault code.** The app showed no fault history
@@ -34,9 +42,12 @@ observed on real hardware unless marked otherwise. Protocol detail lives in
 
 ## Current firmware state
 
-- v2.0: runtime pairing code over serial, persisted in NVS, automatic reconnect after power loss.
+- v2.1: layered into `proto/` / `ble/` / `auth/` / `app/`, runtime pairing code over serial,
+  persisted in NVS, automatic reconnect after power loss.
 - Verified on hardware: SMP encryption → `A2/07` → `A2/08=01` → steady `A0` stream, and
   unattended recovery after a reboot.
+- Steady-state baseline (2026-11-08 15:15-15:24, panel log): **101 `A0` frames in 8.6 minutes**,
+  interval min 3 s / median 4 s / max 9 s, no gap over 10 s, no dropped checksums, no link drop.
 - `selftest` runs the golden vectors on the board (framing, stuffing, XOR, checksum, reassembly,
   A0 fields).
 
@@ -52,6 +63,11 @@ observed on real hardware unless marked otherwise. Protocol detail lives in
 
 - `github.com` is intermittently unreachable here (TLS handshake failures, 502 from the local
   proxy). `api.github.com` is reliable. Push retries are normal, not a sign of a bad commit.
-- The Python that runs the tests is a bundled 3.13 build **without tkinter**, so
-  `python/tools/bosch_ui.py` cannot open a window here. The ESP32 control panel tools use pyserial
-  only and work.
+- **Two Pythons.** The one first on `PATH` inside a bash tool call is a bundled 3.13.12 **without
+  tkinter**, so every GUI tool (`python/tools/bosch_ui.py`, `firmware/bridge/tools/esp32_panel.py`)
+  dies silently under it — the `.bat` falls back to terminal mode, which looks like "the panel is
+  broken". Use `C:\Users\LZY\AppData\Local\Programs\Python\Python313\python.exe` (3.13.16,
+  tkinter 8.6, pyserial 3.5). Both interpreters have pyserial.
+- **A GUI started from an agent tool call does not survive that call.** `Start-Process` children
+  are reaped when the invocation returns; the window appears, writes a line or two, then vanishes.
+  Verified on 2026-11-08. The user must launch the panel themselves.

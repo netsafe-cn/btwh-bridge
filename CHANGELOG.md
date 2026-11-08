@@ -69,8 +69,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   arduino-cli and to PlatformIO.
 - `log_diag.py` misdiagnosed the state measured on 2026-11-08: link up, both CCCDs subscribed,
   `A2/07` silent, then the heater hangs up ~12 s later. It blamed GATT enumeration. It now
-  recognises the signature and says what actually fixes it — clear pairing on the panel and enter
-  a fresh code while the window is open. This is *not* the `A2/07 = 00` case; there was no reply
+  recognises the signature and gives the advice the measurements actually support — stop retrying
+  and leave the device alone for 10-15 minutes. The first version of this advice told the user to
+  clear pairing and enter a new code; that was wrong, and the same stored code authorised
+  afterwards with no panel action. This is also *not* the `A2/07 = 00` case: there was no reply
   at all.
 
 ### Planned
