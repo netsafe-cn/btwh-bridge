@@ -16,6 +16,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `net` self test, run by the same `selftest` command as `proto`: 16 checks covering the whole
   payload byte for byte against a golden string the generator rendered, `ts` omission when there
   is no clock, `fault` as `"none"`/`"E1"`, every `mode` word, and the rounding rule.
+- Provisioning. SoftAP + captive DNS + one HTML form that takes the heater (picked from a
+  `BTWH-*` scan), the Wi-Fi network, the six-digit panel code and the broker in a single
+  submit; input is validated **before** anything reaches the radio, because a malformed attempt
+  still spends one of the heater's three failures. `portal` serves the same page on the LAN
+  address when the board is already online, so re-pairing does not require anything to leave its
+  current network. Wi-Fi credentials added to `Config` with `saveNetwork()` / `wipe()`.
+- `wifi <ssid> <password>` and boot auto-join: a board that has credentials in NVS rejoins the
+  network at every boot, after the heater session is up. Without it a power cut needed a human.
+- Station Wi-Fi + SNTP (`net/station.cpp`): 15 s join budget with a named failure, CN NTP pool
+  with the global pool as fallback, UTC throughout. `ts` joins the payload as soon as the clock
+  answers and stays absent until then, per `consumer_rules[0]`.
 - `mqtt` serial command — prints the payload for the **live** state, so the exact bytes can be
   inspected before any broker exists. First run with real data:
   `{"temp_out":28.0,...,"flame":false,"mode":"idle","fault":"none"}` (no `ts`, correctly).
