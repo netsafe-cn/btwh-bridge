@@ -209,6 +209,36 @@ int scan(ScanEntry* out, int maxEntries, uint8_t seconds) {
   return n;
 }
 
+int scanHeaters(ScanEntry* out, int maxEntries, uint8_t seconds) {
+  // The provisioning page needs "which heaters are in range", not "every phone and TV nearby".
+  // The heater advertises a fixed name pattern (docs/BLE_PROTOCOL.md section 1:
+  // BTWH-001-xxxx). Filter on it, then sort by signal so the nearest heater is the first
+  // radio button - most of the time that is the one plugged in next to the bridge.
+  ScanEntry all[24];
+  int total = scan(all, (int)(sizeof(all) / sizeof(all[0])), seconds);
+  if (total < 0) total = 0;
+
+  int n = 0;
+  for (int i = 0; i < total && n < maxEntries; i++) {
+    if (strncmp(all[i].name, "BTWH-", 5) != 0) continue;
+    out[n++] = all[i];
+  }
+
+  // Insertion sort by RSSI, strongest first. n is at most a handful, so O(n^2) is honest here.
+  for (int i = 1; i < n; i++) {
+    ScanEntry key = out[i];
+    int j = i - 1;
+    while (j >= 0 && out[j].rssi < key.rssi) { out[j + 1] = out[j]; j--; }
+    out[j + 1] = key;
+  }
+
+  Serial.printf("[SCAN] %d heater(s) in range (BTWH-*)\n", n);
+  for (int i = 0; i < n; i++) {
+    Serial.printf("[SCAN]   %d. %s  %s  RSSI %d\n", i + 1, out[i].name, out[i].addr, out[i].rssi);
+  }
+  return n;
+}
+
 bool parseMac(const char* text, uint8_t out[6]) {
   int v[6] = {0}, n = 0;
   const char* p = text;

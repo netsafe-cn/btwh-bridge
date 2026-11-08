@@ -63,6 +63,10 @@ bool send(uint8_t recv, uint8_t cmd, const uint8_t* data, size_t dlen);
 // Active scan for `seconds`. Returns the number of entries written to `out`.
 int scan(ScanEntry* out, int maxEntries, uint8_t seconds);
 
+// Same radio time, but only heaters (advertised name starts with "BTWH-"), sorted strongest
+// signal first. This is what the provisioning page offers as choices. Returns the count.
+int scanHeaters(ScanEntry* out, int maxEntries, uint8_t seconds);
+
 // Address helpers shared by the console and the link. Both accept ':' or '-' separators.
 bool   parseMac(const char* text, uint8_t out[6]);
 void   formatMac(const uint8_t mac[6], char out[18]);
