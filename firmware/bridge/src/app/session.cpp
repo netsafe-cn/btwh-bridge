@@ -27,6 +27,9 @@ volatile uint32_t gA0Count = 0;
 
 uint32_t gSessionStart = 0;
 
+proto::A0State gLastState{};
+bool          gHaveState = false;
+
 void banner(const char* s) { Serial.printf("\n===== %s =====\n", s); }
 
 // ---------------------------------------------------------------- auth transport
@@ -235,9 +238,17 @@ Status status() {
 void setRawDump(bool on) { gRaw = on; }
 bool rawDump() { return gRaw; }
 
+bool lastState(proto::A0State& out) {
+  if (!gHaveState) return false;
+  out = gLastState;
+  return true;
+}
+
 void onState(const uint8_t* payload, size_t len) {
   gA0Count++;
-  printA0(proto::parseA0(payload, len));
+  gLastState = proto::parseA0(payload, len);
+  gHaveState = true;
+  printA0(gLastState);
   if (gRaw) {
     Serial.print("     raw=");
     for (size_t i = 0; i < len; i++) Serial.printf("%02x ", payload[i]);

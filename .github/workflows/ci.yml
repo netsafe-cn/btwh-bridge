@@ -115,6 +115,9 @@ jobs:
       - name: generated vectors match the spec
         shell: bash
         run: python firmware/bridge/tools/gen_vectors.py --check
+      - name: generated MQTT contract matches the spec
+        shell: bash
+        run: python firmware/bridge/tools/gen_mqtt.py --check
       - name: every contract file is valid JSON
         shell: bash
         run: |

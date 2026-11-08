@@ -37,6 +37,7 @@
 #include "app/session.h"
 #include "auth/login.h"
 #include "ble/link.h"
+#include "net/state_json.h"
 #include "proto/a0.h"
 #include "proto/frame.h"
 #include "proto/selftest.h"
@@ -82,17 +83,54 @@ static void onSecurity(void* /*ctx*/, bool encrypted, bool bonded) {
 // same test run on a host later without dragging in Arduino.
 static void serialLine(void* /*ctx*/, const char* line) { Serial.println(line); }
 
-static void doSelfTest() {
-  proto::SelfTestResult r = proto::runSelfTest(serialLine, nullptr);
-  if (r.failed == 0) {
-    Serial.printf("[TEST] proto self test passed: %d checks\n", r.total);
+static void reportTest(const char* layer, int total, int failed) {
+  if (failed == 0) {
+    Serial.printf("[TEST] %s self test passed: %d checks\n", layer, total);
   } else {
-    Serial.printf("[TEST] proto self test FAILED: %d of %d checks\n", r.failed, r.total);
+    Serial.printf("[TEST] %s self test FAILED: %d of %d checks\n", layer, failed, total);
   }
 }
 
-static void doScan() {
-  if (ble::isConnected()) {
+static void doSelfTest() {
+  // Both layers keep their own suite. proto/ owns the wire format, net/ owns the bytes that
+  // leave over MQTT; neither can check the other's job.
+  proto::SelfTestResult p = proto::runSelfTest(serialLine, nullptr);
+  net::SelfTestResult   n = net::runSelfTest(serialLine, nullptr);
+  reportTest("proto", p.total, p.failed);
+  reportTest("net", n.total, n.failed);
+}
+
+// Prints exactly what would go out on the state topic, built from the last real broadcast.
+// This is how net/ gets checked today: the same code path MQTT will use, no broker required.
+static void printMqttPayload() {
+  proto::A0State st;
+  if (!app::lastState(st)) {
+    Serial.println("[MQTT] no state yet: waiting for an A0 frame");
+    return;
+  }
+  net::Snapshot s;
+  s.temp_out     = st.temp_out;
+  s.temp_in      = st.temp_in;
+  s.chamber      = st.chamber;
+  s.temp_box     = st.temp_box;
+  s.setpoint     = st.setpoint;
+  s.water_flow   = st.water_flow;
+  s.burner_power = st.burner_power;
+  s.fan_speed    = st.fan_speed;
+  s.flame        = st.flame;
+  s.mode         = st.mode;
+  s.fault        = st.fault;
+  s.ts           = 0;          // no clock until Wi-Fi + SNTP; the key is then left out
+
+  char payload[384];
+  if (net::buildStateJson(payload, sizeof(payload), s) == 0) {
+    Serial.println("[MQTT] payload does not fit the buffer");
+    return;
+  }
+  Serial.printf("[MQTT] %s\n", payload);
+}
+
+static void doScan() {  if (ble::isConnected()) {
     Serial.println("[SCAN] already connected; disconnecting first");
     ble::disconnect();
     delay(300);
@@ -130,6 +168,7 @@ static void printHelp() {
   Serial.println("  addr AA:BB:...    set the heater BLE address");
   Serial.println("  status            print configuration and runtime state");
   Serial.println("  selftest          run the golden protocol vectors on the board");
+  Serial.println("  mqtt              print the payload this state would publish");
   Serial.println("  raw on / raw off  show / hide raw A0 bytes");
   Serial.println("  reboot            reboot");
   Serial.println("  help              this help");
@@ -174,6 +213,7 @@ static void handleCommand(String line) {
   if (low == "help" || low == "?")  { printHelp(); return; }
   if (low == "status")              { printStatus(); return; }
   if (low == "selftest")            { doSelfTest(); return; }
+  if (low == "mqtt")                { printMqttPayload(); return; }
   if (low == "scan")                { doScan(); return; }
   if (low == "go")                  { app::start(false); return; }
   if (low == "pair")                { app::start(true); return; }

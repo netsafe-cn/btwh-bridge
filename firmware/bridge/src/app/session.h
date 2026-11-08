@@ -15,6 +15,7 @@
 
 #include "app/config.h"
 #include "auth/login.h"
+#include "proto/a0.h"
 
 namespace app {
 
@@ -57,6 +58,11 @@ Status status();
 
 void setRawDump(bool on);
 bool rawDump();
+
+// The last parsed broadcast, for anything above app/ that wants to render it (the `mqtt`
+// console command does exactly that). False until the first frame arrives. Deliberately
+// returns the protocol structure, not an MQTT snapshot: app/ must not depend on net/.
+bool lastState(proto::A0State& out);
 
 // Hooks installed on the link, called from the NimBLE task.
 void onState(const uint8_t* payload, size_t len);

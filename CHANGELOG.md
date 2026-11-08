@@ -9,6 +9,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `firmware/bridge/src/net/` — the layer that will speak MQTT, started with the part that does
+  not need a network: `mqtt_contract.h` is **generated** from `spec/mqtt.json`
+  (`tools/gen_mqtt.py`, `--check` in CI), and `state_json.cpp` renders the payload from a plain
+  snapshot. No Arduino, no NimBLE, no MQTT library, so the bytes can be checked off-target.
+- `net` self test, run by the same `selftest` command as `proto`: 16 checks covering the whole
+  payload byte for byte against a golden string the generator rendered, `ts` omission when there
+  is no clock, `fault` as `"none"`/`"E1"`, every `mode` word, and the rounding rule.
+- `mqtt` serial command — prints the payload for the **live** state, so the exact bytes can be
+  inspected before any broker exists. First run with real data:
+  `{"temp_out":28.0,...,"flame":false,"mode":"idle","fault":"none"}` (no `ts`, correctly).
+- Number formatting is now fixed by the contract, not by each implementation: **half away from
+  zero**. Python's `"%.1f"` is half-to-even, which would have made 42.25 render as `42.2` on the
+  host and `42.3` on the bridge; a self-test case pins the rule down.
 - `firmware/bridge/src/proto/` — the protocol layer as its own directory, with no Arduino and no
   NimBLE include. `frame.{h,cpp}` holds framing, stuffing, per-fragment XOR, checksum and stream
   reassembly; `a0.{h,cpp}` turns a broadcast into an `A0State`. Parsing is now separate from

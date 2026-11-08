@@ -24,17 +24,23 @@ python firmware/bridge/tools/gateway_cli.py            # console only, no rebuil
   than the name, and the build fails with `redefinition of 'struct app::Config'`. Measured, not
   theoretical: it cost two 15-minute builds to find.
 
-## Before you touch protocol code
+## Before you touch protocol or payload code
 
 ```bash
 python run_tests.py                                        # Python side
-python firmware/bridge/tools/gen_vectors.py                # after changing spec/*.json
-# then flash and type: selftest                            # the same vectors, on the board
+python firmware/bridge/tools/gen_vectors.py                # after changing spec/protocol_vectors.json
+python firmware/bridge/tools/gen_mqtt.py                   # after changing spec/mqtt.json
+# then flash and type: selftest                            # both suites, on the board
 ```
 
-`selftest` is the only automated check that runs on the target. It covers framing, stuffing,
-per-fragment XOR, checksum, stream reassembly and every A0 field with a vector. It does **not**
-cover anything that needs the heater.
+`selftest` is the only automated check that runs on the target, and it runs two suites:
+
+- **proto** — framing, stuffing, per-fragment XOR, checksum, stream reassembly, every A0 field
+- **net** — the exact MQTT payload bytes for a known snapshot, `ts` omission, fault hex, mode
+  words, and the rounding rule
+
+Neither covers anything that needs the heater. `mqtt` prints the payload for the *live* state, so
+the same code path can be inspected over serial before a broker exists.
 
 ## Layer rules (ADR-008)
 
@@ -44,7 +50,12 @@ cover anything that needs the heater.
 | `src/ble/` | NimBLE, `proto/` | pairing semantics, MQTT |
 | `src/auth/` | `proto/` reply codes + a send/wait/log callback | NimBLE types, Arduino, `Serial` |
 | `src/app/` | ble, auth, proto, NVS | MQTT topics |
-| `src/net/` | app state, generated contract | frame bytes |
+| `src/net/` | app state, generated contract (`mqtt_contract.h`) | frame bytes, NimBLE |
+
+`src/net/` is the mirror image of `src/proto/`: it may not include Arduino or NimBLE either, so
+the payload it produces can be checked byte for byte by the on-board self test today and by a
+host compiler later. Its constants are generated from `spec/mqtt.json`; never retype a topic
+into firmware.
 
 `src/proto/` must stay free of Arduino includes — that is the only reason it can be tested on a
 PC later, and it is checked by review, not by CI (yet). `src/auth/` is the same story one level
