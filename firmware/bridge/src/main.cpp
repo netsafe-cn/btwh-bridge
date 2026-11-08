@@ -38,6 +38,7 @@
 #include "auth/login.h"
 #include "ble/link.h"
 #include "net/portal.h"
+#include "net/station.h"
 #include "net/state_json.h"
 #include "proto/a0.h"
 #include "proto/frame.h"
@@ -51,9 +52,8 @@ static String      gSerialLine;
 static void banner(const char* s) { Serial.printf("\n===== %s =====\n", s); }
 
 // ---------------------------------------------------------------- provisioning
-// What the portal calls once the form is validated and stored. Runs after the AP is down.
-// Wi-Fi connecting and MQTT come later; what exists today is the pairing path, driven by the
-// code from the form exactly as if it had been typed into the console.
+// What the portal calls once the form is validated and stored. Runs after the AP is down:
+// join the network the form named, then, when a code was given, run the pairing attempt.
 static const char* onProvisioned(void* /*ctx*/, const net::ProvisionRequest& r) {
   strncpy(gCfg.heater, r.heater, sizeof(gCfg.heater) - 1);
   gCfg.heater[sizeof(gCfg.heater) - 1] = 0;
@@ -69,6 +69,9 @@ static const char* onProvisioned(void* /*ctx*/, const net::ProvisionRequest& r) 
   }
   gCfg.save();
   gCfg.saveNetwork();
+
+  bool wifiOk = net::stationConnect(gCfg.ssid, gCfg.wifiPass);
+  if (!wifiOk) return "saved, but the Wi-Fi would not join - reopen the portal and retype it";
 
   if (!gCfg.pinValid()) return "saved (no code given; Wi-Fi only)";
   return app::start(false) ? "paired" : "pairing failed - see the serial log";
@@ -145,7 +148,7 @@ static void printMqttPayload() {
   s.flame        = st.flame;
   s.mode         = st.mode;
   s.fault        = st.fault;
-  s.ts           = 0;          // no clock until Wi-Fi + SNTP; the key is then left out
+  s.ts           = net::nowEpoch();   // 0 = clock not synced; the key is then left out
 
   char payload[384];
   if (net::buildStateJson(payload, sizeof(payload), s) == 0) {
@@ -221,6 +224,10 @@ static void printStatus() {
   Serial.printf("  A2/07=%d  A2/08=%d  A0 frames=%u  raw=%s\n",
                 s.reply07, s.reply08, (unsigned)s.a0Count, s.raw ? "on" : "off");
   Serial.printf("  last       : %s\n", auth::reasonText(s.lastResult));
+  Serial.printf("  wifi       : %s  ssid=%s\n",
+                net::stationUp() ? "up" : "down", gCfg.ssid[0] ? gCfg.ssid : "(none)");
+  Serial.printf("  clock      : %s\n",
+                net::nowEpoch() ? "synced" : "not synced (ts omitted)");
 }
 
 static void handleCommand(String line) {
