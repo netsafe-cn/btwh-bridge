@@ -19,6 +19,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Verified on hardware, 60 checks.
 - `tools/gen_vectors.py` — generates `src/proto/vectors_gen.h` from the JSON contract.
   `--check` fails when the header is stale, so the two cannot drift.
+- `tools/watch_a0.py` — prints the A0 broadcast as a table with per-field ranges. Answers "is
+  the data alive and following the heater", which `log_diag.py` (connection failures) does not.
+  Optional `--csv` and `--only-active`.
 - `AGENTS.md` and `MEMORY.md` — build commands, layer rules, and the facts that were expensive to
   establish (the panel code is also the SMP passkey; `A2/07=00` means the window is closed, not
   that the MAC is unauthorised; three failures trigger a three-minute rate limit).
