@@ -281,6 +281,44 @@ side has shipped is a second place to make the same mistake.
 
 ---
 
+### ADR-010 A hand-written MQTT 3.1.1 subset, polled from `loop()`
+
+**Context**: the bridge needs to publish a snapshot, a retained availability flag and a will, and
+to receive two topics. The obvious move is a library: PubSubClient, arduino-mqtt or
+async-mqtt. All three bring their own decisions about buffering, callbacks and task context.
+
+**Decision**: implement the packets this project uses in `net/mqtt_wire.cpp` (pure C++, no
+Arduino) and keep the socket glue in `net/mqtt_client.cpp`, polled from `loop()`.
+
+**Reasons**:
+
+- The contract fixes the will, the retain flags, the publish cadence and QoS 0. A library's
+  defaults are the part that would have to be re-checked on every upgrade; ours are the only
+  option.
+- `mqtt_wire.cpp` has no I/O, so `selftest` checks the packet bytes on the board — including a
+  packet arriving one byte at a time and a two-byte remaining length, which is where hand-rolled
+  parsers usually break.
+- Polling keeps all connection state in one place. A task would need a mutex around every
+  `Snapshot` hand-off, and the BLE callback already runs in the NimBLE task; adding a second
+  concurrent writer for a 200-byte payload is not a trade worth making.
+- No new dependency means no version pin to police alongside `esp32@2.0.17` and
+  `NimBLE@1.4.3`, both of which are already pinned for good reasons.
+
+**Cost**, stated plainly: about 500 lines to maintain; no TLS, no QoS 2, no MQTT 5 properties;
+broker quirks are ours to find. The self test is what makes that acceptable, and the limits are
+listed in `docs/MQTT.md` §5 rather than discovered by a user.
+
+**Related decision**: the Home Assistant discovery documents are **generated** from
+`spec/mqtt.json` (`tools/gen_ha.py`) rather than written by hand. Eleven entities across nine
+state fields is exactly the size at which one renamed key silently breaks one entity, and a
+generated table cannot disagree with the contract.
+
+**Rejected**: PubSubClient (fixed 256-byte buffer, global client state, callbacks that fight the
+loop); async-mqtt (its own task and queue — see above); publishing only on change (a diff needs a
+second copy of the snapshot, and a stale `ts` is a useful signal that "no change" hides).
+
+---
+
 ## 3. Repository layout
 
 Landed in 0.2.0. The repository is a monorepo split by **role**, not by file type: an
@@ -376,3 +414,4 @@ breaking change.
 | 2026-11-07 | First version: layers, six ADRs, target layout, roadmap, risk table |
 | 2026-11-08 | Firmware layering (ADR-008) and the repository-split criteria (ADR-009); the panel stays in-repo until it earns its own release cadence |
 | 2026-11-08 | Layout restructured by role (ADR-007): `python/`, `firmware/{components,bridge,panel}`, `spec/`, `integrations/`; `spec/mqtt.json` added as the bridge/consumer contract; 136 -> 145 tests |
+| 2026-11-09 | MQTT client and Home Assistant discovery (ADR-010); `net/` grows `mqtt_wire`, `mqtt_client`, `discovery` plus two self-test suites; 145 -> 157 tests |

@@ -68,6 +68,13 @@ bool lastState(proto::A0State& out);
 // scan cannot run - net/ may read app state, never the other way round.
 const char* configuredHeater();
 
+// Writes the setpoint over the live link (command D3, parameters 02/55).
+//
+// Returns false when there is no authorised link or the value is outside 35..60 C. The reply
+// is not awaited on purpose: the next A0 broadcast carries the authoritative setpoint, so the
+// consumer sees what the heater accepted rather than what we asked for.
+bool setSetpoint(int celsius);
+
 // Hooks installed on the link, called from the NimBLE task.
 void onState(const uint8_t* payload, size_t len);
 void onLoginReply(uint8_t sub, uint8_t value);

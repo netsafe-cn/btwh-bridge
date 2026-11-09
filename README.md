@@ -28,10 +28,10 @@ apart silently.
 
 | Component | State | Notes |
 |---|---|---|
-| Python library `bosch_api` | ✅ Ready | **145** offline tests green; signature-freeze contract + golden vectors |
+| Python library `bosch_api` | ✅ Ready | **157** offline tests green; signature-freeze contract + golden vectors |
 | Desktop console / Mi Home bridge | ✅ Ready | tkinter GUI + Bemfa cloud |
 | ESP32-S3 gateway firmware v2 | ✅ Verified | Real-device link-up: SMP encryption → `A2/07` → `A2/08=01` → steady `A0` stream; auto-recovers after power cycle |
-| MQTT / Home Assistant auto-discovery | ⏳ Planned | See [architecture](docs/ARCHITECTURE.md) |
+| MQTT / Home Assistant auto-discovery | 🟡 Built, not yet run on hardware | Client + 11 discovery entities; see [MQTT.md](docs/MQTT.md) |
 | Wi-Fi provisioning (Improv) | 📐 Spec done | Defined by `python/device_fsm.py` + [API.md §9](docs/API.md) |
 
 ---
@@ -285,7 +285,7 @@ change is a patch, minor or major bump live in
 │
 ├── docs/                       API.md, BLE_PROTOCOL.md, ARCHITECTURE.md, hardware/
 ├── integrations/               Reserved: Home Assistant, Node-RED, ESPHome
-├── run_tests.py                One command, 145 tests, fully offline
+├── run_tests.py                One command, 157 tests, fully offline
 ├── pyproject.toml              Packaging metadata (`pip install .`)
 ├── config.example.json         Config template (contains no real data)
 ├── CHANGELOG.md  CONTRIBUTING.md  SECURITY.md  CODE_OF_CONDUCT.md  LICENSE

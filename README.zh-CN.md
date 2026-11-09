@@ -22,10 +22,10 @@ ESP32 C++ 实现，三者用同一组十六进制向量对齐，防止两端实�
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
-| Python 协议库 `bosch_api` | ✅ 可用 | **145 项**回归全绿，含签名冻结契约与黄金向量 |
+| Python 协议库 `bosch_api` | ✅ 可用 | **157 项**回归全绿，含签名冻结契约与黄金向量 |
 | 桌面控制台 / 米家桥接 | ✅ 可用 | tkinter GUI + 巴法云 |
 | ESP32-S3 网关固件 v2 | ✅ 已验证 | 实机连通通过：SMP 加密 → `A2/07` → `A2/08=01` → `A0` 稳定刷帧；断电重启自动恢复 |
-| MQTT / Home Assistant 自动发现 | ⏳ 计划中 | 见 [架构与路线图](docs/ARCHITECTURE.md) |
+| MQTT / Home Assistant 自动发现 | 🟡 代码完成，未上板验证 | 客户端 + 11 个发现实体，见 [MQTT.md](docs/MQTT.md) |
 | 配网（Improv WiFi） | 📐 契约已定 | 以 `python/device_fsm.py` + [API.md §9](docs/API.md) 为准 |
 
 ---
@@ -246,7 +246,7 @@ CI 覆盖 Linux + Windows × Python 3.11/3.12，另有一个 job 检查 `config.
 │   ├── bemfa.py                巴法云客户端（米家通道）
 │   ├── boschlog.py             日志：轮转文件 + 内存环形缓冲
 │   ├── singlelock.py           后台桥接的单实例锁
-│   ├── tests/                  ★ 145 项离线测试，自动发现
+│   ├── tests/                  ★ 157 项离线测试，自动发现
 │   └── tools/                  控制台、无界面桥接、采集、启动器
 │
 ├── firmware/                   一个应用一个目录，互不共享源码
@@ -261,7 +261,7 @@ CI 覆盖 Linux + Windows × Python 3.11/3.12，另有一个 job 检查 `config.
 │
 ├── docs/                       API.md、BLE_PROTOCOL.md、ARCHITECTURE.md、hardware/
 ├── integrations/               预留：Home Assistant、Node-RED、ESPHome
-├── run_tests.py                一条命令跑 145 项，全离线
+├── run_tests.py                一条命令跑 157 项，全离线
 ├── pyproject.toml              打包元数据（`pip install .`）
 ├── config.example.json         配置模板（不含任何真实信息）
 ├── CHANGELOG.md  CONTRIBUTING.md  SECURITY.md  CODE_OF_CONDUCT.md  LICENSE

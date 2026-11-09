@@ -14,6 +14,7 @@
 #include <stdint.h>
 
 #include "net/mqtt_contract.h"
+#include "net/selftest.h"
 
 namespace net {
 
@@ -46,14 +47,8 @@ size_t formatFixed(char* out, size_t cap, float value, uint8_t precision);
 const char* modeText(int mode);
 
 // ---------------------------------------------------------------- self test
-// Same shape as proto's: a log callback instead of Serial, so the test can run anywhere.
-typedef void (*LogFn)(void* ctx, const char* line);
-
-struct SelfTestResult {
-  int total;
-  int failed;
-};
-
+// Shape comes from net/selftest.h; the log callback replaces Serial so the test can run
+// anywhere.
 SelfTestResult runSelfTest(LogFn log, void* ctx);
 
 }  // namespace net

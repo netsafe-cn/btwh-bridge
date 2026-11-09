@@ -30,17 +30,22 @@ python firmware/bridge/tools/gateway_cli.py            # console only, no rebuil
 python run_tests.py                                        # Python side
 python firmware/bridge/tools/gen_vectors.py                # after changing spec/protocol_vectors.json
 python firmware/bridge/tools/gen_mqtt.py                   # after changing spec/mqtt.json
-# then flash and type: selftest                            # both suites, on the board
+python firmware/bridge/tools/gen_ha.py                     # after changing spec/mqtt.json
+# then flash and type: selftest                            # all four suites, on the board
 ```
 
-`selftest` is the only automated check that runs on the target, and it runs two suites:
+`selftest` is the only automated check that runs on the target, and it runs four suites:
 
 - **proto** — framing, stuffing, per-fragment XOR, checksum, stream reassembly, every A0 field
 - **net** — the exact MQTT payload bytes for a known snapshot, `ts` omission, fault hex, mode
   words, and the rounding rule
+- **mqtt** — CONNECT (with will, with credentials), PUBLISH/SUBSCRIBE bytes, a packet arriving one
+  byte at a time, a two-byte remaining length, and the malformed-length refusal
+- **discovery** — the `@DEV@` substitution, buffer refusals, and the golden topic/payload pair
 
-Neither covers anything that needs the heater. `mqtt` prints the payload for the *live* state, so
-the same code path can be inspected over serial before a broker exists.
+None of them covers anything that needs the heater. `mqtt` prints the payload for the *live*
+state, so the same code path can be inspected over serial before a broker exists. `broker
+<host[:port]>` starts the client; `status` shows why the last attempt failed.
 
 ## Layer rules (ADR-008)
 

@@ -246,6 +246,24 @@ bool lastState(proto::A0State& out) {
 
 const char* configuredHeater() { return gCfg ? gCfg->heater : ""; }
 
+bool setSetpoint(int celsius) {
+  if (gPhase != kRunning || !ble::isConnected()) {
+    Serial.println("[CMD] setpoint refused: no authorised link");
+    return false;
+  }
+  if (celsius < 35 || celsius > 60) {
+    Serial.printf("[CMD] setpoint %d refused: outside 35..60 C\n", celsius);
+    return false;
+  }
+
+  // Byte-identical to the Python reference (bosch_api.set_temperature): parameter type 02,
+  // parameter id 55, index 00, then the value in whole degrees.
+  const uint8_t data[4] = {0x02, 0x55, 0x00, (uint8_t)celsius};
+  const bool ok = ble::send(proto::kRecvBiz, proto::kCmdWriteParam, data, sizeof(data));
+  Serial.printf("[CMD] set %d C -> %s\n", celsius, ok ? "frame sent" : "send FAILED");
+  return ok;
+}
+
 void onState(const uint8_t* payload, size_t len) {
   gA0Count++;
   gLastState = proto::parseA0(payload, len);

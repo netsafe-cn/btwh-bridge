@@ -9,6 +9,38 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **MQTT client** (`net/mqtt_wire.cpp`, `net/mqtt_client.cpp`): a 3.1.1 subset written for this
+  project instead of a library, because the payload, the will and the backoff all have to match
+  the contract exactly and none of the Arduino clients expose them at that level. Publishes
+  `state` (retained, one per A0 frame), `attributes` (retained, on connect) and `availability`
+  (retained `online`; the **will** carries `offline`). Subscribes `set/temperature` and `cmd`.
+  Backoff 2 s → 60 s, keepalive 60 s with a ping at 25 s. Measured: not yet run on the board -
+  the code compiles and the wire format is self-tested, see "status" below.
+- **Home Assistant discovery**, generated from `spec/mqtt.json` by `tools/gen_ha.py` into
+  `ha_discovery_gen.h`: 11 entities (9 sensors, 1 number for the setpoint, 1 binary sensor for
+  the flame), each naming the same state topic, the same availability topic and a stable
+  `unique_id` derived from the device id. Republished retained on every connect, so deleting an
+  entity in HA and reconnecting the bridge is enough to get it back. `--check` in CI.
+- **BLE write path**: `app::setSetpoint()` sends `D3` with parameters `02 55 00 <value>`,
+  byte-identical to `bosch_api.set_temperature`. The reply is deliberately not awaited - the next
+  A0 broadcast carries the authoritative setpoint, so a consumer sees what the heater accepted.
+- `broker <host[:port]>` serial command, and `status` now prints the broker state and its last
+  failure reason. `broker` with no argument prints the address, `broker -` clears it.
+- `python/tools/mqtt_dev_broker.py` - anonymous amqtt broker for the development loop.
+- `python/tools/mqtt_watch.py` - watches `btwh/#` and prints state as a table; `--demo` publishes
+  the contract's golden payload as a fake bridge, so Home Assistant and the future touch panel can
+  be built while the heater is elsewhere.
+- `net` self test grew two suites: `mqtt` (33 checks on the packet bytes, including a packet
+  arriving one byte at a time and a two-byte remaining length) and `discovery` (12 checks,
+  including the golden topic/payload pair). `python/tests/test_ha_discovery.py` (7 tests) holds
+  the generated table to the contract. Total 157 offline tests.
+
+### Fixed
+
+- `net/state_json.h` no longer defines `SelfTestResult` / `LogFn` itself; they moved to
+  `net/selftest.h` so state_json, mqtt_wire and discovery can share one type without one
+  including another's header.
+
 - `firmware/bridge/src/net/` — the layer that will speak MQTT, started with the part that does
   not need a network: `mqtt_contract.h` is **generated** from `spec/mqtt.json`
   (`tools/gen_mqtt.py`, `--check` in CI), and `state_json.cpp` renders the payload from a plain

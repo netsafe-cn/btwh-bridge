@@ -38,6 +38,9 @@
 #include "auth/login.h"
 #include "ble/link.h"
 #include "net/portal.h"
+#include "net/discovery.h"
+#include "net/mqtt_client.h"
+#include "net/mqtt_wire.h"
 #include "net/station.h"
 #include "net/state_json.h"
 #include "proto/a0.h"
@@ -48,6 +51,12 @@ namespace pc = proto;
 
 static app::Config gCfg;
 static String      gSerialLine;
+
+// Last snapshot rendered for MQTT, kept so a heartbeat can be published between A0 frames
+// without rebuilding it from a stale struct.
+static net::Snapshot gSnap;
+static bool          gHaveSnap = false;
+static uint32_t      gLastA0   = 0;
 
 static void banner(const char* s) { Serial.printf("\n===== %s =====\n", s); }
 
@@ -120,23 +129,26 @@ static void reportTest(const char* layer, int total, int failed) {
 }
 
 static void doSelfTest() {
-  // Both layers keep their own suite. proto/ owns the wire format, net/ owns the bytes that
-  // leave over MQTT; neither can check the other's job.
-  proto::SelfTestResult p = proto::runSelfTest(serialLine, nullptr);
-  net::SelfTestResult   n = net::runSelfTest(serialLine, nullptr);
+  // Each layer keeps its own suite: proto owns the wire format, net owns the published bytes,
+  // net::mqtt owns the broker's packet format, and discovery owns the entity table. None of
+  // them can check another's job.
+  proto::SelfTestResult     p = proto::runSelfTest(serialLine, nullptr);
+  net::SelfTestResult       n = net::runSelfTest(serialLine, nullptr);
+  net::SelfTestResult       w = net::mqtt::runSelfTest(serialLine, nullptr);
+  net::SelfTestResult       d = net::discovery::runSelfTest(serialLine, nullptr);
   reportTest("proto", p.total, p.failed);
   reportTest("net", n.total, n.failed);
+  reportTest("mqtt", w.total, w.failed);
+  reportTest("discovery", d.total, d.failed);
 }
 
-// Prints exactly what would go out on the state topic, built from the last real broadcast.
-// This is how net/ gets checked today: the same code path MQTT will use, no broker required.
-static void printMqttPayload() {
+// Copies the last parsed broadcast into the shape net/ publishes. The only mapping between the
+// protocol struct and the MQTT snapshot lives here, in the board boundary, so net/ never has to
+// include proto/ and app/ never has to know a topic.
+static bool makeSnapshot(net::Snapshot& s) {
   proto::A0State st;
-  if (!app::lastState(st)) {
-    Serial.println("[MQTT] no state yet: waiting for an A0 frame");
-    return;
-  }
-  net::Snapshot s;
+  if (!app::lastState(st)) return false;
+
   s.temp_out     = st.temp_out;
   s.temp_in      = st.temp_in;
   s.chamber      = st.chamber;
@@ -149,13 +161,73 @@ static void printMqttPayload() {
   s.mode         = st.mode;
   s.fault        = st.fault;
   s.ts           = net::nowEpoch();   // 0 = clock not synced; the key is then left out
+  return true;
+}
 
+// Prints exactly what goes out on the state topic. This is how net/ is checked without a
+// broker: the same code path MQTT uses, one `mqtt` command away.
+static void printMqttPayload() {
+  net::Snapshot s;
+  if (!makeSnapshot(s)) {
+    Serial.println("[MQTT] no state yet: waiting for an A0 frame");
+    return;
+  }
   char payload[384];
   if (net::buildStateJson(payload, sizeof(payload), s) == 0) {
     Serial.println("[MQTT] payload does not fit the buffer");
     return;
   }
   Serial.printf("[MQTT] %s\n", payload);
+}
+
+// ---------------------------------------------------------------- MQTT hooks
+// net/ reports what a consumer asked for; deciding what that means for the heater is app/'s job
+// and lives here at the boundary, exactly like the serial console.
+static void onMqttSetpoint(void* /*ctx*/, int celsius) {
+  if (!app::setSetpoint(celsius)) Serial.println("[MQTT] setpoint not sent");
+}
+
+static void onMqttCommand(void* /*ctx*/, const char* verb) {
+  if (strcmp(verb, "refresh") == 0) return;          // mqtt_client already queued a publish
+
+  if (strcmp(verb, "reboot") == 0) {
+    Serial.println("[MQTT] reboot requested by a consumer");
+    app::shutdown();                                 // clean LL disconnect, see session.h
+    delay(200);
+    ESP.restart();
+  }
+
+  if (strcmp(verb, "unpair") == 0) {
+    Serial.println("[MQTT] unpair requested: clearing the local bond and the stored code");
+    ble::clearBonds();
+    gCfg.pin[0] = 0;
+    gCfg.save();
+    Serial.println("[MQTT] done - clear pairing on the panel before pairing again");
+  }
+}
+
+// Starts or restarts the client from the configured broker string. Called at boot and whenever
+// `broker` changes the address; a refresh is enough because the client owns its socket.
+static void startMqtt() {
+  char deviceId[20];
+  net::deviceIdFromAddress(gCfg.heater, deviceId, sizeof(deviceId));
+
+  net::MqttInfo info;
+  info.heater   = gCfg.heater;
+  info.hardware = "esp32s3";
+  const app::Status st = app::status();
+  info.pairState = st.phase == app::kRunning ? "paired"
+                 : st.phase == app::kFailed  ? "reconnecting"
+                                             : "unpaired";
+  net::mqttSetInfo(info);
+  net::mqttSetHooks(onMqttSetpoint, onMqttCommand, nullptr);
+
+  net::mqttBegin(gCfg.broker, deviceId);
+  if (!gCfg.broker[0]) {
+    Serial.println("[MQTT] no broker configured; telemetry stays on the serial port");
+    return;
+  }
+  Serial.printf("[MQTT] starting as %s\n", deviceId);
 }
 
 static void doScan() {  if (ble::isConnected()) {
@@ -197,6 +269,7 @@ static void printHelp() {
   Serial.println("  status            print configuration and runtime state");
   Serial.println("  selftest          run the golden protocol vectors on the board");
   Serial.println("  mqtt              print the payload this state would publish");
+  Serial.println("  broker HOST[:P]   set the MQTT broker ( - clears it ); restarts the client");
   Serial.println("  portal            start the setup portal (LAN page if already online, else AP)");
   Serial.println("  wifi SSID PASS    join a network and save it (open network: wifi SSID -)");
   Serial.println("  raw on / raw off  show / hide raw A0 bytes");
@@ -229,6 +302,9 @@ static void printStatus() {
                 net::stationUp() ? "up" : "down", gCfg.ssid[0] ? gCfg.ssid : "(none)");
   Serial.printf("  clock      : %s\n",
                 net::nowEpoch() ? "synced" : "not synced (ts omitted)");
+  char mqtt[120];
+  net::mqttStatusText(mqtt, sizeof(mqtt));
+  Serial.printf("  mqtt       : %s\n", mqtt);
 }
 
 static void handleCommand(String line) {
@@ -248,6 +324,25 @@ static void handleCommand(String line) {
   if (low == "status")              { printStatus(); return; }
   if (low == "selftest")            { doSelfTest(); return; }
   if (low == "mqtt")                { printMqttPayload(); return; }
+  if (low.startsWith("broker")) {
+    String arg = line.substring(6);
+    arg.trim();
+    if (arg.length() == 0) {
+      char line2[140];
+      net::mqttStatusText(line2, sizeof(line2));
+      Serial.printf("[MQTT] broker=%s  status=%s\n",
+                    gCfg.broker[0] ? gCfg.broker : "(none)", line2);
+      Serial.println("[MQTT] usage: broker <host[:port]>   ( - clears )");
+      return;
+    }
+    if (arg == "-") arg = "";
+    strncpy(gCfg.broker, arg.c_str(), sizeof(gCfg.broker) - 1);
+    gCfg.broker[sizeof(gCfg.broker) - 1] = 0;
+    gCfg.saveNetwork();
+    Serial.printf("[CFG] broker = %s\n", gCfg.broker[0] ? gCfg.broker : "(none)");
+    startMqtt();
+    return;
+  }
   if (low == "portal") {
     if (net::portalActive()) { Serial.println("[PORTAL] already running"); return; }
     net::startPortal(onProvisioned, nullptr);
@@ -403,11 +498,27 @@ void setup() {
     Serial.printf("[BOOT] stored Wi-Fi %s, joining\n", gCfg.ssid);
     net::stationConnect(gCfg.ssid, gCfg.wifiPass);
   }
+
+  // MQTT comes after Wi-Fi, for the same reason: the client needs an IP to do anything at all,
+  // and starting it earlier only produces a failed attempt on the boot log.
+  startMqtt();
 }
 
 void loop() {
   pollSerial();
   net::portalPoll();
   app::poll();
+
+  // One A0 frame per publish, plus a 60 s heartbeat inside the client. Publishing every frame
+  // keeps `ts` fresh, which is how a consumer notices a bridge that is up but no longer hearing
+  // the heater; the alternative (diffing fields) would need a second copy of the snapshot.
+  const uint32_t frames  = app::status().a0Count;
+  const bool     newFrame = frames != gLastA0;
+  if (newFrame) {
+    gLastA0   = frames;
+    gHaveSnap = makeSnapshot(gSnap);
+  }
+  net::mqttPoll(gHaveSnap ? &gSnap : nullptr, newFrame && gHaveSnap);
+
   delay(10);
 }

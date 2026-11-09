@@ -118,6 +118,27 @@ jobs:
       - name: generated MQTT contract matches the spec
         shell: bash
         run: python firmware/bridge/tools/gen_mqtt.py --check
+      - name: generated Home Assistant discovery matches the spec
+        shell: bash
+        run: python firmware/bridge/tools/gen_ha.py --check
+      # state_json / mqtt_wire / discovery are the parts of net/ that the on-board self test
+      # checks byte for byte. They stay free of Arduino for the same reason proto/ does; the
+      # socket-facing files (station, portal, mqtt_client) are allowed to include WiFi.
+      - name: net payload layer stays framework-free
+        shell: bash
+        run: |
+          bad=$(grep -rnE '#include[[:space:]]*[<"](Arduino|NimBLE|Preferences|esp_|WiFi)' \
+                  firmware/bridge/src/net/state_json.cpp \
+                  firmware/bridge/src/net/mqtt_wire.cpp \
+                  firmware/bridge/src/net/mqtt_wire.h \
+                  firmware/bridge/src/net/discovery.cpp \
+                  firmware/bridge/src/net/discovery.h || true)
+          if [ -n "$bad" ]; then
+            echo "$bad"
+            echo "::error::the self-tested parts of net/ must not include Arduino, NimBLE or WiFi"
+            exit 1
+          fi
+          echo "OK: net/ payload layers have no framework includes"
       - name: every contract file is valid JSON
         shell: bash
         run: |

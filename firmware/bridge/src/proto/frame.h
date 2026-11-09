@@ -23,9 +23,11 @@ namespace proto {
 constexpr uint8_t kDelimiter = 0x7B;
 constexpr uint8_t kTerminator = 0x7D;
 constexpr uint8_t kSender = 0x21;
+constexpr uint8_t kRecvBiz = 0x00;      // business frames: A0 broadcasts, D2/D3 parameters
 constexpr uint8_t kRecvLogin = 0xAB;
 constexpr uint8_t kCmdLogin = 0xA2;
 constexpr uint8_t kCmdState = 0xA0;
+constexpr uint8_t kCmdWriteParam = 0xD3;
 
 // A notify fragment carries at most 20 bytes at MTU 23, and each fragment restarts the XOR.
 constexpr size_t kChunk = 20;

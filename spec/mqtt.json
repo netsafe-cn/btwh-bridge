@@ -242,8 +242,9 @@
     "discovery_prefix": "homeassistant",
     "device": {
       "identifiers": [
-        "btwh_{device_id}"
+        "{device_id}"
       ],
+      "identifiers_note": "device_id already starts with 'btwh_', so prefixing it again would yield btwh_btwh_<last6>. The identifier is the device_id itself.",
       "manufacturer": "Bosch",
       "model": "Therm 4800i",
       "name": "Water heater"
