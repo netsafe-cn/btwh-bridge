@@ -89,10 +89,12 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
   n = expand("no token here", "ab", buf, sizeof(buf));
   check(c, strcmp(buf, "no token here") == 0, "expand passes plain text through", buf);
 
-  // 2. A buffer one byte short must refuse, not truncate.
-  n = expand("@DEV@", "btwh_eb6f5f", buf, 11);       // 10 chars + terminator needs 11
-  check(c, n == 10, "expand fits exactly", nullptr);
-  n = expand("@DEV@", "btwh_eb6f5f", buf, 10);
+  // 2. A buffer one byte short must refuse, not truncate. "btwh_eb6f5f" is 11 characters -
+  //    the first on-board selftest run caught this pair asserting 10, which had never executed
+  //    anywhere: the C++ suites only run on the target.
+  n = expand("@DEV@", "btwh_eb6f5f", buf, 12);       // 11 chars + terminator needs 12
+  check(c, n == 11, "expand fits exactly", nullptr);
+  n = expand("@DEV@", "btwh_eb6f5f", buf, 11);       // one byte short of the terminator
   check(c, n == 0 && buf[0] == 0, "expand refuses a short buffer", nullptr);
 
   // 3. The generated table is present and complete.
