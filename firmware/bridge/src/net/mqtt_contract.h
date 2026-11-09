@@ -35,11 +35,11 @@ struct FieldDesc {
   const char* label;
 };
 static const FieldDesc kFields[] = {
-  {"temp_out", "float", 1, "C", "temperature", "measurement", "Outlet water temperature"},
-  {"temp_in", "float", 1, "C", "temperature", "measurement", "Inlet water temperature"},
-  {"chamber", "float", 1, "C", "temperature", "measurement", "Combustion chamber temperature"},
-  {"temp_box", "float", 1, "C", "temperature", "measurement", "Chassis temperature"},
-  {"setpoint", "int", 0, "C", "temperature", "setpoint", "Setpoint temperature"},
+  {"temp_out", "float", 1, "°C", "temperature", "measurement", "Outlet water temperature"},
+  {"temp_in", "float", 1, "°C", "temperature", "measurement", "Inlet water temperature"},
+  {"chamber", "float", 1, "°C", "temperature", "measurement", "Combustion chamber temperature"},
+  {"temp_box", "float", 1, "°C", "temperature", "measurement", "Chassis temperature"},
+  {"setpoint", "int", 0, "°C", "temperature", "setpoint", "Setpoint temperature"},
   {"water_flow", "float", 1, "L/min", "", "measurement", "Water flow"},
   {"burner_power", "int", 0, "%", "", "measurement", "Burner power"},
   {"fan_speed", "int", 0, "rpm", "", "measurement", "Fan speed"},

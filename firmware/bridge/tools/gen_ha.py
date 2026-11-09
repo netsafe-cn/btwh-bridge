@@ -87,7 +87,7 @@ def ha_entity(field: dict, doc: dict) -> dict | None:
             "max": field["range"][1],
             "step": 1,
             "mode": "box",
-            "unit_of_measurement": field.get("unit") or "C",
+            "unit_of_measurement": field.get("unit") or "°C",
             "value_template": "{{ value_json.%s }}" % key,
             # State is echoed from the heater, not from what we asked for: a setpoint the
             # heater refused must not look applied.

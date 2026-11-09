@@ -36,7 +36,7 @@
         35,
         60
       ],
-      "unit": "C",
+      "unit": "°C",
       "purpose": "Setpoint. The bridge ignores out-of-range values rather than clamping."
     },
     "command": {
@@ -61,7 +61,7 @@
     {
       "key": "temp_out",
       "type": "float",
-      "unit": "C",
+      "unit": "°C",
       "precision": 1,
       "range": [
         0,
@@ -75,7 +75,7 @@
     {
       "key": "temp_in",
       "type": "float",
-      "unit": "C",
+      "unit": "°C",
       "precision": 1,
       "range": [
         0,
@@ -89,7 +89,7 @@
     {
       "key": "chamber",
       "type": "float",
-      "unit": "C",
+      "unit": "°C",
       "precision": 1,
       "range": [
         0,
@@ -103,7 +103,7 @@
     {
       "key": "temp_box",
       "type": "float",
-      "unit": "C",
+      "unit": "°C",
       "precision": 1,
       "range": [
         0,
@@ -117,7 +117,7 @@
     {
       "key": "setpoint",
       "type": "int",
-      "unit": "C",
+      "unit": "°C",
       "range": [
         35,
         60

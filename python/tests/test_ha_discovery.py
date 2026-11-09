@@ -90,7 +90,7 @@ class TestEntityConfig(unittest.TestCase):
             cfg = self.entities[key]["config"]
             self.assertEqual(cfg["device_class"], "temperature", key)
             self.assertEqual(cfg["state_class"], "measurement", key)
-            self.assertEqual(cfg["unit_of_measurement"], "C", key)
+            self.assertEqual(cfg["unit_of_measurement"], "°C", key)
 
 
 if __name__ == "__main__":
