@@ -26,6 +26,8 @@ struct Config {
   char ssid[33];     // 32 chars is the 802.11 maximum
   char wifiPass[65]; // 64 chars, the WPA2 maximum
   char broker[129];  // host[:port]; empty = discovery only, no external broker
+  char mqttUser[33]; // broker account, empty = anonymous
+  char mqttPass[65]; // broker password, empty = no password (user may still be sent)
 
   // Reads NVS; fills in placeholders when a key is absent.
   void load();

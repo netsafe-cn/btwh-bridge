@@ -63,6 +63,8 @@ static void banner(const char* s) { Serial.printf("\n===== %s =====\n", s); }
 // ---------------------------------------------------------------- provisioning
 // What the portal calls once the form is validated and stored. Runs after the AP is down:
 // join the network the form named, then, when a code was given, run the pairing attempt.
+static void startMqtt();   // defined below; the portal path can change the broker
+
 static const char* onProvisioned(void* /*ctx*/, const net::ProvisionRequest& r) {
   strncpy(gCfg.heater, r.heater, sizeof(gCfg.heater) - 1);
   gCfg.heater[sizeof(gCfg.heater) - 1] = 0;
@@ -76,11 +78,29 @@ static const char* onProvisioned(void* /*ctx*/, const net::ProvisionRequest& r) 
     strncpy(gCfg.wifiPass, r.wifiPass, sizeof(gCfg.wifiPass) - 1);
     gCfg.wifiPass[sizeof(gCfg.wifiPass) - 1] = 0;
   }
+  // Same "empty keeps the stored value" rule as the Wi-Fi password above, for the same
+  // reason: re-pairing or moving networks must not silently erase the broker settings.
+  if (r.broker[0]) {
+    strncpy(gCfg.broker, r.broker, sizeof(gCfg.broker) - 1);
+    gCfg.broker[sizeof(gCfg.broker) - 1] = 0;
+  }
+  if (r.mqttUser[0]) {
+    strncpy(gCfg.mqttUser, r.mqttUser, sizeof(gCfg.mqttUser) - 1);
+    gCfg.mqttUser[sizeof(gCfg.mqttUser) - 1] = 0;
+  }
+  if (r.mqttPass[0]) {
+    strncpy(gCfg.mqttPass, r.mqttPass, sizeof(gCfg.mqttPass) - 1);
+    gCfg.mqttPass[sizeof(gCfg.mqttPass) - 1] = 0;
+  }
   gCfg.save();
   gCfg.saveNetwork();
 
   bool wifiOk = net::stationConnect(gCfg.ssid, gCfg.wifiPass);
   if (!wifiOk) return "saved, but the Wi-Fi would not join - reopen the portal and retype it";
+
+  // The portal is the one place where the broker can change without a reboot, and the
+  // client owns its socket: a fresh begin is how the new address takes effect at all.
+  startMqtt();
 
   if (!gCfg.pinValid()) return "saved (no code given; Wi-Fi only)";
   return app::start(false) ? "paired" : "pairing failed - see the serial log";
@@ -223,11 +243,16 @@ static void startMqtt() {
   net::mqttSetHooks(onMqttSetpoint, onMqttCommand, nullptr);
 
   net::mqttBegin(gCfg.broker, deviceId);
+  // Credentials come after begin: begin() applies the address, this applies the account, and
+  // together they are the whole connection contract from the config. Called on every restart
+  // (broker command, portal save, boot) so NVS is the single source of truth.
+  net::mqttSetCredentials(gCfg.mqttUser, gCfg.mqttPass);
   if (!gCfg.broker[0]) {
     Serial.println("[MQTT] no broker configured; telemetry stays on the serial port");
     return;
   }
-  Serial.printf("[MQTT] starting as %s\n", deviceId);
+  Serial.printf("[MQTT] starting as %s (%s)\n", deviceId,
+                gCfg.mqttUser[0] ? gCfg.mqttUser : "anonymous");
 }
 
 static void doScan() {  if (ble::isConnected()) {
@@ -270,6 +295,7 @@ static void printHelp() {
   Serial.println("  selftest          run the golden protocol vectors on the board");
   Serial.println("  mqtt              print the payload this state would publish");
   Serial.println("  broker HOST[:P]   set the MQTT broker ( - clears it ); restarts the client");
+  Serial.println("  mqttuser U PASS   set the broker account ( - clears ); restarts the client");
   Serial.println("  portal            start the setup portal (LAN page if already online, else AP)");
   Serial.println("  wifi SSID PASS    join a network and save it (open network: wifi SSID -)");
   Serial.println("  raw on / raw off  show / hide raw A0 bytes");
@@ -302,6 +328,9 @@ static void printStatus() {
                 net::stationUp() ? "up" : "down", gCfg.ssid[0] ? gCfg.ssid : "(none)");
   Serial.printf("  clock      : %s\n",
                 net::nowEpoch() ? "synced" : "not synced (ts omitted)");
+  Serial.printf("  broker     : %s  user=%s\n",
+                gCfg.broker[0] ? gCfg.broker : "(none)",
+                gCfg.mqttUser[0] ? gCfg.mqttUser : "(anonymous)");
   char mqtt[120];
   net::mqttStatusText(mqtt, sizeof(mqtt));
   Serial.printf("  mqtt       : %s\n", mqtt);
@@ -340,6 +369,39 @@ static void handleCommand(String line) {
     gCfg.broker[sizeof(gCfg.broker) - 1] = 0;
     gCfg.saveNetwork();
     Serial.printf("[CFG] broker = %s\n", gCfg.broker[0] ? gCfg.broker : "(none)");
+    startMqtt();
+    return;
+  }
+  if (low.startsWith("mqttuser")) {
+    // `mqttuser <name> <password>`; the split is on the first space so a password may contain
+    // spaces (MQTT allows them; `low` only detects the command, the case comes from `line`).
+    String arg = line.substring(8);
+    arg.trim();
+    if (arg.length() == 0) {
+      Serial.printf("[CFG] mqtt user=%s  password=%s\n",
+                    gCfg.mqttUser[0] ? gCfg.mqttUser : "(anonymous)",
+                    gCfg.mqttPass[0] ? "(set)" : "(none)");
+      Serial.println("[CFG] usage: mqttuser <name> <password>   ( - clears both )");
+      return;
+    }
+    if (arg == "-") {
+      gCfg.mqttUser[0] = 0;
+      gCfg.mqttPass[0] = 0;
+    } else {
+      int sp = arg.indexOf(' ');
+      String userArg = sp < 0 ? arg : arg.substring(0, sp);
+      String passArg = sp < 0 ? "" : arg.substring(sp + 1);
+      userArg.trim();
+      passArg.trim();
+      strncpy(gCfg.mqttUser, userArg.c_str(), sizeof(gCfg.mqttUser) - 1);
+      gCfg.mqttUser[sizeof(gCfg.mqttUser) - 1] = 0;
+      strncpy(gCfg.mqttPass, passArg.c_str(), sizeof(gCfg.mqttPass) - 1);
+      gCfg.mqttPass[sizeof(gCfg.mqttPass) - 1] = 0;
+    }
+    gCfg.saveNetwork();
+    Serial.printf("[CFG] mqtt user=%s  password=%s\n",
+                  gCfg.mqttUser[0] ? gCfg.mqttUser : "(anonymous)",
+                  gCfg.mqttPass[0] ? "(set)" : "(none)");
     startMqtt();
     return;
   }

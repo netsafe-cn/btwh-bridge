@@ -44,7 +44,9 @@ struct ProvisionRequest {
   char ssid[33];          // 32 chars is the 802.11 maximum
   char wifiPass[65];      // 64 chars, WPA2 maximum
   char pairCode[8];       // six digits, or empty = keep the existing pairing
-  char broker[129];       // host[:port]; empty = HA discovery only, no external broker
+  char broker[129];       // host[:port]; empty = keep the current setting
+  char mqttUser[33];      // broker account; empty = keep the current setting
+  char mqttPass[65];      // broker password; empty = keep the current setting
 };
 
 // Validates a request the way the form will send it. Returns a reason string for the web UI,

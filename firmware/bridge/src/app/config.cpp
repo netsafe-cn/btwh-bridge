@@ -37,9 +37,13 @@ void Config::load() {
   String s = prefs().getString("ssid", "");
   String w = prefs().getString("wifipass", "");
   String b = prefs().getString("broker", "");
+  String u = prefs().getString("mqttuser", "");
+  String pw = prefs().getString("mqttpass", "");
   copyTo(ssid, sizeof(ssid), s.c_str());
   copyTo(wifiPass, sizeof(wifiPass), w.c_str());
   copyTo(broker, sizeof(broker), b.c_str());
+  copyTo(mqttUser, sizeof(mqttUser), u.c_str());
+  copyTo(mqttPass, sizeof(mqttPass), pw.c_str());
 }
 
 void Config::save() const {
@@ -52,6 +56,8 @@ void Config::saveNetwork() const {
   prefs().putString("ssid", ssid);
   prefs().putString("wifipass", wifiPass);
   prefs().putString("broker", broker);
+  prefs().putString("mqttuser", mqttUser);
+  prefs().putString("mqttpass", mqttPass);
 }
 
 void Config::wipe() {
@@ -64,6 +70,8 @@ void Config::wipe() {
   ssid[0] = 0;
   wifiPass[0] = 0;
   broker[0] = 0;
+  mqttUser[0] = 0;
+  mqttPass[0] = 0;
 }
 
 bool Config::pinValid() const {

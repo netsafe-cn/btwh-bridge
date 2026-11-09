@@ -51,6 +51,8 @@ bool parseBroker(const char* text, char* host, size_t hostCap, uint16_t* port);
 void deviceIdFromAddress(const char* address, char* out, size_t cap);
 
 void mqttBegin(const char* broker, const char* deviceId);
+// Broker account. Called right after every mqttBegin(); empty strings mean anonymous.
+// mqttBegin() does not clear these - clearing is this function with ("", "").
 void mqttSetCredentials(const char* user, const char* pass);
 void mqttSetInfo(const MqttInfo& info);
 void mqttSetHooks(SetpointFn onSetpoint, CommandFn onCommand, void* ctx);

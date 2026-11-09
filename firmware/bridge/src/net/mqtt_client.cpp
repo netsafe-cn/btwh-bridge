@@ -359,12 +359,16 @@ void mqttBegin(const char* broker, const char* deviceId) {
   strncpy(gDeviceId, deviceId && deviceId[0] ? deviceId : "btwh_000000", sizeof(gDeviceId) - 1);
   gDeviceId[sizeof(gDeviceId) - 1] = 0;
 
-  gUser[0] = 0;
-  gPass[0] = 0;
+  // Credentials are deliberately NOT cleared here. begin() is called whenever the broker
+  // address changes (console, portal, boot), and the caller follows it with
+  // mqttSetCredentials() in the same breath - resetting here would silently turn an
+  // authenticated broker into a refused anonymous connection. Clearing is explicit:
+  // mqttSetCredentials("", "").
   gBackoffMs = 2000;
   gState = kIdle;
   gLastAttempt = millis();
-  Serial.printf("[MQTT] broker=%s:%u device=%s\n", gHost, (unsigned)gPort, gDeviceId);
+  Serial.printf("[MQTT] broker=%s:%u device=%s auth=%s\n", gHost, (unsigned)gPort, gDeviceId,
+                gUser[0] ? gUser : "anonymous");
 }
 
 void mqttSetCredentials(const char* user, const char* pass) {

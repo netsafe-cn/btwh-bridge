@@ -145,6 +145,12 @@ void handleSave() {
   strncpy(r.ssid,     gServer->arg("ssid").c_str(),     sizeof(r.ssid) - 1);
   strncpy(r.wifiPass, gServer->arg("wifipass").c_str(), sizeof(r.wifiPass) - 1);
   strncpy(r.pairCode, gServer->arg("code").c_str(),     sizeof(r.pairCode) - 1);
+  strncpy(r.broker,   gServer->arg("broker").c_str(),   sizeof(r.broker) - 1);
+  r.broker[sizeof(r.broker) - 1] = 0;
+  strncpy(r.mqttUser, gServer->arg("mqttuser").c_str(), sizeof(r.mqttUser) - 1);
+  r.mqttUser[sizeof(r.mqttUser) - 1] = 0;
+  strncpy(r.mqttPass, gServer->arg("mqttpass").c_str(), sizeof(r.mqttPass) - 1);
+  r.mqttPass[sizeof(r.mqttPass) - 1] = 0;
 
   // "Other network..." swaps the dropdown for whatever was typed alongside it.
   if (strcmp(r.ssid, "__other__") == 0) {

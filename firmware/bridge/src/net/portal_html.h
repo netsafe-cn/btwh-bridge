@@ -73,6 +73,17 @@ static const char PAGE[] PROGMEM = R"HTML(<!DOCTYPE html>
   <div class="hint">Heater panel &rarr; clear pairing &rarr; a new six-digit code appears.
     Enter it while it is still on the panel. Leave empty to keep the existing pairing.</div>
 
+  <div class="step">4 &middot; MQTT broker (optional)</div>
+  <label for="broker">Broker address</label>
+  <input name="broker" id="broker" placeholder="192.168.9.206 or 192.168.9.206:1883"
+         autocomplete="off">
+  <label for="mqttuser">Username</label>
+  <input name="mqttuser" id="mqttuser" autocomplete="off">
+  <label for="mqttpass">Password</label>
+  <input name="mqttpass" id="mqttpass" type="password" autocomplete="off">
+  <div class="hint">Where the telemetry goes. Leave everything empty to keep the current
+    settings; the console command <b>broker -</b> removes the broker.</div>
+
   <input type="submit" value="Save and connect">
 </form>
 </body>

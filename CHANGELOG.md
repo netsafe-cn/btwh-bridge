@@ -25,6 +25,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Broker credentials are configurable, end to end.** The production broker (Mosquitto on
+  the HAOS host) refuses anonymous connections, so the account must travel with the config:
+  the portal gained a step 4 (address, username, password; empty = keep the stored values,
+  the same rule as the Wi-Fi password), `Config` persists `mqttUser`/`mqttPass` in NVS,
+  `startMqtt()` hands them to the client after every `mqttBegin()`, and the serial console
+  grew `mqttuser <name> <password>` beside `broker`. `mqttSetCredentials()` - written with
+  the client but dead until now - is live. `mqttBegin()` no longer blanks the stored account
+  (a broker address change used to silently downgrade an authenticated connection to an
+  anonymous one). `test_broker_config_contract.py` (8 tests) pins the whole chain, because
+  one renamed arg anywhere in it means a well-formed CONNECT the broker still refuses.
+  The portal path also restarts the client after a save, which it never did - a broker set
+  through the page did not take effect until a reboot.
 - **Host runner for the four C++ selftest suites** (`tools/host_selftest.py` +
   `tools/host_selftest_main.cpp`): compiles the framework-free layers (proto, and
   net/state_json|mqtt_wire|discovery) with g++/clang++ - or `pip install ziglang` where neither
