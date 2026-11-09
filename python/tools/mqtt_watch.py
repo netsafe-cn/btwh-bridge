@@ -87,6 +87,27 @@ def fmt_state(payload: str) -> str:
     return "  " + "  ".join(parts)
 
 
+def publish_discovery(c, spec: dict, device: str) -> int:
+    """Publish the HA discovery topics, exactly as the firmware does on connect.
+
+    Same source as the firmware (gen_ha), so the demo bridge cannot advertise entities the
+    real bridge would not: without this, `--demo` builds a state feed HA ignores - the touch
+    panel and Node-RED can watch it, but Home Assistant needs the config messages.
+    """
+    sys.path.insert(0, str(REPO / "firmware" / "bridge" / "tools"))
+    from gen_ha import DEV, discovery_topic, ha_entity, render_payload   # noqa: E402
+    sent = 0
+    for field in spec["state_fields"]:
+        entity = ha_entity(field, spec)
+        if not entity:
+            continue
+        topic = discovery_topic(entity["component"], entity["key"], spec).replace(DEV, device)
+        payload = render_payload(entity["config"]).replace(DEV, device)
+        c.publish(topic, payload, retain=True)
+        sent += 1
+    return sent
+
+
 def main() -> int:
     # Line-buffered even when piped: the serial console's output is often captured to a file,
     # and a tool that prints nothing until it exits looks broken.
@@ -106,21 +127,53 @@ def main() -> int:
     args = ap.parse_args()
 
     device = args.device or ("btwh_demo01" if args.demo else None)
-    root = "%s/%s" % (base, device) if device else "%s/#" % base
+    root = "%s/%s" % (base, device) if device else base
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
                          client_id="mqtt_watch" if not args.demo else device)
+    if args.demo:
+        # Same will as the firmware: a crash leaves "offline", a clean exit says it explicitly.
+        client.will_set("%s/%s/availability" % (base, device), "offline", qos=0, retain=True)
+
+    # Demo setpoint echo: the last value a consumer commanded. None = golden sample value.
+    # The real bridge reads it back from the heater's next A0; a demo that ignores commands
+    # makes Home Assistant's number entity look broken ("I set 45 and it still says 42").
+    demo_setpoint = [None]
+
+    def demo_state() -> str:
+        payload = golden_payload(spec)
+        if demo_setpoint[0] is not None:
+            data = json.loads(payload)
+            data["setpoint"] = demo_setpoint[0]
+            payload = json.dumps(data, separators=(",", ":"))
+        return payload
 
     def on_connect(c, _userdata, _flags, reason_code, _props):
         if reason_code != 0:
             print("[watch] connect refused: %s" % reason_code)
             return
-        c.subscribe(root, 0)
-        print("[watch] subscribed %s" % root)
+        # A filter without a wildcard matches exactly one topic: `btwh/<dev>` alone hears
+        # nothing. Demo needs only the command topics (its own states are printed by the loop,
+        # and a wildcard would print them twice); watch mode wants the whole tree.
         if args.demo:
-            payload = golden_payload(spec)
-            c.publish("%s/availability" % ("%s/%s" % (base, device)), "online", retain=True)
-            c.publish("%s/state" % ("%s/%s" % (base, device)), payload, retain=True)
+            c.subscribe("%s/set/temperature" % root, 0)
+            c.subscribe("%s/cmd" % root, 0)
+            print("[watch] subscribed %s/set/temperature + cmd" % root)
+        else:
+            tree = "%s/#" % root
+            c.subscribe(tree, 0)
+            print("[watch] subscribed %s" % tree)
+        if args.demo:
+            dev_root = "%s/%s" % (base, device)
+            attrs = json.dumps({"fw": "demo", "hw": "mqtt_watch", "heater": "-",
+                                "pair_state": "demo", "uptime": int(time.time()) % 86400},
+                               separators=(",", ":"))
+            c.publish("%s/availability" % dev_root, "online", retain=True)
+            c.publish("%s/attributes" % dev_root, attrs, retain=True)
+            n = publish_discovery(c, spec, device)
+            print("[demo] discovery: %d entities published" % n)
+            payload = demo_state()
+            c.publish("%s/state" % dev_root, payload, retain=True)
             print("[demo] %s" % payload)
             print("[demo] publishing every %.1fs; Ctrl-C to stop" % args.interval)
 
@@ -139,6 +192,23 @@ def main() -> int:
                 print("[set  ] %s <- %d" % (cmd_topic, args.setpoint))
         elif topic.endswith("/config"):
             print("[ha   ] %s" % topic)
+        elif "/set/" in topic or topic.endswith("/cmd"):
+            # A consumer (HA, the panel) commanding the bridge: the whole point of the demo.
+            print("[cmd  ] %s <- %s" % (topic, payload))
+            if topic.endswith("/set/temperature") and args.demo:
+                try:
+                    value = float(payload)
+                except ValueError:
+                    print("[demo] setpoint not a number, ignored: %r" % payload)
+                else:
+                    # Whole degrees only, mirroring the firmware's contract (35..60).
+                    if value != int(value):
+                        print("[demo] setpoint not a whole degree, ignored: %r" % payload)
+                    else:
+                        clamped = max(35, min(60, int(value)))
+                        demo_setpoint[0] = clamped
+                        print("[demo] setpoint accepted -> %d (echoed from next state)"
+                              % clamped)
 
     client.on_connect = on_connect
     client.on_message = on_message
@@ -147,10 +217,9 @@ def main() -> int:
 
     try:
         if args.demo and args.setpoint is None:
-            payload = golden_payload(spec)
             while True:
                 time.sleep(args.interval)
-                payload = golden_payload(spec)
+                payload = demo_state()
                 client.publish("%s/%s/state" % (base, device), payload, retain=True)
                 print("[state] %s" % fmt_state(payload))
         elif args.setpoint is not None:
@@ -162,6 +231,9 @@ def main() -> int:
     except KeyboardInterrupt:
         pass
     finally:
+        if args.demo:
+            # Leave the retained availability honest: a stale "online" outlives this process.
+            client.publish("%s/%s/availability" % (base, device), "offline", retain=True)
         client.loop_stop()
         client.disconnect()
     return 0
