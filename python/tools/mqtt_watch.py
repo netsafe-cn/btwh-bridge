@@ -124,6 +124,8 @@ def main() -> int:
     ap.add_argument("--demo", action="store_true", help="publish as a fake bridge")
     ap.add_argument("--set", type=int, dest="setpoint", help="publish this setpoint and exit")
     ap.add_argument("--interval", type=float, default=4.0, help="demo publish interval")
+    ap.add_argument("--user", help="broker username (empty: anonymous)")
+    ap.add_argument("--password", help="broker password (use with --user)")
     args = ap.parse_args()
 
     device = args.device or ("btwh_demo01" if args.demo else None)
@@ -212,6 +214,8 @@ def main() -> int:
 
     client.on_connect = on_connect
     client.on_message = on_message
+    if args.user:
+        client.username_pw_set(args.user, args.password)
     client.connect(args.host, args.port, 30)
     client.loop_start()
 
