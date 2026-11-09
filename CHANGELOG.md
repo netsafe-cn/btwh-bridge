@@ -7,6 +7,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **flame entity never turned "on" in Home Assistant.** The state payload carries a JSON
+  boolean; HA parses it into a Python bool whose template rendering is `True` (capital T),
+  which never string-matches `payload_on: "true"`. The generated `value_template` now renders
+  the literals itself (`{{ 'true' if value_json.flame else 'false' }}`), and the contract test
+  pins the template so it cannot regress.
+- **setpoint commands from HA were silently dropped.** The number entity publishes
+  `str(float)` - `"42.0"` - and the parser used `strtol`, which stops at the decimal point and
+  rejects the text. Now parsed with `strtod`; whole values only (`"42.5"` is still a range
+  error, not something to round).
+- **a retained `cmd` could reboot the board forever.** A retained `reboot` replays on every
+  reconnect: reboot -> reconnect -> replay. `PublishInfo.retained` was parsed but never used;
+  commands on `cmd` are now live-only. `set/temperature` deliberately still honours retained
+  replay, because re-applying the last setpoint is idempotent.
+
 ### Added
 
 - **MQTT client** (`net/mqtt_wire.cpp`, `net/mqtt_client.cpp`): a 3.1.1 subset written for this

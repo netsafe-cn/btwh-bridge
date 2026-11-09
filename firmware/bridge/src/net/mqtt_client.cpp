@@ -192,16 +192,20 @@ void handleSetpoint(const wire::PublishInfo& in) {
   for (int i = (int)n - 1; i >= 0 && isspace((unsigned char)text[i]); i--) text[i] = 0;
 
   char* end = nullptr;
-  const long value = strtol(text, &end, 10);
+  // strtod, not strtol: Home Assistant's number entity publishes str(float) - "42.0" - and an
+  // integer-only parser would silently drop every command from it. Whole values only, still:
+  // "42.5" is a range error, not something to round and hope.
+  const double value = strtod(text, &end);
   const bool numeric = end && *end == 0 && end != text;
+  const bool whole  = numeric && value == (double)(long)value;
 
   // The contract says out-of-range values are ignored, not clamped: a consumer that sends 70
   // asked for something the heater cannot do, and silently turning it into 60 hides the bug.
-  if (!numeric || value < 35 || value > 60) {
+  if (!whole || value < 35 || value > 60) {
     Serial.printf("[MQTT] setpoint ignored: [%s] (whole degrees 35..60)\n", text);
     return;
   }
-  Serial.printf("[MQTT] setpoint -> %ld C\n", value);
+  Serial.printf("[MQTT] setpoint -> %d C\n", (int)value);
   if (gOnSetpoint) gOnSetpoint(gHookCtx, (int)value);
 }
 
@@ -255,7 +259,17 @@ void handle(const wire::Packet& p) {
       makeTopic(topic, sizeof(topic), "set/temperature");
       if (wire::topicIs(in, topic)) { handleSetpoint(in); return; }
       makeTopic(topic, sizeof(topic), "cmd");
-      if (wire::topicIs(in, topic)) { handleCommand(in); return; }
+      if (wire::topicIs(in, topic)) {
+        // Commands are live-only. A retained "reboot" would replay on every reconnect and
+        // reboot the board forever; the retained flag on a delivery says exactly that happened.
+        // set/temperature is deliberately allowed: replaying the last setpoint is idempotent.
+        if (in.retained) {
+          Serial.println("[MQTT] retained command ignored (commands are live-only)");
+          return;
+        }
+        handleCommand(in);
+        return;
+      }
       Serial.printf("[MQTT] publish on an unknown topic ignored (%u bytes)\n",
                     (unsigned)in.payloadLen);
       break;
@@ -283,7 +297,9 @@ void drainSocket() {
     size_t used = 0;
     const int r = wire::decode(gRx, gRxLen, &p, &used);
     if (r == 0) break;
-    if (r < 0) { drop("desynchronised stream"); return; }
+    // -1 covers both a malformed length prefix and a packet larger than kMaxPacket (legal, but
+    // bigger than this client commits to decode). Either way the stream cannot continue.
+    if (r < 0) { drop("malformed or oversized packet"); return; }
     handle(p);
     if (gState != kUp && gState != kWaitConnack) return;   // handle() dropped the link
     memmove(gRx, gRx + used, gRxLen - used);

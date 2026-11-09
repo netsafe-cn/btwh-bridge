@@ -98,6 +98,10 @@ def ha_entity(field: dict, doc: dict) -> dict | None:
     cfg["value_template"] = "{{ value_json.%s }}" % key
 
     if component == "binary_sensor":
+        # value_json.flame is a Python bool after HA parses the state payload; rendering it as
+        # `{{ value_json.flame }}` yields "True", which never string-matches payload_on "true".
+        # Rendering the literals ourselves keeps the comparison exact.
+        cfg["value_template"] = "{{ 'true' if value_json.%s else 'false' }}" % key
         cfg.update({
             "payload_on": "true",
             "payload_off": "false",

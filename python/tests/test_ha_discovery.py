@@ -79,6 +79,11 @@ class TestEntityConfig(unittest.TestCase):
         self.assertEqual(cfg["payload_on"], "true")
         self.assertEqual(cfg["payload_off"], "false")
         self.assertEqual(cfg["device_class"], "running")
+        # The state payload carries a JSON boolean. HA parses it into a Python bool, whose
+        # template rendering is "True" - capital T - which never matches payload_on. The
+        # template must therefore render the literals itself.
+        self.assertEqual(cfg["value_template"],
+                         "{{ 'true' if value_json.flame else 'false' }}")
 
     def test_temperature_sensors_declare_class_and_unit(self):
         for key in ("temp_out", "temp_in", "chamber", "temp_box"):
