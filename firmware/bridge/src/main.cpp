@@ -1,6 +1,6 @@
 /*
  * ============================================================================
- * Bosch heater BLE gateway  v2.1  --  Waveshare ESP32-S3-DEV-KIT-N8R8
+ * Bosch heater BLE gateway  v2.2  --  Waveshare ESP32-S3-DEV-KIT-N8R8
  * ----------------------------------------------------------------------------
  * Phase one (feasibility, complete before any Wi-Fi/MQTT work):
  *   1) connect to the heater and finish SMP pairing (the panel code is the BLE pin)
