@@ -25,13 +25,23 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Host runner for the four C++ selftest suites** (`tools/host_selftest.py` +
+  `tools/host_selftest_main.cpp`): compiles the framework-free layers (proto, and
+  net/state_json|mqtt_wire|discovery) with g++/clang++ - or `pip install ziglang` where neither
+  exists - and runs the same suites the board's `selftest` command runs. Wired into
+  `run_tests.py` via `test_cpp_selftest.py` (skips without a compiler; ubuntu CI compiles it
+  with g++). Reason: the first hardware run of the discovery suite caught a check asserting a
+  12-byte fit as 10 - a check that had executed nowhere until the board ran it, because no host
+  runner existed. The check counts (proto 60 / net 16 / mqtt 32 / discovery 22 = 130) are pinned
+  on both sides.
 - **MQTT client** (`net/mqtt_wire.cpp`, `net/mqtt_client.cpp`): a 3.1.1 subset written for this
   project instead of a library, because the payload, the will and the backoff all have to match
   the contract exactly and none of the Arduino clients expose them at that level. Publishes
   `state` (retained, one per A0 frame), `attributes` (retained, on connect) and `availability`
   (retained `online`; the **will** carries `offline`). Subscribes `set/temperature` and `cmd`.
-  Backoff 2 s → 60 s, keepalive 60 s with a ping at 25 s. Measured: not yet run on the board -
-  the code compiles and the wire format is self-tested, see "status" below.
+  Backoff 2 s → 60 s, keepalive 60 s with a ping at 25 s. Measured: the wire format is
+  self-tested green on the board; the socket path still awaits a live broker, see "status"
+  below.
 - **Home Assistant discovery**, generated from `spec/mqtt.json` by `tools/gen_ha.py` into
   `ha_discovery_gen.h`: 11 entities (9 sensors, 1 number for the setpoint, 1 binary sensor for
   the flame), each naming the same state topic, the same availability topic and a stable

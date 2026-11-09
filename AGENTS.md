@@ -27,14 +27,24 @@ python firmware/bridge/tools/gateway_cli.py            # console only, no rebuil
 ## Before you touch protocol or payload code
 
 ```bash
-python run_tests.py                                        # Python side
+python run_tests.py                                        # Python side, incl. the C++ host selftest
 python firmware/bridge/tools/gen_vectors.py                # after changing spec/protocol_vectors.json
 python firmware/bridge/tools/gen_mqtt.py                   # after changing spec/mqtt.json
 python firmware/bridge/tools/gen_ha.py                     # after changing spec/mqtt.json
-# then flash and type: selftest                            # all four suites, on the board
+python firmware/bridge/tools/host_selftest.py              # the four C++ suites, on the host
+# then flash and type: selftest                            # the same four suites, on the board
 ```
 
-`selftest` is the only automated check that runs on the target, and it runs four suites:
+The four C++ suites run in two places, and the check counts must stay in lockstep:
+
+- **on the host** — `host_selftest.py` compiles the framework-free layers with g++/clang++
+  (or `pip install ziglang`) and runs them; `run_tests.py` includes this via
+  `test_cpp_selftest.py`, skipping when no compiler exists. The first hardware run of the
+  discovery suite caught a check asserting a 12-byte fit as 10 - a check that until then had
+  executed nowhere, which is the exact window this runner closes.
+- **on the board** — the `selftest` serial command runs the same suites against real hardware.
+
+The suites:
 
 - **proto** — framing, stuffing, per-fragment XOR, checksum, stream reassembly, every A0 field
 - **net** — the exact MQTT payload bytes for a known snapshot, `ts` omission, fault hex, mode

@@ -131,3 +131,4 @@ ui_dump.py
 watch_reappear.py
 watch_takeover.py
 启动调试台.bat
+firmware/bridge/tools/.hosttest/
