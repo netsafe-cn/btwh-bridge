@@ -25,6 +25,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Internationalisation positioning in both READMEs.** Each gained a "Why this
+  exists" section: the official app is single-phone Bluetooth with no local API,
+  and in mainland China Bosch has left the market, so the app cannot be downloaded
+  at all. A compatibility note now distinguishes the verified unit (CN-market
+  JSG27-CSI, an EU-built import) from untested EU units - same model, same app +
+  BLE control path, EU field reports welcome. Status went honest-to-current: MQTT
+  / HA discovery is verified end-to-end (11 entities, setpoint round-trip, against
+  a production Mosquitto on HAOS) and the offline test count is 167. The Mi Home /
+  Bemfa path is explicitly marked "China region, optional, not the core path" -
+  the core is local MQTT + Home Assistant. Also repaired a comparison table that
+  had lost its header row.
 - **Broker credentials are configurable, end to end.** The production broker (Mosquitto on
   the HAOS host) refuses anonymous connections, so the account must travel with the config:
   the portal gained a step 4 (address, username, password; empty = keep the stored values,

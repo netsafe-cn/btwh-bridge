@@ -12,10 +12,21 @@
 > Not affiliated with, authorised by, or endorsed by Robert Bosch GmbH or its
 > affiliates in any way.
 
-The official app talks to one phone at a time, exposes no local API, and keeps
-everything in the cloud. This project turns the heater into a **programmable local
-device**: read temperatures, watch combustion state, set a target temperature —
-with no cloud in the loop.
+## Why this exists
+
+The official **Bosch Water** app talks to one phone at a time over Bluetooth, and
+that is the whole story: no local API, no Home Assistant, no automation, no history
+beyond the last five showers. A water heater that cannot join the rest of your home
+is a standalone appliance with a touchscreen.
+
+For owners in mainland China it is worse: Bosch has left that market and the app is
+no longer downloadable there, leaving installed units permanently app-less. This
+project began as a way to keep one of those heaters usable, and turned into a full
+reverse-engineering of the heater's private **PowerBus BLE** protocol.
+
+The result turns the heater into a **programmable local device**: read temperatures,
+watch combustion state, set a target temperature — and it shows up in Home Assistant
+as first-class sensor and number entities, with no cloud anywhere in the loop.
 
 **Every protocol finding is captured as testable code.** A Python reference
 implementation, cross-platform golden vectors, and an ESP32 C++ implementation are
@@ -28,10 +39,10 @@ apart silently.
 
 | Component | State | Notes |
 |---|---|---|
-| Python library `bosch_api` | ✅ Ready | **157** offline tests green; signature-freeze contract + golden vectors |
-| Desktop console / Mi Home bridge | ✅ Ready | tkinter GUI + Bemfa cloud |
+| Python library `bosch_api` | ✅ Ready | **167** offline tests green; signature-freeze contract + golden vectors |
+| Desktop console / Mi Home bridge | ✅ Ready | tkinter GUI + Bemfa cloud (China region, optional) |
 | ESP32-S3 gateway firmware v2 | ✅ Verified | Real-device link-up: SMP encryption → `A2/07` → `A2/08=01` → steady `A0` stream; auto-recovers after power cycle |
-| MQTT / Home Assistant auto-discovery | 🟡 Built, not yet run on hardware | Client + 11 discovery entities; see [MQTT.md](docs/MQTT.md) |
+| MQTT / Home Assistant auto-discovery | ✅ Verified end-to-end | 11 entities auto-discovered, setpoint commands round-trip verified against a production Mosquitto on HAOS; see [MQTT.md](docs/MQTT.md) |
 | Wi-Fi provisioning (Improv) | 📐 Spec done | Defined by `python/device_fsm.py` + [API.md §9](docs/API.md) |
 
 ---
@@ -59,7 +70,11 @@ analyser. Layer 3 was built with them, and you will want them the first time som
 is involved at all.
 
 ---
-|---|---|
+
+### Python client vs. ESP32 gateway
+
+| | Python client | ESP32 gateway |
+|---|---|---|
 | Hardware | Laptop / Raspberry Pi / NAS | Waveshare ESP32-S3-DEV-KIT-N8R8 or similar |
 | Good for | Experiments, capture, ad-hoc control | 24/7 operation, feeding HA / Mi Home |
 | Pairing code | Re-enter each start | Flash once, enter at runtime, persisted in NVS |
@@ -202,7 +217,11 @@ python firmware/bridge/tools/log_diag.py <logfile>
 
 ---
 
-## Mi Home / Xiaoai
+## Mi Home / Xiaoai (China region, optional)
+
+> **Not part of the core project.** This path is a regional convenience for Mi Home
+> users and depends on a third-party cloud. The core path — MQTT + Home Assistant —
+> is local, cloud-free, and works in any country.
 
 Relies on [Bemfa cloud](https://cloud.bemfa.com) (free). Create three topics:
 
@@ -285,7 +304,7 @@ change is a patch, minor or major bump live in
 │
 ├── docs/                       API.md, BLE_PROTOCOL.md, ARCHITECTURE.md, hardware/
 ├── integrations/               Reserved: Home Assistant, Node-RED, ESPHome
-├── run_tests.py                One command, 157 tests, fully offline
+├── run_tests.py                One command, 167 tests, fully offline
 ├── pyproject.toml              Packaging metadata (`pip install .`)
 ├── config.example.json         Config template (contains no real data)
 ├── CHANGELOG.md  CONTRIBUTING.md  SECURITY.md  CODE_OF_CONDUCT.md  LICENSE
@@ -337,8 +356,12 @@ close other Bluetooth software or restart the Bluetooth service.
 
 ## Known limitations
 
-- Only verified on the **Bosch Therm 4800i** (BLE module `BTWH-001-xxxx`); other models
-  or firmware may use different field offsets, and the parser is the first thing to re-check
+- Verified on one **China-market Therm 4800i** (sold locally as JSG27-CSI, an EU-built
+  import). The same model shipped in Europe with the same Bosch Water app + BLE
+  control path, so the protocol is expected to match — but **no EU unit has been
+  tested yet**. Reports from EU units are very welcome (open an issue)
+- Other models or firmware may use different field offsets, and the parser is the
+  first thing to re-check
 - The panel code must be entered **within the pairing window** the first time. Once a code
   has paired successfully, the device keeps that authorisation long-term and the same code
   can reconnect later (verified 11 minutes after the window closed; the upper bound is
@@ -356,9 +379,9 @@ close other Bluetooth software or restart the Bluetooth service.
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md). Most useful contributions right now: field
-verification on more models, Home Assistant integration, and the ESP32 provisioning
-implementation.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). Most useful contributions right now:
+field verification on **EU-market units**, protocol confirmation on other models
+or firmware versions, and captured frames from units that behave differently.
 
 By participating you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
 

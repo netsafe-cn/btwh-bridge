@@ -10,8 +10,18 @@
 >
 > 本项目与 Robert Bosch GmbH 及其关联公司**无任何关系**，未获其授权、认可或支持。
 
-官方 App 一次只能连一台手机、没有本地 API、数据全在云端。这个项目把热水器变成
-**可编程的本地设备**：读水温、看燃烧状态、调温度，全流程不经过任何云。
+## 为什么做这个
+
+官方 **Bosch Water** App 一次只能连一台手机，仅限蓝牙距离内：没有本地 API、
+进不了 Home Assistant、没法做自动化、能耗记录只有最近五次。一台不能融入
+全屋智能的热水器，只是一块带触摸屏的孤立电器。
+
+对中国大陆用户而言更糟：博世已退出该市场，App 无法再下载，已装设备就此
+永久失联。本项目正是从"让这样一台热水器重新可用"出发，最终完成了对热水器
+私有 **PowerBus BLE** 协议的完整逆向。
+
+本项目把热水器变成**可编程的本地设备**：读水温、看燃烧状态、调温度——并且
+以一等公民的传感器/数值实体身份出现在 Home Assistant 里，全链路不经过任何云。
 
 **协议实现的全部成果都沉淀为可测试的代码**：Python 参考实现、跨端黄金向量、
 ESP32 C++ 实现，三者用同一组十六进制向量对齐，防止两端实现漂移。
@@ -22,10 +32,10 @@ ESP32 C++ 实现，三者用同一组十六进制向量对齐，防止两端实�
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
-| Python 协议库 `bosch_api` | ✅ 可用 | **157 项**回归全绿，含签名冻结契约与黄金向量 |
-| 桌面控制台 / 米家桥接 | ✅ 可用 | tkinter GUI + 巴法云 |
+| Python 协议库 `bosch_api` | ✅ 可用 | **167 项**离线测试全绿，含签名冻结契约与黄金向量 |
+| 桌面控制台 / 米家桥接 | ✅ 可用 | tkinter GUI + 巴法云（中国区可选，非主线） |
 | ESP32-S3 网关固件 v2 | ✅ 已验证 | 实机连通通过：SMP 加密 → `A2/07` → `A2/08=01` → `A0` 稳定刷帧；断电重启自动恢复 |
-| MQTT / Home Assistant 自动发现 | 🟡 代码完成，未上板验证 | 客户端 + 11 个发现实体，见 [MQTT.md](docs/MQTT.md) |
+| MQTT / Home Assistant 自动发现 | ✅ 端到端验证 | 11 个实体自动发现、调温命令往返闭环，已在 HAOS 生产级 Mosquitto 上验证，见 [MQTT.md](docs/MQTT.md) |
 | 配网（Improv WiFi） | 📐 契约已定 | 以 `python/device_fsm.py` + [API.md §9](docs/API.md) 为准 |
 
 ---
@@ -51,7 +61,11 @@ ESP32 C++ 实现，三者用同一组十六进制向量对齐，防止两端实�
 **第 3 层是目标状态**：热水器出现在 Home Assistant 里，之后不再需要任何一台电脑。
 
 ---
-|---|---|
+
+### Python 客户端 vs. ESP32 网关
+
+| | Python 客户端 | ESP32 网关 |
+|---|---|---|
 | 硬件 | 笔记本 / 树莓派 / NAS | 微雪 ESP32-S3-DEV-KIT-N8R8 或同类 |
 | 适合 | 试验、抓包、临时控制 | 7×24 常驻，接 HA / 米家 |
 | 配对码 | 每次重新输入 | 烧一次，运行时输码，NVS 持久化 |
@@ -182,7 +196,10 @@ python firmware/bridge/tools/log_diag.py <日志路径>
 
 ---
 
-## 米家 / 小爱接入
+## 米家 / 小爱接入（中国区可选，非主线）
+
+> **不属于项目主线。** 这是一条面向米家用户的区域便利路径，依赖第三方云。
+> 核心路径（MQTT + Home Assistant）本地、无云、全球通用。
 
 依赖[巴法云](https://cloud.bemfa.com)（免费）。在控制台创建三个主题：
 
@@ -246,7 +263,7 @@ CI 覆盖 Linux + Windows × Python 3.11/3.12，另有一个 job 检查 `config.
 │   ├── bemfa.py                巴法云客户端（米家通道）
 │   ├── boschlog.py             日志：轮转文件 + 内存环形缓冲
 │   ├── singlelock.py           后台桥接的单实例锁
-│   ├── tests/                  ★ 157 项离线测试，自动发现
+│   ├── tests/                  ★ 167 项离线测试，自动发现
 │   └── tools/                  控制台、无界面桥接、采集、启动器
 │
 ├── firmware/                   一个应用一个目录，互不共享源码
@@ -261,7 +278,7 @@ CI 覆盖 Linux + Windows × Python 3.11/3.12，另有一个 job 检查 `config.
 │
 ├── docs/                       API.md、BLE_PROTOCOL.md、ARCHITECTURE.md、hardware/
 ├── integrations/               预留：Home Assistant、Node-RED、ESPHome
-├── run_tests.py                一条命令跑 157 项，全离线
+├── run_tests.py                一条命令跑 167 项，全离线
 ├── pyproject.toml              打包元数据（`pip install .`）
 ├── config.example.json         配置模板（不含任何真实信息）
 ├── CHANGELOG.md  CONTRIBUTING.md  SECURITY.md  CODE_OF_CONDUCT.md  LICENSE
@@ -306,8 +323,10 @@ CI 覆盖 Linux + Windows × Python 3.11/3.12，另有一个 job 检查 `config.
 
 ## 已知限制
 
-- 只在 **Bosch Therm 4800i**（蓝牙模块 `BTWH-001-xxxx`）上验证过，其他型号/固件
-  可能字段偏移不同，换机型先核对解析器
+- 已验证的是**中国大陆行货 Therm 4800i**（国内型号名 JSG27-CSI，欧洲原装进口）。
+  同款机型曾在欧洲市场销售，官方控制路径同样是 Bosch Water App + 蓝牙，协议预期
+  一致——但**尚无欧洲实机验证**，欢迎欧洲用户提 issue 反馈
+- 其他型号/固件可能字段偏移不同，换机型先核对解析器
 - 面板码**首次配对**必须在窗口内完成；一旦成功配对过，设备会长期保留该授权，
   之后可用同一码重连（已验证 11 分钟后仍有效，上限未知，以天/周计需长期观察）
 - 连续连接失败 3 次会触发设备侧保护，约 3 分钟才恢复，不要连续重试
@@ -320,8 +339,8 @@ CI 覆盖 Linux + Windows × Python 3.11/3.12，另有一个 job 检查 `config.
 
 ## 参与贡献
 
-见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。最需要帮助的方向：更多型号的字段验证、
-Home Assistant 接入、ESP32 配网实现。
+见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。最需要帮助的方向：**欧洲市场同款机型的
+实机验证**、更多型号/固件版本的字段核对，以及行为异常设备的抓帧贡献。
 
 参与本项目即表示同意遵守[行为准则](CODE_OF_CONDUCT.md)。
 
