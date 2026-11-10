@@ -6,6 +6,7 @@
 #include "ble/link.h"
 #include "proto/a0.h"
 #include "proto/frame.h"
+#include "proto/profiles_gen.h"
 
 namespace app {
 namespace {
@@ -251,14 +252,18 @@ bool setSetpoint(int celsius) {
     Serial.println("[CMD] setpoint refused: no authorised link");
     return false;
   }
-  if (celsius < 35 || celsius > 60) {
-    Serial.printf("[CMD] setpoint %d refused: outside 35..60 C\n", celsius);
+  const proto::profiles::HeaterProfile& p = proto::profiles::defaultProfile();
+  if (celsius < p.set_min || celsius > p.set_max) {
+    Serial.printf("[CMD] setpoint %d refused: outside %d..%d C\n",
+                  celsius, p.set_min, p.set_max);
     return false;
   }
 
-  // Byte-identical to the Python reference (bosch_api.set_temperature): parameter type 02,
-  // parameter id 55, index 00, then the value in whole degrees.
-  const uint8_t data[4] = {0x02, 0x55, 0x00, (uint8_t)celsius};
+  // The write body comes from the profile row: parameter type, parameter id, index, then the
+  // value in whole degrees. Byte-identical to the Python reference (bosch_api.set_temperature)
+  // and to the d3_set_temperature_42 golden vector, which the proto self test rebuilds from
+  // the very same row.
+  const uint8_t data[4] = {p.write_type, p.write_id, p.write_index, (uint8_t)celsius};
   const bool ok = ble::send(proto::kRecvBiz, proto::kCmdWriteParam, data, sizeof(data));
   Serial.printf("[CMD] set %d C -> %s\n", celsius, ok ? "frame sent" : "send FAILED");
   return ok;

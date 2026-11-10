@@ -6,7 +6,7 @@ Read this before changing firmware or protocol code. Project-wide conventions li
 ## Build and flash
 
 ```bash
-python run_tests.py                                    # 150 offline tests, no hardware
+python run_tests.py                                    # 195 offline tests, no hardware
 python firmware/bridge/tools/gateway_cli.py --build    # compile only (~15 min cold)
 python firmware/bridge/tools/gateway_cli.py --flash    # compile, flash COM3, open console
 python firmware/bridge/tools/gateway_cli.py            # console only, no rebuild
@@ -29,7 +29,8 @@ python firmware/bridge/tools/gateway_cli.py            # console only, no rebuil
 ```bash
 python run_tests.py                                        # Python side, incl. the C++ host selftest
 python firmware/bridge/tools/gen_vectors.py                # after changing spec/protocol_vectors.json
-python firmware/bridge/tools/gen_mqtt.py                   # after changing spec/mqtt.json
+python firmware/bridge/tools/gen_profiles.py               # after changing spec/profiles.json
+python firmware/bridge/tools/gen_mqtt.py                   # after changing spec/mqtt.json (cross-checks profiles.json)
 python firmware/bridge/tools/gen_ha.py                     # after changing spec/mqtt.json
 python firmware/bridge/tools/host_selftest.py              # the four C++ suites, on the host
 # then flash and type: selftest                            # the same four suites, on the board
@@ -46,7 +47,9 @@ The four C++ suites run in two places, and the check counts must stay in lockste
 
 The suites:
 
-- **proto** — framing, stuffing, per-fragment XOR, checksum, stream reassembly, every A0 field
+- **proto** — framing, stuffing, per-fragment XOR, checksum, stream reassembly, every A0 field,
+  and the model profile rows: each row's write bytes must rebuild the golden D3 vector, and its
+  max setpoint must equal the `max_setpoint` the heater itself reports in the A0 frame
 - **net** — the exact MQTT payload bytes for a known snapshot, `ts` omission, fault hex, mode
   words, and the rounding rule
 - **mqtt** — CONNECT (with will, with credentials), PUBLISH/SUBSCRIBE bytes, a packet arriving one

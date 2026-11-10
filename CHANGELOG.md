@@ -9,6 +9,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The model profile registry (`spec/profiles.json`): one row per heater, generated everywhere.**
+  Setpoint range, write-parameter encoding and identity now have a single source. `gen_profiles.py`
+  emits `src/proto/profiles_gen.h` (the table the app layer validates and builds D3 writes from),
+  `gen_mqtt.py` cross-checks every range copy in `spec/mqtt.json` and emits the net layer's
+  `kSetpointMin/Max`, and `test_profiles.py` pins `bosch_api.py` and `spec/api_contract.json` to
+  the same row. Supporting a new heater becomes a spec row plus its A0 golden vectors - not a
+  firmware edit. The 35..60 hardcode that lived in the net and app layers independently is gone.
+- **A wrong golden vector, found by the new profile check.** `d3_set_temperature_42` carried three
+  data bytes (`02 55 2A`, no index) while the Python reference, the firmware, the protocol notes
+  and the measured hardware frame all use four (`02 55 00 2A`). Nothing ever compared the write
+  bytes against the vector, so it drifted. The proto self test now rebuilds the golden D3 frame
+  from every profile row, and checks the row's max against the `max_setpoint` the heater itself
+  reports in the A0 frame.
 - **The water_heater domain entity: the heater stops being a pile of sensors.** One entity,
   every Home Assistant convention included: dedicated card, voice control semantics, energy
   dashboard, and the Matter/HomeKit bridging Home Assistant already provides. Current
@@ -26,7 +39,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ~940 bytes. The discovery selftest now verifies every generated payload still fits the
   publish path, so a table that outgrows the buffers fails on the board, not as truncated
   JSON at a broker.
-- Firmware version 2.4.0-water-heater.
+- `host_selftest.py` tracks headers as well as sources: a regenerated `vectors_gen.h` now
+  rebuilds the host exe instead of silently testing the stale one (found when the fixed
+  golden vector kept "failing").
+- The demo bridge's setpoint clamp reads `spec/profiles.json` instead of its own 35/60, so
+  the demo cannot disagree with the real bridge.
+- Firmware version 2.5.0-profiles. On-board selftest 181 -> 185 checks (proto 60 -> 64); the
+  offline suite 186 -> 195 (new `test_profiles`).
 
 ### Added
 

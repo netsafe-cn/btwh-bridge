@@ -32,7 +32,7 @@ ESP32 C++ 实现，三者用同一组十六进制向量对齐，防止两端实�
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
-| Python 协议库 `bosch_api` | ✅ 可用 | **177 项**离线测试全绿，含签名冻结契约与黄金向量 |
+| Python 协议库 `bosch_api` | ✅ 可用 | **195 项**离线测试全绿，含签名冻结契约与黄金向量 |
 | 桌面控制台 / 米家桥接 | ✅ 可用 | tkinter GUI + 巴法云（中国区可选，非主线） |
 | ESP32-S3 网关固件 v2 | ✅ 已验证 | 实机连通通过：SMP 加密 → `A2/07` → `A2/08=01` → `A0` 稳定刷帧；断电重启自动恢复 |
 | MQTT / Home Assistant 自动发现 | ✅ 端到端验证 | 19 个实体自动发现（11 个测量 + 8 个诊断，含 RSSI 与最近断连原因，远程排障用）；调温命令往返闭环，已在 HAOS 生产级 Mosquitto 上验证，见 [MQTT.md](docs/MQTT.md) |
@@ -233,6 +233,7 @@ python run_tests.py -v       # 逐条列出
 | `test_service` | 22 | 服务层队列语义、配置热更新、幂等启动、失败原因透出 |
 | `test_pair_reasons` | 20 | 配对失败原因码、认证状态、`A2/07=00` 语义 |
 | `test_contract` | 7 | **签名冻结**、协议常量冻结、**跨端黄金向量** |
+| `test_profiles` | 9 | 型号 profile 表：范围/写参数合法性，与 mqtt.json、bosch_api、黄金 D3 向量、A0 自报上限的锁步 |
 | `test_fsm` | 28 | 配网/配对正交性、超时、恢复、安全约束 |
 
 三条纪律：
@@ -263,7 +264,7 @@ CI 覆盖 Linux + Windows × Python 3.11/3.12，另有一个 job 检查 `config.
 │   ├── bemfa.py                巴法云客户端（米家通道）
 │   ├── boschlog.py             日志：轮转文件 + 内存环形缓冲
 │   ├── singlelock.py           后台桥接的单实例锁
-│   ├── tests/                  ★ 177 项离线测试，自动发现
+│   ├── tests/                  ★ 195 项离线测试，自动发现
 │   └── tools/                  控制台、无界面桥接、采集、启动器
 │
 ├── firmware/                   一个应用一个目录，互不共享源码
@@ -278,7 +279,7 @@ CI 覆盖 Linux + Windows × Python 3.11/3.12，另有一个 job 检查 `config.
 │
 ├── docs/                       API.md、BLE_PROTOCOL.md、ARCHITECTURE.md、hardware/
 ├── integrations/               预留：Home Assistant、Node-RED、ESPHome
-├── run_tests.py                一条命令跑 177 项，全离线
+├── run_tests.py                一条命令跑 195 项，全离线
 ├── pyproject.toml              打包元数据（`pip install .`）
 ├── config.example.json         配置模板（不含任何真实信息）
 ├── CHANGELOG.md  CONTRIBUTING.md  SECURITY.md  CODE_OF_CONDUCT.md  LICENSE

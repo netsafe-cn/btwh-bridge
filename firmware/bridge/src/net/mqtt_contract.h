@@ -24,6 +24,13 @@ constexpr const char* kDeviceManufacturer = "Bosch";
 constexpr const char* kDeviceName       = "Water heater";
 constexpr uint8_t     kQos              = 0;
 
+// Setpoint bounds for the model this image is built for. Single source: spec/profiles.json
+// (cross-checked against every range stated in this file's source before generation). The
+// full profile table lives in proto/profiles_gen.h, which this layer must not see - it would
+// carry frame bytes past the ADR-008 boundary.
+constexpr int kSetpointMin = 35;
+constexpr int kSetpointMax = 60;
+
 // One row per published field, in the order the payload must use.
 struct FieldDesc {
   const char* key;

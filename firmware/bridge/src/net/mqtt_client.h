@@ -27,7 +27,7 @@ namespace net {
 
 // Bumped when the published surface changes; the panel and HA users see it in attributes.
 // 2.3.0: attributes became HA diagnostic entities (8), rssi published, last_disconnect added.
-constexpr const char* kFirmwareVersion = "2.4.0-water-heater";
+constexpr const char* kFirmwareVersion = "2.5.0-profiles";
 
 // Slow-changing metadata, published retained on every connect and refreshed on the
 // attributes heartbeat. Kept out of the state payload so the 4-second message stays small.

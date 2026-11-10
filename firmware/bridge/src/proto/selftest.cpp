@@ -6,6 +6,7 @@
 
 #include "a0.h"
 #include "frame.h"
+#include "profiles_gen.h"
 #include "vectors_gen.h"
 
 namespace proto {
@@ -167,6 +168,49 @@ void runA0Case(LogFn log, void* ctx, const vectors::A0Case& c) {
   expectInt(log, ctx, c.name, "bathroom", s.bathroom ? 1 : 0, c.bathroom);
 }
 
+// The model registry must agree with the protocol evidence, or the build fails here rather
+// than the heater surprising a user at runtime:
+//   1) the range is sane (min < max, step >= 1)
+//   2) the write_param bytes rebuild the golden D3 setpoint vector's data area
+//   3) the golden A0 vector's frame_type matches the row (the parser offsets must match)
+//   4) the golden A0 vector's max_setpoint equals the row's max - the heater itself reports
+//      60 in the state frame, so a profile that claims otherwise is wrong by definition
+void runProfileChecks(LogFn log, void* ctx) {
+  for (size_t i = 0; i < profiles::kProfileCount; i++) {
+    const profiles::HeaterProfile& p = profiles::kProfiles[i];
+
+    expectInt(log, ctx, p.id, "profile range sane", p.set_min < p.set_max && p.set_step >= 1, 1);
+
+    const vectors::FrameCase* d3 = nullptr;
+    for (size_t j = 0; j < vectors::kFrameCount; j++) {
+      const vectors::FrameCase& c = vectors::kFrames[j];
+      if (c.cmd == 0xD3 && c.data_len == 4 && c.data[0] == p.write_type
+          && c.data[1] == p.write_id && c.data[2] == p.write_index) {
+        d3 = &c;
+        break;
+      }
+    }
+    g_total++;
+    if (!d3) {
+      g_failed++;
+      line(log, ctx, "  x %s / profile write_param: no golden D3 vector matches %02X %02X %02X",
+           p.id, p.write_type, p.write_id, p.write_index);
+    } else if (d3->data[3] < p.set_min || d3->data[3] > p.set_max) {
+      g_failed++;
+      line(log, ctx, "  x %s / profile range excludes golden value %d", p.id, (int)d3->data[3]);
+    }
+
+    int matched = 0;
+    for (size_t j = 0; j < vectors::kA0Count; j++) {
+      const vectors::A0Case& c = vectors::kA0[j];
+      if (c.frame_type != p.a0_frame_type) continue;
+      matched++;
+      expectInt(log, ctx, p.id, "profile max_setpoint matches A0 report", c.max_setpoint, p.set_max);
+    }
+    expectInt(log, ctx, p.id, "profile a0_frame_type has a golden vector", matched, 1);
+  }
+}
+
 }  // namespace
 
 SelfTestResult runSelfTest(LogFn log, void* ctx) {
@@ -183,6 +227,7 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
   for (size_t i = 0; i < vectors::kA0Count; i++) {
     runA0Case(log, ctx, vectors::kA0[i]);
   }
+  runProfileChecks(log, ctx);
 
   SelfTestResult r;
   r.total = g_total;

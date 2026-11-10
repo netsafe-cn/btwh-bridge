@@ -141,6 +141,17 @@ is versioned in `spec/mqtt.json` (`contract_version`):
 **v1 freezes with the first public release.** Until then the file changes freely — that
 freedom is the point of not having users yet.
 
+### Where the numbers come from
+
+The setpoint range (35..60 C) is stated in three places in this contract — the
+`set/temperature` topic, the `setpoint` state field, and the water_heater entity — but it is
+*owned* by one file: `spec/profiles.json`, one row per heater model, which also carries the
+write-parameter encoding and the identity Home Assistant shows. `gen_mqtt.py` refuses to
+generate when any copy in this file disagrees with the profile row, the net layer gets
+`kSetpointMin/kSetpointMax` generated from it, the app layer validates and builds D3 writes
+from it, and `test_profiles.py` pins the Python side to the same numbers. A new heater model
+is a new row in that file, not a firmware edit.
+
 ---
 
 ## 4. Testing without the heater

@@ -213,8 +213,11 @@ void handleSetpoint(const wire::PublishInfo& in) {
 
   // The contract says out-of-range values are ignored, not clamped: a consumer that sends 70
   // asked for something the heater cannot do, and silently turning it into 60 hides the bug.
-  if (!whole || value < 35 || value > 60) {
-    Serial.printf("[MQTT] setpoint ignored: [%s] (whole degrees 35..60)\n", text);
+  // Bounds come from the generated contract header - same profile row the app layer checks
+  // against, so the two validations cannot disagree.
+  if (!whole || value < contract::kSetpointMin || value > contract::kSetpointMax) {
+    Serial.printf("[MQTT] setpoint ignored: [%s] (whole degrees %d..%d)\n",
+                  text, contract::kSetpointMin, contract::kSetpointMax);
     return;
   }
   Serial.printf("[MQTT] setpoint -> %d C\n", (int)value);

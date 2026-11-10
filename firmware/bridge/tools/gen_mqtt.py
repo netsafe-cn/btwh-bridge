@@ -41,7 +41,43 @@ HERE = pathlib.Path(__file__).resolve().parent            # firmware/bridge/tool
 BRIDGE = HERE.parent                                      # firmware/bridge
 REPO = BRIDGE.parents[1]                                  # repository root
 SPEC = REPO / "spec" / "mqtt.json"
+PROFILES = REPO / "spec" / "profiles.json"
 OUT = BRIDGE / "src" / "net" / "mqtt_contract.h"
+
+
+def cross_check(doc: dict, profiles_doc: dict) -> tuple[int, int]:
+    """The setpoint range is stated four times across the specs. The profile table is the
+    source of truth; this refuses to generate when any copy disagrees, so the build fails
+    instead of two layers validating different ranges.
+
+    Copies checked: topics.set_temperature.range, state_fields[setpoint].range,
+    water_heater_entity.min_temp/max_temp (this file) - and the model string against the
+    profile's, so Home Assistant cannot advertise one heater while the firmware is built
+    for another.
+    """
+    profiles = profiles_doc["profiles"]
+    default = profiles_doc["default_profile"]
+    row = next(p for p in profiles if p["id"] == default)
+    lo, hi = int(row["setpoint"]["min"]), int(row["setpoint"]["max"])
+    if lo >= hi:
+        raise ValueError("profile %s: setpoint min %d >= max %d" % (default, lo, hi))
+
+    copies = {
+        "topics.set_temperature.range": doc["topics"]["set_temperature"]["range"],
+        "state_fields setpoint range":
+            next(f["range"] for f in doc["state_fields"] if f["key"] == "setpoint"),
+        "water_heater_entity min/max":
+            [doc["home_assistant"]["water_heater_entity"]["min_temp"],
+             doc["home_assistant"]["water_heater_entity"]["max_temp"]],
+    }
+    for where, got in copies.items():
+        if [int(got[0]), int(got[1])] != [lo, hi]:
+            raise ValueError("%s is %s, profile %s says %s..%s" % (where, got, default, lo, hi))
+
+    if doc["home_assistant"]["device"]["model"] != row["model"]:
+        raise ValueError("mqtt.json device.model %r != profile %s model %r"
+                         % (doc["home_assistant"]["device"]["model"], default, row["model"]))
+    return lo, hi
 
 # The sample the self test compares against. Deliberately ordinary values: a heater at 47 %
 # with water flowing, which is the state a user is most likely to be looking at.
@@ -108,6 +144,8 @@ def build() -> str:
     doc = json.loads(SPEC.read_text(encoding="utf-8"))
     fields = doc["state_fields"]
     ha = doc["home_assistant"]
+    profiles_doc = json.loads(PROFILES.read_text(encoding="utf-8"))
+    set_lo, set_hi = cross_check(doc, profiles_doc)
 
     out = []
     out.append("""\
@@ -137,6 +175,13 @@ constexpr const char* kDeviceManufacturer = "%s";
 constexpr const char* kDeviceName       = "%s";
 constexpr uint8_t     kQos              = %d;
 
+// Setpoint bounds for the model this image is built for. Single source: spec/profiles.json
+// (cross-checked against every range stated in this file's source before generation). The
+// full profile table lives in proto/profiles_gen.h, which this layer must not see - it would
+// carry frame bytes past the ADR-008 boundary.
+constexpr int kSetpointMin = %d;
+constexpr int kSetpointMax = %d;
+
 // One row per published field, in the order the payload must use.
 struct FieldDesc {
   const char* key;
@@ -148,7 +193,8 @@ struct FieldDesc {
   const char* label;
 };
 """ % (doc["base_topic"], ha["discovery_prefix"], ha["device"]["model"],
-       ha["device"]["manufacturer"], ha["device"]["name"], doc["qos"]))
+       ha["device"]["manufacturer"], ha["device"]["name"], doc["qos"],
+       set_lo, set_hi))
 
     out.append("static const FieldDesc kFields[] = {\n")
     for f in fields:

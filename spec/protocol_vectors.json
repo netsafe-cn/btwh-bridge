@@ -23,11 +23,11 @@
     },
     {
       "name": "d3_set_temperature_42",
-      "note": "Write the 42 C setpoint",
-      "frame_hex": "7b7b210010d302552a857d7d",
-      "stuffed_hex": "7b7b210010d302552a857d7d",
+      "note": "Write the 42 C setpoint (type 02, id 55, index 00, value) - the four bytes bosch_api.set_temperature and the firmware profile row both build",
+      "frame_hex": "7b7b210010d30255002a857d7d",
+      "stuffed_hex": "7b7b210010d30255002a857d7d",
       "chunks_hex": [
-        "4a1a46333efe64261db41c1a"
+        "4a1a46333efe6426371be41a4e"
       ]
     },
     {

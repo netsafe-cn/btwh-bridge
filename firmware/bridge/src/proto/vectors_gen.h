@@ -92,19 +92,22 @@ static const uint8_t a2_08_submit_code_chunks[] = {
 };
 
 static const uint8_t d3_set_temperature_42_data[] = {
-  0x02, 0x55, 0x2A,
+  0x02, 0x55, 0x00, 0x2A,
 };
 
 static const uint8_t d3_set_temperature_42_frame[] = {
-  0x7B, 0x7B, 0x21, 0x00, 0x10, 0xD3, 0x02, 0x55, 0x2A, 0x85, 0x7D, 0x7D,
+  0x7B, 0x7B, 0x21, 0x00, 0x10, 0xD3, 0x02, 0x55, 0x00, 0x2A, 0x85, 0x7D,
+  0x7D,
 };
 
 static const uint8_t d3_set_temperature_42_stuffed[] = {
-  0x7B, 0x7B, 0x21, 0x00, 0x10, 0xD3, 0x02, 0x55, 0x2A, 0x85, 0x7D, 0x7D,
+  0x7B, 0x7B, 0x21, 0x00, 0x10, 0xD3, 0x02, 0x55, 0x00, 0x2A, 0x85, 0x7D,
+  0x7D,
 };
 
 static const uint8_t d3_set_temperature_42_chunks[] = {
-  0x4A, 0x1A, 0x46, 0x33, 0x3E, 0xFE, 0x64, 0x26, 0x1D, 0xB4, 0x1C, 0x1A,
+  0x4A, 0x1A, 0x46, 0x33, 0x3E, 0xFE, 0x64, 0x26, 0x37, 0x1B, 0xE4, 0x1A,
+  0x4E,
 };
 
 static const uint8_t b0_read_history_data[] = {
@@ -151,7 +154,7 @@ static const uint8_t a0_state_type1_payload[] = {
 static const FrameCase kFrames[] = {
   {"a2_07_submit_mac", 0xAB, 0x05, 0xA2, a2_07_submit_mac_data, 7, a2_07_submit_mac_frame, 16, a2_07_submit_mac_stuffed, 16, a2_07_submit_mac_chunks, {16}, 1},
   {"a2_08_submit_code", 0xAB, 0x06, 0xA2, a2_08_submit_code_data, 7, a2_08_submit_code_frame, 16, a2_08_submit_code_stuffed, 16, a2_08_submit_code_chunks, {16}, 1},
-  {"d3_set_temperature_42", 0x00, 0x10, 0xD3, d3_set_temperature_42_data, 3, d3_set_temperature_42_frame, 12, d3_set_temperature_42_stuffed, 12, d3_set_temperature_42_chunks, {12}, 1},
+  {"d3_set_temperature_42", 0x00, 0x10, 0xD3, d3_set_temperature_42_data, 4, d3_set_temperature_42_frame, 13, d3_set_temperature_42_stuffed, 13, d3_set_temperature_42_chunks, {13}, 1},
   {"b0_read_history", 0x00, 0x11, 0xB0, b0_read_history_data, 1, b0_read_history_frame, 10, b0_read_history_stuffed, 10, b0_read_history_chunks, {10}, 1},
   {"stuff_7b_7d", 0x00, 0x12, 0xA0, stuff_7b_7d_data, 4, stuff_7b_7d_frame, 13, stuff_7b_7d_stuffed, 15, stuff_7b_7d_chunks, {15}, 1},
 };

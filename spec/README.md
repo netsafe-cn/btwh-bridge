@@ -9,6 +9,7 @@ instead of quietly producing wrong data six months later.
 | `api_contract.json` | `python python/tests/test_contract.py --update` | same test, in CI | the Python library's own regression |
 | `protocol_vectors.json` | same command | `test_contract` (Python) and the C++ side | `python/bosch_api.py`, `firmware/components/bosch_proto` |
 | `mqtt.json` | by hand, reviewed like code | `python/tests/test_mqtt_contract.py` | `firmware/bridge` (publisher), `firmware/panel` and `integrations/` (consumers) |
+| `profiles.json` | by hand, reviewed like code | `python/tests/test_profiles.py`, `gen_mqtt.py` cross-check, the proto self test | `firmware/bridge` via `gen_profiles.py` -> `proto/profiles_gen.h` and `gen_mqtt.py` -> net constants; `bosch_api.py` pinned by tests |
 
 ## Why the MQTT contract comes before the code
 

@@ -36,6 +36,22 @@ SOURCES = [
     SRC / "net" / "discovery.cpp",
 ]
 
+# Headers the sources include. A generated header changed by gen_*.py must trigger a rebuild
+# too, or a stale exe keeps passing against a spec that moved - measured: a regenerated
+# vectors_gen.h did not rebuild, and the self test reported the fixed bug as still broken.
+HEADERS = [
+    SRC / "proto" / "a0.h",
+    SRC / "proto" / "frame.h",
+    SRC / "proto" / "vectors_gen.h",
+    SRC / "proto" / "profiles_gen.h",
+    SRC / "proto" / "selftest.h",
+    SRC / "net" / "state_json.h",
+    SRC / "net" / "mqtt_wire.h",
+    SRC / "net" / "mqtt_contract.h",
+    SRC / "net" / "discovery.h",
+    SRC / "net" / "selftest.h",
+]
+
 BUILD = HERE / ".hosttest"
 EXE = BUILD / ("host_selftest.exe" if os.name == "nt" else "host_selftest")
 
@@ -62,7 +78,7 @@ def build(compiler, force: bool) -> pathlib.Path:
     for src in SOURCES:
         if not src.exists():
             raise SystemExit("missing source: %s" % src)
-    stale = force or any(newer(s, EXE) for s in SOURCES)
+    stale = force or any(newer(s, EXE) for s in SOURCES + HEADERS)
     if stale:
         BUILD.mkdir(exist_ok=True)
         cmd = compiler + ["-std=c++17", "-I", str(SRC)] \

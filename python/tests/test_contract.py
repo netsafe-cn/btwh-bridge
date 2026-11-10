@@ -134,8 +134,9 @@ def build_vectors() -> dict:
                                 b"\x08" + BoschProtocol.encode_pair_code(code)),
             "Login step 2: submit the six-digit panel code, one byte per digit"),
         one("d3_set_temperature_42",
-            BoschProtocol.build(0x21, 0x00, 0x10, 0xD3, bytes([0x02, 0x55, 42])),
-            "Write the 42 C setpoint"),
+            BoschProtocol.build(0x21, 0x00, 0x10, 0xD3, bytes([0x02, 0x55, 0x00, 42])),
+            "Write the 42 C setpoint (type 02, id 55, index 00, value) - the four bytes "
+            "bosch_api.set_temperature and the firmware profile row both build"),
         one("b0_read_history",
             BoschProtocol.build(0x21, 0x00, 0x11, 0xB0, bytes([2])),
             "Read the run statistics"),

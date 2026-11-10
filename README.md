@@ -39,7 +39,7 @@ apart silently.
 
 | Component | State | Notes |
 |---|---|---|
-| Python library `bosch_api` | ✅ Ready | **177** offline tests green; signature-freeze contract + golden vectors |
+| Python library `bosch_api` | ✅ Ready | **195** offline tests green; signature-freeze contract + golden vectors |
 | Desktop console / Mi Home bridge | ✅ Ready | tkinter GUI + Bemfa cloud (China region, optional) |
 | ESP32-S3 gateway firmware v2 | ✅ Verified | Real-device link-up: SMP encryption → `A2/07` → `A2/08=01` → steady `A0` stream; auto-recovers after power cycle |
 | MQTT / Home Assistant auto-discovery | ✅ Verified end-to-end | 19 entities auto-discovered (11 measurements + 8 diagnostics, incl. RSSI and last-disconnect for remote troubleshooting); setpoint commands round-trip verified against a production Mosquitto on HAOS; see [MQTT.md](docs/MQTT.md) |
@@ -256,6 +256,7 @@ python run_tests.py -v       # per-test output
 | `test_service` | 22 | Service queue semantics, hot config reload, idempotent start, failure surfacing |
 | `test_pair_reasons` | 20 | Pairing failure reason codes, auth state, `A2/07=00` semantics |
 | `test_contract` | 7 | **Signature freeze**, protocol constant freeze, **cross-platform golden vectors** |
+| `test_profiles` | 9 | Model profile table: range/write-param sanity, lockstep with mqtt.json, bosch_api, the golden D3 vector, the A0-reported max |
 | `test_fsm` | 28 | Provisioning/pairing orthogonality, timeouts, recovery, safety constraints |
 
 Three rules:
@@ -289,7 +290,7 @@ change is a patch, minor or major bump live in
 │   ├── bemfa.py                Bemfa cloud client (Mi Home channel)
 │   ├── boschlog.py             Logging: rotating file + in-memory ring buffer
 │   ├── singlelock.py           Single-instance guard for the background bridge
-│   ├── tests/                  ★ 150 offline tests, auto-discovered
+│   ├── tests/                  ★ 195 offline tests, auto-discovered
 │   └── tools/                  Console, headless bridge, capture, launchers
 │
 ├── firmware/                   One directory per application, no shared source
@@ -304,7 +305,7 @@ change is a patch, minor or major bump live in
 │
 ├── docs/                       API.md, BLE_PROTOCOL.md, ARCHITECTURE.md, hardware/
 ├── integrations/               Reserved: Home Assistant, Node-RED, ESPHome
-├── run_tests.py                One command, 177 tests, fully offline
+├── run_tests.py                One command, 195 tests, fully offline
 ├── pyproject.toml              Packaging metadata (`pip install .`)
 ├── config.example.json         Config template (contains no real data)
 ├── CHANGELOG.md  CONTRIBUTING.md  SECURITY.md  CODE_OF_CONDUCT.md  LICENSE

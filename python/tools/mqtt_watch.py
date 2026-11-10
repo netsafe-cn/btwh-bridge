@@ -34,6 +34,7 @@ except ImportError:                                        # pragma: no cover - 
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 SPEC = REPO / "spec" / "mqtt.json"
+PROFILES_SPEC = REPO / "spec" / "profiles.json"
 
 # Human order: what a person looks at first when the shower is running.
 COLUMNS = [
@@ -211,11 +212,17 @@ def main() -> int:
                 except ValueError:
                     print("[demo] setpoint not a number, ignored: %r" % payload)
                 else:
-                    # Whole degrees only, mirroring the firmware's contract (35..60).
+                    # Whole degrees only, mirroring the firmware's contract; bounds come from
+                    # the model profile so this demo cannot disagree with the real bridge.
                     if value != int(value):
                         print("[demo] setpoint not a whole degree, ignored: %r" % payload)
                     else:
-                        clamped = max(35, min(60, int(value)))
+                        profiles = json.loads(PROFILES_SPEC.read_text(encoding="utf-8"))
+                        row = next(p for p in profiles["profiles"]
+                                   if p["id"] == profiles["default_profile"])
+                        lo = row["setpoint"]["min"]
+                        hi = row["setpoint"]["max"]
+                        clamped = max(lo, min(hi, int(value)))
                         demo_setpoint[0] = clamped
                         print("[demo] setpoint accepted -> %d (echoed from next state)"
                               % clamped)

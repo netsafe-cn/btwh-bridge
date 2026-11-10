@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "contract_version": "v1.0",
+  "note": "One row per supported heater model. The single source for every model-dependent number: setpoint range, write-parameter encoding, and identity. gen_profiles.py turns this into src/proto/profiles_gen.h; gen_mqtt.py cross-checks the range against the three places spec/mqtt.json states it before emitting the net-layer constants; python/tests/test_profiles.py pins python/bosch_api.py and spec/api_contract.json to the same numbers. Supporting a new model is a row here plus its A0 golden vectors in spec/protocol_vectors.json - not a firmware edit.",
+  "default_profile": "therm_4800i",
+  "fields": {
+    "id": "stable identifier used in code and generated headers",
+    "model": "the name Home Assistant shows (home_assistant.device.model in mqtt.json)",
+    "names": "market names, verified first",
+    "a0_frame_type": "the A0 payload variant this model broadcasts (0 or 1); selects the parser offsets",
+    "setpoint": "whole degrees, unit C; the bridge ignores out-of-range commands rather than clamping",
+    "write_param": "the D3 write-frame body prefix: parameter type, parameter id, index - then the value in whole degrees",
+    "status": "verified = driven on real hardware; expected = protocol believed identical, awaiting a contributor"
+  },
+  "profiles": [
+    {
+      "id": "therm_4800i",
+      "model": "Therm 4800i",
+      "names": [
+        "JSG27-CSI (CN market, verified)",
+        "Therm 4800i (EU import of the same unit, unverified)"
+      ],
+      "a0_frame_type": 1,
+      "setpoint": {
+        "min": 35,
+        "max": 60,
+        "step": 1
+      },
+      "setpoint_note": "The A0 state frame itself reports max_setpoint (payload[33] & 0x7F); the captured value is 60 and the profile agrees, so firmware that ever disagrees with the heater is a build failure here, not a runtime surprise.",
+      "write_param": {
+        "type": "0x02",
+        "id": "0x55",
+        "index": "0x00"
+      },
+      "write_param_note": "Byte-identical to python/bosch_api.set_temperature and to the d3_set_temperature_42 golden vector in spec/protocol_vectors.json; the C++ self test rebuilds that vector from this row.",
+      "status": "verified"
+    }
+  ]
+}
