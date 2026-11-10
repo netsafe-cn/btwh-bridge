@@ -56,6 +56,10 @@ bool connect(const char* heaterMac, uint8_t timeoutSec);
 bool isConnected();
 void disconnect();
 
+// RSSI of the connected heater, dBm, read straight from the controller. 0 when the link
+// is down - a real reading is always negative, so 0 doubles as "not reported" upstream.
+int rssi();
+
 // Build, checksum, stuff, XOR and write one command, fragment by fragment. The msgId counter is
 // internal and increments per call, exactly as the Python side does.
 bool send(uint8_t recv, uint8_t cmd, const uint8_t* data, size_t dlen);

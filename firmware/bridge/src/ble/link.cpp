@@ -103,6 +103,11 @@ void disconnect() {
 
 bool isConnected() { return gClient && gClient->isConnected(); }
 
+int rssi() {
+  // The controller answers synchronously from the connection table; no HCI round trip.
+  return isConnected() ? gClient->getRssi() : 0;
+}
+
 bool connect(const char* heaterMac, uint8_t timeoutSec) {
   uint8_t probe[6];
   if (!parseMac(heaterMac, probe)) return false;

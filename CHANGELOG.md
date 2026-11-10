@@ -7,6 +7,45 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **The water_heater domain entity: the heater stops being a pile of sensors.** One entity,
+  every Home Assistant convention included: dedicated card, voice control semantics, energy
+  dashboard, and the Matter/HomeKit bridging Home Assistant already provides. Current
+  temperature is the outlet, target is the setpoint bound to the existing `set/temperature`
+  topic (not optimistic - a refused setpoint must not look applied), and mode is read-only
+  `gas` (burner firing) / `off` (idle); a tankless heater has no switchable mode. All topics
+  are v1 contract topics - an adapter view, not a contract change.
+- **Contract versioning.** `spec/mqtt.json` declares `contract_version: 1` with the rules:
+  adding topics/fields is minor, renaming/moving/reinterpreting is major and requires
+  parallel publishing for one major cycle. v1 freezes with the first public release.
+
+### Changed
+
+- The MQTT publish buffers grew (`kTxCap` 768 -> 1152): the water_heater discovery payload is
+  ~940 bytes. The discovery selftest now verifies every generated payload still fits the
+  publish path, so a table that outgrows the buffers fails on the board, not as truncated
+  JSON at a broker.
+- Firmware version 2.4.0-water-heater.
+
+### Added
+
+- **Diagnostic entities: the remote-troubleshooting surface.** Every attributes field is now a
+  Home Assistant entity filed under `entity_category: diagnostic` (19 entities total: 11
+  measurements + 8 diagnostics). A user on another continent with no serial access reads the
+  firmware version, BLE RSSI, pairing state and the last disconnect straight from the device
+  page. This is the third piece of the internationalisation trio (license, story, and this).
+- **`rssi` is actually published now.** It was contracted in spec/mqtt.json's attributes_fields
+  all along, but `publishAttributes()` never wrote it - a spec field with no firmware writer is
+  a diagnostic that lies. Sampled live from the controller's connection table every 5 s.
+- **`last_disconnect` / `last_disconnect_at`**: the reason and epoch time of the last broker-link
+  drop, stamped in `drop()` and in the TCP-connect failure path. Retained through the reconnect,
+  so a flapping link is visible while it happens to be up; `0`/never reads as `unknown` in HA
+  rather than 1970-01-01.
+- **Attributes heartbeat.** The attributes topic is now republished every 60 s, not only on
+  connect: without it, uptime and RSSI freeze and a stuck bridge looks healthy for as long as
+  the socket lives.
+
 ### Fixed
 
 - **flame entity never turned "on" in Home Assistant.** The state payload carries a JSON

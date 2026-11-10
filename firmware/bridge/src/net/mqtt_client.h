@@ -26,14 +26,16 @@
 namespace net {
 
 // Bumped when the published surface changes; the panel and HA users see it in attributes.
-constexpr const char* kFirmwareVersion = "2.2.0-mqtt";
+// 2.3.0: attributes became HA diagnostic entities (8), rssi published, last_disconnect added.
+constexpr const char* kFirmwareVersion = "2.4.0-water-heater";
 
-// Slow-changing metadata, published retained on every connect. Kept out of the state payload
-// so the 4-second message stays small.
+// Slow-changing metadata, published retained on every connect and refreshed on the
+// attributes heartbeat. Kept out of the state payload so the 4-second message stays small.
 struct MqttInfo {
   const char* heater;      // BLE address as configured, e.g. 5c:f8:21:eb:6f:5f
   const char* pairState;   // "unpaired" | "paired" | "reconnecting"
   const char* hardware;    // board family, e.g. "esp32s3"
+  int         rssi;        // BLE link, dBm; 0 = link down (a real reading is negative)
 };
 
 // A consumer asked for a new setpoint. The callback returns nothing: the echo that confirms it

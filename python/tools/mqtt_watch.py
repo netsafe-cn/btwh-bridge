@@ -95,12 +95,14 @@ def publish_discovery(c, spec: dict, device: str) -> int:
     panel and Node-RED can watch it, but Home Assistant needs the config messages.
     """
     sys.path.insert(0, str(REPO / "firmware" / "bridge" / "tools"))
-    from gen_ha import DEV, discovery_topic, ha_entity, render_payload   # noqa: E402
+    from gen_ha import (DEV, discovery_topic, ha_diag_entity,   # noqa: E402
+                        ha_entity, ha_water_heater_entity, render_payload)
     sent = 0
-    for field in spec["state_fields"]:
-        entity = ha_entity(field, spec)
-        if not entity:
-            continue
+    entities = [e for e in (ha_entity(f, spec) for f in spec["state_fields"]) if e]
+    entities += [ha_diag_entity(f, spec) for f in spec["attributes_fields"]]
+    if "water_heater_entity" in spec.get("home_assistant", {}):
+        entities.append(ha_water_heater_entity(spec))
+    for entity in entities:
         topic = discovery_topic(entity["component"], entity["key"], spec).replace(DEV, device)
         payload = render_payload(entity["config"]).replace(DEV, device)
         c.publish(topic, payload, retain=True)
@@ -167,8 +169,14 @@ def main() -> int:
             print("[watch] subscribed %s" % tree)
         if args.demo:
             dev_root = "%s/%s" % (base, device)
+            # Same shape the firmware publishes: every attributes field, including the
+            # diagnostics (rssi, last disconnect), so the demo exercises the full contract.
             attrs = json.dumps({"fw": "demo", "hw": "mqtt_watch", "heater": "-",
-                                "pair_state": "demo", "uptime": int(time.time()) % 86400},
+                                "pair_state": "paired",
+                                "uptime": int(time.time()) % 86400,
+                                "rssi": -64,
+                                "last_disconnect": "demo bridge (never drops)",
+                                "last_disconnect_at": 0},
                                separators=(",", ":"))
             c.publish("%s/availability" % dev_root, "online", retain=True)
             c.publish("%s/attributes" % dev_root, attrs, retain=True)
@@ -221,11 +229,23 @@ def main() -> int:
 
     try:
         if args.demo and args.setpoint is None:
+            attrs_at = time.time()      # attributes heartbeat: same 60 s cadence as the firmware
             while True:
                 time.sleep(args.interval)
                 payload = demo_state()
                 client.publish("%s/%s/state" % (base, device), payload, retain=True)
                 print("[state] %s" % fmt_state(payload))
+                if time.time() - attrs_at >= 60:
+                    attrs_at = time.time()
+                    attrs = json.dumps({"fw": "demo", "hw": "mqtt_watch", "heater": "-",
+                                        "pair_state": "paired",
+                                        "uptime": int(time.time()) % 86400,
+                                        "rssi": -64,
+                                        "last_disconnect": "demo bridge (never drops)",
+                                        "last_disconnect_at": 0},
+                                       separators=(",", ":"))
+                    client.publish("%s/%s/attributes" % (base, device), attrs, retain=True)
+                    print("[attrs] %s" % attrs)
         elif args.setpoint is not None:
             time.sleep(1.0)          # let the subscription settle so attributes arrive
         else:

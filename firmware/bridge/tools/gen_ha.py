@@ -17,6 +17,12 @@ address is not known until the heater is paired. Topic and payload both carry it
 
 Entities: one per state field except `ts`, which is bridge metadata rather than a measurement.
 `setpoint` becomes a number entity bound to the command topic, `flame` a binary sensor.
+Every attributes field becomes a diagnostic sensor on the attributes topic - the remote
+troubleshooting surface: firmware, uptime, RSSI, pairing state, last disconnect.
+On top of those, one `water_heater` domain entity: current outlet temperature, the setpoint
+bound to the existing command topic, and a read-only mode ('gas' while the burner fires,
+'off' while idle). It reuses the v1 contract topics; the heater becomes a first-class
+water heater card instead of a pile of sensors.
 
 Usage:
     python firmware/bridge/tools/gen_ha.py            # write the header
@@ -45,7 +51,60 @@ ICONS = {
     "fan_speed": "mdi:fan",
     "chamber": "mdi:thermometer-high",
     "temp_box": "mdi:thermometer",
+    "fw": "mdi:chip",
+    "hw": "mdi:developer-board",
+    "heater": "mdi:bluetooth",
+    "pair_state": "mdi:bluetooth-connect",
+    "uptime": "mdi:clock-outline",
+    "rssi": "mdi:signal",
+    "last_disconnect": "mdi:alert-circle-outline",
+    "last_disconnect_at": "mdi:clock-remove",
 }
+
+# How an attributes field maps onto a Home Assistant sensor. The default is the plain
+# `{{ value_json.<key> }}` template; the cases below carry device classes or need their
+# template shaped (an epoch 0 must read as unknown, not as 1970).
+def ha_diag_entity(field: dict, doc: dict) -> dict:
+    key = field["key"]
+    base = doc["base_topic"]
+    ha = doc["home_assistant"]
+
+    cfg: dict = {
+        "name": field.get("label") or key,
+        "unique_id": "%s_%s" % (DEV, key),
+        "state_topic": "%s/%s/attributes" % (base, DEV),
+        "availability_topic": "%s/%s/availability" % (base, DEV),
+        "payload_available": "online",
+        "payload_not_available": "offline",
+        "entity_category": "diagnostic",
+        "value_template": "{{ value_json.%s }}" % key,
+        "device": {
+            "identifiers": [DEV],
+            "manufacturer": ha["device"]["manufacturer"],
+            "model": ha["device"]["model"],
+            "name": ha["device"]["name"],
+        },
+    }
+
+    if key == "pair_state":
+        cfg.update({"device_class": "enum", "options": field.get("values") or []})
+    elif key == "uptime":
+        # A duration the user can graph; not total_increasing because it resets on reboot.
+        cfg.update({"device_class": "duration", "unit_of_measurement": "s",
+                    "state_class": "measurement"})
+    elif key == "rssi":
+        cfg.update({"device_class": "signal_strength", "unit_of_measurement": "dBm",
+                    "state_class": "measurement"})
+    elif key == "last_disconnect_at":
+        cfg["device_class"] = "timestamp"
+        # 0 = never dropped. Rendering nothing makes Home Assistant show 'unknown'
+        # instead of 1970-01-01.
+        cfg["value_template"] = ("{%% if value_json.%s %%}{{ value_json.%s }}{%% endif %%}"
+                                 % (key, key))
+
+    if key in ICONS:
+        cfg["icon"] = ICONS[key]
+    return {"component": "sensor", "key": key, "config": cfg}
 
 
 def ha_entity(field: dict, doc: dict) -> dict | None:
@@ -133,6 +192,52 @@ def ha_entity(field: dict, doc: dict) -> dict | None:
     return {"component": component, "key": key, "config": cfg}
 
 
+def ha_water_heater_entity(doc: dict) -> dict:
+    """The water_heater domain entity: one device-level heater view over the same topics.
+
+    Everything comes from spec home_assistant.water_heater_entity, so the mapping lives in
+    the contract, not here. No mode_command_topic: a tankless heater has no switchable mode,
+    so 'gas' (burner firing) / 'off' (idle) is read-only state.
+    """
+    base = doc["base_topic"]
+    ha = doc["home_assistant"]
+    wh = ha["water_heater_entity"]
+    state_topic = "%s/%s/state" % (base, DEV)
+
+    cfg: dict = {
+        # null: the entity takes the device name ("Water heater"), avoiding the
+        # "Water heater Water heater" the concatenation would otherwise produce.
+        "name": None,
+        "default_entity_id": "water_heater",
+        "unique_id": "%s_water_heater" % DEV,
+        "current_temperature_topic": state_topic,
+        "current_temperature_template": "{{ value_json.%s }}" % wh["current_temperature"],
+        "temperature_state_topic": state_topic,
+        "temperature_state_template": "{{ value_json.%s }}" % wh["target_temperature"],
+        "temperature_command_topic": doc["topics"]["set_temperature"]["topic"].replace(
+            "{device_id}", DEV),
+        "temperature_unit": wh["temperature_unit"],
+        "min_temp": wh["min_temp"],
+        "max_temp": wh["max_temp"],
+        "precision": wh["precision"],
+        "modes": wh["modes"],
+        "mode_state_topic": state_topic,
+        "mode_state_template": wh["mode_template"],
+        # Target temperature is echoed from the heater, never assumed from the command.
+        "optimistic": False,
+        "availability_topic": "%s/%s/availability" % (base, DEV),
+        "payload_available": "online",
+        "payload_not_available": "offline",
+        "device": {
+            "identifiers": [DEV],
+            "manufacturer": ha["device"]["manufacturer"],
+            "model": ha["device"]["model"],
+            "name": ha["device"]["name"],
+        },
+    }
+    return {"component": "water_heater", "key": "water_heater", "config": cfg}
+
+
 def c_str(text: str) -> str:
     """Escape for a C++ string literal."""
     return text.replace("\\", "\\\\").replace('"', '\\"')
@@ -150,6 +255,9 @@ def render_payload(cfg: dict) -> str:
 def build() -> str:
     doc = json.loads(SPEC.read_text(encoding="utf-8"))
     entities = [e for e in (ha_entity(f, doc) for f in doc["state_fields"]) if e]
+    entities += [ha_diag_entity(f, doc) for f in doc["attributes_fields"]]
+    if "water_heater_entity" in doc.get("home_assistant", {}):
+        entities.append(ha_water_heater_entity(doc))
 
     out = []
     out.append("""\

@@ -1,6 +1,8 @@
 {
   "schema_version": 1,
   "status": "draft",
+  "contract_version": 1,
+  "contract_rules": "Topics and state/attributes JSON keys are the contract surface. Adding a topic or a field is a minor bump (consumers ignore what they do not know); changing a key's meaning, removing one, or moving a topic is a major bump and requires the old and new form published in parallel for one major cycle. v1 freezes on the first public release; before that this file changes freely.",
   "note": "Contract between the bridge firmware and everything that consumes it (panel firmware, Home Assistant, Mi Home, Node-RED). Neither side imports the other's code; both are generated from or validated against this file.",
   "base_topic": "btwh",
   "device_id": "btwh_<last6>",
@@ -54,7 +56,7 @@
       "topic": "btwh/{device_id}/attributes",
       "direction": "bridge -> consumer",
       "payload": "json",
-      "purpose": "Slow-changing metadata: firmware version, heater address, uptime, pairing state. Separate topic so it is not repeated in every state message."
+      "purpose": "Slow-changing metadata and link health: firmware version, heater address, uptime, BLE RSSI, last disconnect. Separate topic so it is not repeated in every state message; republished once a minute so uptime and RSSI age at most a minute."
     }
   },
   "state_fields": [
@@ -235,7 +237,21 @@
       "key": "rssi",
       "type": "int",
       "unit": "dBm",
-      "label": "BLE signal strength"
+      "label": "BLE signal strength",
+      "note": "0 means the link is down or the radio refused a read; a real reading is always negative."
+    },
+    {
+      "key": "last_disconnect",
+      "type": "string",
+      "label": "Last MQTT disconnect reason",
+      "note": "Why the broker link last dropped ('tcp connect failed', 'no traffic in 90 s', ...). Survives the reconnect so a flapping link is visible while it is up. 'not started' before the first attempt."
+    },
+    {
+      "key": "last_disconnect_at",
+      "type": "int",
+      "unit": "s",
+      "label": "Last MQTT disconnect (epoch)",
+      "note": "0 = the link has never dropped since boot. This is the broker link, not the BLE link."
     }
   ],
   "home_assistant": {
@@ -249,7 +265,20 @@
       "model": "Therm 4800i",
       "name": "Water heater"
     },
-    "entity_note": "One entity per state field. Sensors use state_class measurement; setpoint is a number entity; flame is a binary_sensor; mode is an enum sensor; fault is a sensor with an icon template."
+    "entity_note": "One entity per state field. Sensors use state_class measurement; setpoint is a number entity; flame is a binary_sensor; mode is an enum sensor; fault is a sensor with an icon template. Every attributes field is also an entity, but entity_category diagnostic, so Home Assistant files it under diagnostics instead of cluttering the device page - a remote user can read firmware, RSSI and the last disconnect without shell access to the board.",
+    "water_heater_entity": {
+      "component": "water_heater",
+      "current_temperature": "temp_out",
+      "target_temperature": "setpoint",
+      "command_topic": "topics.set_temperature",
+      "modes": ["off", "gas"],
+      "mode_template": "{{ 'gas' if value_json.flame else 'off' }}",
+      "temperature_unit": "C",
+      "min_temp": 35,
+      "max_temp": 60,
+      "precision": 1.0,
+      "note": "Home Assistant's water_heater domain is how the heater stops being 'a pile of sensors' and becomes a first-class heater: dedicated card, voice control semantics, energy panel, and the Matter/HomeKit bridging Home Assistant already provides. All topics reuse the v1 contract - nothing moves, this is purely an adapter view. mode has no command topic because a tankless heater has no switchable mode; 'gas' means the burner is firing, 'off' means idle. temperature_unit is 'C' because the water_heater MQTT schema takes C/F, not the degree sign the sensor schema demands - the two whitelists differ."
+    }
   },
   "consumer_rules": [
     "A missing field means 'not reported yet'. Do not print it as 0 - an unheated heater and an unreachable bridge must look different.",

@@ -51,7 +51,10 @@ The suites:
   words, and the rounding rule
 - **mqtt** — CONNECT (with will, with credentials), PUBLISH/SUBSCRIBE bytes, a packet arriving one
   byte at a time, a two-byte remaining length, and the malformed-length refusal
-- **discovery** — the `@DEV@` substitution, buffer refusals, and the golden topic/payload pair
+- **discovery** — the `@DEV@` substitution, buffer refusals, the golden topic/payload pair, the
+  invariant that exactly the entities reading the attributes topic are filed as diagnostics,
+  the water_heater entity's command-topic binding, and that every generated payload still fits
+  the publish buffer (a grown table must fail here, not as truncated JSON at the broker)
 
 None of them covers anything that needs the heater. `mqtt` prints the payload for the *live*
 state, so the same code path can be inspected over serial before a broker exists. `broker

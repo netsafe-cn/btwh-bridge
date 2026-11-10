@@ -226,12 +226,10 @@ static void onMqttCommand(void* /*ctx*/, const char* verb) {
   }
 }
 
-// Starts or restarts the client from the configured broker string. Called at boot and whenever
-// `broker` changes the address; a refresh is enough because the client owns its socket.
-static void startMqtt() {
-  char deviceId[20];
-  net::deviceIdFromAddress(gCfg.heater, deviceId, sizeof(deviceId));
-
+// Attributes metadata is sampled live, not frozen at start: the pairing state moves while the
+// bridge runs (paired -> reconnecting -> paired), and so does the BLE RSSI. Called every few
+// seconds from loop(); a remote user troubleshooting reads these through the MQTT diagnostics.
+static void refreshMqttInfo() {
   net::MqttInfo info;
   info.heater   = gCfg.heater;
   info.hardware = "esp32s3";
@@ -239,7 +237,17 @@ static void startMqtt() {
   info.pairState = st.phase == app::kRunning ? "paired"
                  : st.phase == app::kFailed  ? "reconnecting"
                                              : "unpaired";
+  info.rssi = ble::rssi();
   net::mqttSetInfo(info);
+}
+
+// Starts or restarts the client from the configured broker string. Called at boot and whenever
+// `broker` changes the address; a refresh is enough because the client owns its socket.
+static void startMqtt() {
+  char deviceId[20];
+  net::deviceIdFromAddress(gCfg.heater, deviceId, sizeof(deviceId));
+
+  refreshMqttInfo();
   net::mqttSetHooks(onMqttSetpoint, onMqttCommand, nullptr);
 
   net::mqttBegin(gCfg.broker, deviceId);
@@ -508,7 +516,10 @@ static void pollSerial() {
 void setup() {
   Serial.begin(115200);
   delay(1200);
-  banner("Bosch heater ESP32 gateway v2.1 - Waveshare ESP32-S3-DEV-KIT-N8R8");
+  banner("Bosch heater ESP32 gateway - Waveshare ESP32-S3-DEV-KIT-N8R8");
+  // The version comes from the one constant MQTT publishes, not from a second hand-typed
+  // string: the banner and the attributes payload cannot disagree if they share a source.
+  Serial.printf("[BOOT] firmware %s\n", net::kFirmwareVersion);
 
   gCfg.load();
 
@@ -570,6 +581,14 @@ void loop() {
   pollSerial();
   net::portalPoll();
   app::poll();
+
+  // Diagnostics metadata, resampled every 5 s: pairing state and RSSI move while the bridge
+  // runs, and the MQTT attributes heartbeat (60 s) republishes whatever this sampled last.
+  static uint32_t lastInfoMs = 0;
+  if (millis() - lastInfoMs > 5000) {
+    lastInfoMs = millis();
+    refreshMqttInfo();
+  }
 
   // One A0 frame per publish, plus a 60 s heartbeat inside the client. Publishing every frame
   // keeps `ts` fresh, which is how a consumer notices a bridge that is up but no longer hearing

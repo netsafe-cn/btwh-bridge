@@ -14,6 +14,7 @@ fails loudly when the shape it relies on changes.
 """
 from __future__ import annotations
 
+import json
 import pathlib
 import re
 import unittest
@@ -22,6 +23,8 @@ import bosch_api as api
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 LOGIN_CPP = ROOT / "firmware" / "bridge" / "src" / "auth" / "login.cpp"
+MQTT_CLIENT_CPP = ROOT / "firmware" / "bridge" / "src" / "net" / "mqtt_client.cpp"
+SPEC = ROOT / "spec" / "mqtt.json"
 
 # Reasons the firmware defines that have no Python counterpart: "ok" is the success case, and
 # "bad_input" means nothing was transmitted, so no PAIR_FAIL_* applies.
@@ -87,6 +90,49 @@ class TestReplyLineFormat(unittest.TestCase):
             line = "[AUTH] A2/%02X reply = %02X" % (0x07, code)
             self.assertEqual(re.findall(pattern, line), ["%02X" % code],
                              "log_diag would miss %s" % line)
+
+
+class TestAttributesPayload(unittest.TestCase):
+    """The attributes topic is the contract's diagnostics channel (spec/mqtt.json,
+    attributes_fields). rssi was contracted but never published for weeks before anyone
+    noticed - a spec field with no firmware writer is a diagnostic that lies.
+
+    These checks read mqtt_client.cpp as text on purpose: publishAttributes() cannot run
+    without Arduino, so the contract is pinned the same way auth reasons are.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fw = MQTT_CLIENT_CPP.read_text(encoding="utf-8")
+        cls.spec = json.loads(SPEC.read_text(encoding="utf-8"))
+        cls.keys = [f["key"] for f in cls.spec["attributes_fields"]]
+
+    def test_publish_attributes_carries_every_contracted_key(self):
+        # The payload is a C string literal, so the JSON quotes are backslash-escaped in
+        # the source; match the escaped form or this check pins nothing.
+        for key in self.keys:
+            self.assertIn('\\"%s\\"' % key, self.fw,
+                          "publishAttributes() does not publish %s" % key)
+
+    def test_disconnect_reason_and_time_survive_the_reconnect(self):
+        # gWhy is the reason, gLastDropAt the epoch. Both must be stamped in drop() and in
+        # the TCP-failure path (which does not go through drop), or a flapping link shows
+        # "never dropped" while dropping.
+        for needle in ("gLastDropAt = nowEpoch();",):
+            self.assertIn(needle, self.fw,
+                          "%s is the stamp; losing it makes last_disconnect_at lie" % needle)
+        self.assertGreaterEqual(self.fw.count("gLastDropAt = nowEpoch();"), 2,
+                                "drop() and the tcp-connect failure must both stamp it")
+
+    def test_attributes_republish_on_the_heartbeat(self):
+        # Published once per minute, not only on connect: uptime and rssi freeze otherwise,
+        # and a stuck bridge would look healthy for as long as the socket lives.
+        self.assertIn("gLastAttrs", self.fw,
+                      "the attributes heartbeat timer is gone; uptime would freeze")
+
+    def test_info_rssi_is_wired(self):
+        self.assertIn("rssi", self.fw,
+                      "MqttInfo.rssi is not read anywhere in mqtt_client.cpp")
 
 
 if __name__ == "__main__":

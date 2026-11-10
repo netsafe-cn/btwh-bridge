@@ -39,10 +39,10 @@ apart silently.
 
 | Component | State | Notes |
 |---|---|---|
-| Python library `bosch_api` | ✅ Ready | **167** offline tests green; signature-freeze contract + golden vectors |
+| Python library `bosch_api` | ✅ Ready | **177** offline tests green; signature-freeze contract + golden vectors |
 | Desktop console / Mi Home bridge | ✅ Ready | tkinter GUI + Bemfa cloud (China region, optional) |
 | ESP32-S3 gateway firmware v2 | ✅ Verified | Real-device link-up: SMP encryption → `A2/07` → `A2/08=01` → steady `A0` stream; auto-recovers after power cycle |
-| MQTT / Home Assistant auto-discovery | ✅ Verified end-to-end | 11 entities auto-discovered, setpoint commands round-trip verified against a production Mosquitto on HAOS; see [MQTT.md](docs/MQTT.md) |
+| MQTT / Home Assistant auto-discovery | ✅ Verified end-to-end | 19 entities auto-discovered (11 measurements + 8 diagnostics, incl. RSSI and last-disconnect for remote troubleshooting); setpoint commands round-trip verified against a production Mosquitto on HAOS; see [MQTT.md](docs/MQTT.md) |
 | Wi-Fi provisioning (Improv) | 📐 Spec done | Defined by `python/device_fsm.py` + [API.md §9](docs/API.md) |
 
 ---
@@ -304,7 +304,7 @@ change is a patch, minor or major bump live in
 │
 ├── docs/                       API.md, BLE_PROTOCOL.md, ARCHITECTURE.md, hardware/
 ├── integrations/               Reserved: Home Assistant, Node-RED, ESPHome
-├── run_tests.py                One command, 167 tests, fully offline
+├── run_tests.py                One command, 177 tests, fully offline
 ├── pyproject.toml              Packaging metadata (`pip install .`)
 ├── config.example.json         Config template (contains no real data)
 ├── CHANGELOG.md  CONTRIBUTING.md  SECURITY.md  CODE_OF_CONDUCT.md  LICENSE

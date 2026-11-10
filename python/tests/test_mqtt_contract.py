@@ -37,6 +37,25 @@ class TestMqttContract(unittest.TestCase):
         self.assertIsInstance(self.doc.get("schema_version"), int)
         self.assertGreaterEqual(self.doc["schema_version"], 1)
 
+    def test_contract_version_is_declared_with_rules(self):
+        # The version is the compatibility promise: bump minor for additions, major for
+        # anything that renames a key, moves a topic or changes a meaning.
+        self.assertIsInstance(self.doc.get("contract_version"), int)
+        self.assertGreaterEqual(self.doc["contract_version"], 1)
+        self.assertIn("parallel", self.doc.get("contract_rules", ""),
+                      "major changes must promise a parallel-publishing transition")
+
+    def test_water_heater_entity_only_reuses_contract_topics(self):
+        # The HA water_heater view is an adapter: every topic it names must exist in the
+        # v1 topics block. That is what keeps it from being a breaking change.
+        wh = self.doc["home_assistant"]["water_heater_entity"]
+        cmd = self.doc["topics"]["set_temperature"]["topic"]
+        self.assertEqual(cmd, "btwh/{device_id}/set/temperature")
+        self.assertIn(wh["current_temperature"], [f["key"] for f in self.doc["state_fields"]])
+        self.assertIn(wh["target_temperature"], [f["key"] for f in self.doc["state_fields"]])
+        self.assertEqual(wh["min_temp"], self.doc["topics"]["set_temperature"]["range"][0])
+        self.assertEqual(wh["max_temp"], self.doc["topics"]["set_temperature"]["range"][1])
+
     def test_state_fields_are_unique_and_complete(self):
         keys = [f["key"] for f in self.doc["state_fields"]]
         self.assertEqual(len(keys), len(set(keys)), "duplicate key in state_fields")

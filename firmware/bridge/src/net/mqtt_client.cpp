@@ -18,8 +18,9 @@ namespace {
 namespace wire = mqtt;
 
 // Transaction buffer. The largest thing ever built is a discovery payload (~470 bytes) plus a
-// topic and the fixed header, so 768 leaves room without a heap allocation per publish.
-constexpr size_t kTxCap = 768;
+// topic and the fixed header. The water_heater discovery payload is the largest publish at
+// ~940 bytes, so 1152 leaves room without a heap allocation per publish.
+constexpr size_t kTxCap = 1152;
 
 enum Link : uint8_t {
   kOff = 0,        // no broker configured
@@ -36,7 +37,7 @@ char     gDeviceId[20];        // btwh_<last6>
 char     gUser[33];
 char     gPass[65];
 
-MqttInfo   gInfo{"-", "unpaired", "esp32s3"};
+MqttInfo   gInfo{"-", "unpaired", "esp32s3", 0};
 SetpointFn gOnSetpoint = nullptr;
 CommandFn  gOnCommand  = nullptr;
 void*      gHookCtx    = nullptr;
@@ -46,12 +47,16 @@ uint32_t gLastAttempt = 0;
 uint32_t gBackoffMs   = 2000;
 uint32_t gLastPing    = 0;
 uint32_t gLastPublish = 0;
+uint32_t gLastAttrs   = 0;
 uint32_t gLastRx      = 0;
 uint16_t gPacketId    = 1;
 bool     gWantPublish = false;
 // Copy, not a pointer: the reason is often a caller's stack buffer ("broker refused: ..."),
 // and `status` reads this minutes later.
 char     gWhy[64] = "not started";
+// When the broker link last dropped, epoch seconds; 0 = never since boot. Published in the
+// attributes payload so a remote user can see a flapping link while it happens to be up.
+int64_t  gLastDropAt = 0;
 
 uint8_t gTx[kTxCap];
 uint8_t gRx[wire::kMaxPacket];
@@ -79,12 +84,16 @@ void publishText(const char* suffix, const char* text, bool retain) {
 }
 
 void publishAttributes() {
-  char json[220];
+  // The reasons are this file's own literals (no quotes or backslashes), so the JSON needs
+  // no escaping; if a reason ever grows punctuation, quote it at the drop() call site.
+  char json[340];
   snprintf(json, sizeof(json),
-           "{\"fw\":\"%s\",\"hw\":\"%s\",\"heater\":\"%s\",\"pair_state\":\"%s\",\"uptime\":%lu}",
+           "{\"fw\":\"%s\",\"hw\":\"%s\",\"heater\":\"%s\",\"pair_state\":\"%s\","
+           "\"uptime\":%lu,\"rssi\":%d,\"last_disconnect\":\"%s\",\"last_disconnect_at\":%lld}",
            kFirmwareVersion, gInfo.hardware ? gInfo.hardware : "esp32s3",
            gInfo.heater ? gInfo.heater : "-", gInfo.pairState ? gInfo.pairState : "unpaired",
-           (unsigned long)(millis() / 1000));
+           (unsigned long)(millis() / 1000), gInfo.rssi, gWhy,
+           (long long)gLastDropAt);
   publishText("attributes", json, true);
 }
 
@@ -92,7 +101,7 @@ void publishAttributes() {
 // repairs an entity deleted from Home Assistant without touching the bridge.
 void publishDiscovery() {
   static char topic[96];
-  static char payload[600];
+  static char payload[1024];
   size_t sent = 0;
   for (size_t i = 0; i < discovery::entityCount(); i++) {
     if (!discovery::expand(discovery::entityTopic(i), gDeviceId, topic, sizeof(topic))) continue;
@@ -117,6 +126,7 @@ void onConnected() {
   gBackoffMs   = 2000;          // a good session resets the schedule
   gLastPing    = millis();
   gLastRx      = millis();
+  gLastAttrs   = millis();      // the connect just published them
   gWantPublish = true;
 
   publishText("availability", "online", true);
@@ -133,6 +143,7 @@ void onConnected() {
 void drop(const char* why) {
   strncpy(gWhy, why ? why : "", sizeof(gWhy) - 1);
   gWhy[sizeof(gWhy) - 1] = 0;
+  gLastDropAt = nowEpoch();
   if (gState == kUp && gSock.connected()) {
     publishText("availability", "offline", true);   // explicit goodbye; the will covers crashes
     const size_t n = wire::buildDisconnect(gTx, sizeof(gTx));
@@ -154,6 +165,7 @@ void beginConnect() {
   if (!gSock.connect(gHost, gPort, 3000)) {
     strncpy(gWhy, "tcp connect failed", sizeof(gWhy) - 1);
     gWhy[sizeof(gWhy) - 1] = 0;
+    gLastDropAt = nowEpoch();
     gState = kIdle;
     gBackoffMs = gBackoffMs < 60000 ? gBackoffMs * 2 : 60000;
     Serial.printf("[MQTT] x %s:%u unreachable (retry in %lus)\n",
@@ -433,6 +445,14 @@ void mqttPoll(const Snapshot* snap, bool newFrame) {
   }
 
   const bool heartbeat = now - gLastPublish > 60000;
+  // The attributes heartbeat rides the same 60 s cadence as the state heartbeat: uptime and
+  // RSSI must age at most a minute, or the diagnostics tell a remote user lies about a bridge
+  // that is up but deaf. It does not wait for a snapshot - attributes exist before the first
+  // A0 frame, which is exactly when the pairing state is worth reading.
+  if (now - gLastAttrs > 60000) {
+    publishAttributes();
+    gLastAttrs = now;
+  }
   if (snap && (newFrame || gWantPublish || heartbeat)) {
     char payload[384];
     const size_t len = buildStateJson(payload, sizeof(payload), *snap);

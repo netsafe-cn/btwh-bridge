@@ -15,7 +15,7 @@ The topics and the field list are **not** documented here by hand: they live in
 |---|---|---|---|
 | `btwh/<device>/state` | bridge → consumer | yes | JSON, one message per A0 frame (~4 s) |
 | `btwh/<device>/availability` | bridge → consumer | yes | `online` / `offline` (will) |
-| `btwh/<device>/attributes` | bridge → consumer | yes | JSON: firmware, board, heater address, pair state, uptime |
+| `btwh/<device>/attributes` | bridge → consumer | yes | JSON: firmware, board, heater address, pair state, uptime, RSSI, last disconnect (reason + epoch); refreshed every 60 s |
 | `btwh/<device>/set/temperature` | consumer → bridge | no | integer `35`..`60`; anything else is ignored |
 | `btwh/<device>/cmd` | consumer → bridge | no | JSON or text containing `refresh`, `reboot` or `unpair` |
 | `homeassistant/<component>/<device>/<key>/config` | bridge → Home Assistant | yes | discovery document, one per entity |
@@ -74,11 +74,13 @@ Commands:
 
 ## 3. Home Assistant
 
-Eleven entities, all grouped under one device:
+Twenty entities, all grouped under one device — one water heater, eleven measurements, and
+eight diagnostics:
 
 | Entity | Component | Notes |
 |---|---|---|
-| Outlet / inlet / chamber / chassis temperature | sensor | `device_class: temperature`, unit `C` |
+| **The heater itself** | **water_heater** | current temperature (outlet), target 35–60 via `set/temperature`, mode `gas`/`off` from flame; see below |
+| Outlet / inlet / chamber / chassis temperature | sensor | `device_class: temperature`, unit `°C` |
 | Setpoint | number | 35–60, step 1, bound to `set/temperature`; **not optimistic**, so a refused setpoint does not look applied |
 | Water flow | sensor | `L/min` |
 | Burner power | sensor | `%`, icon `mdi:fire` |
@@ -86,12 +88,58 @@ Eleven entities, all grouped under one device:
 | Flame | binary_sensor | `device_class: running`, JSON `true`/`false` |
 | Mode | sensor | `device_class: enum` with the four contract values |
 | Fault | sensor | icon template: `mdi:check-circle` for `none`, `mdi:alert` otherwise |
+| Firmware / board / heater address | sensor | diagnostics, from the attributes topic |
+| Uptime | sensor | `device_class: duration`, refreshes once a minute |
+| BLE RSSI | sensor | `device_class: signal_strength`, `dBm`; `0` = link down |
+| Pairing state | sensor | `device_class: enum` |
+| Last disconnect reason / time | sensor | diagnostics; survives the reconnect, so a flapping link is visible while it happens to be up. Time is `unknown` while the link has never dropped |
+
+### The water_heater domain entity
+
+The measurements above make the heater *visible*; the `water_heater` entity makes it *a heater*
+in Home Assistant's eyes: the dedicated card, voice control ("set the water heater to 45"),
+the energy dashboard, and Matter/HomeKit bridging Home Assistant already provides.
+
+| Home Assistant concept | Source | Topic |
+|---|---|---|
+| Current temperature | `temp_out` (outlet) | `state` JSON |
+| Target temperature | `setpoint` | `state` JSON, confirmed by echo — never optimistic |
+| Set temperature command | — | the existing `set/temperature` topic, unchanged |
+| Mode | `flame` → `gas` while firing, `off` while idle | `state` JSON, read-only |
+| Range / unit | 35–60 °C, step 1 | `temperature_unit: "C"` — the water_heater schema takes `C`/`F`, not the degree sign the sensor schema demands |
+
+There is no `mode_command_topic`: a tankless heater has no switchable mode. `gas` means the
+burner is firing; `off` means idle. When Home Assistant's MQTT water_heater grows an
+`action_topic`, `HEATING`/`IDLE` should replace this mapping.
+
+Everything the entity touches is a v1 contract topic — it is an adapter view, not a contract
+change. A Node-RED flow or the touch panel that ignores Home Assistant sees nothing different.
+
+The diagnostics are the remote-troubleshooting surface: a user on another continent with no
+serial access reads firmware, RSSI and the last disconnect reason straight from the device page.
+They are published on the attributes topic, refreshed on the same 60 s heartbeat as the state
+heartbeat, so uptime and RSSI never age more than a minute.
 
 Discovery is republished retained on every connect. That is deliberate: deleting an entity in
 Home Assistant and reconnecting the bridge restores it, with no serial console involved.
 
 `ts` has no entity. It is bridge metadata; exposing it as a sensor would invite automations on a
 value that means "the bridge is alive", not "the heater is doing something".
+
+### Contract versioning
+
+The MQTT topics and the JSON keys inside `state`/`attributes` are the contract surface; the
+Home Assistant discovery payloads are adapters over it and change freely. The contract itself
+is versioned in `spec/mqtt.json` (`contract_version`):
+
+- **minor** (1 → 2): a new topic, a new JSON field. Consumers ignore what they do not know;
+  nothing breaks. No transition needed.
+- **major** (1 → 2 with a breaking note): a renamed key, a moved topic, a changed meaning.
+  The bridge must publish old and new in parallel for one major cycle, and `CHANGELOG.md`
+  names the release that drops the old form.
+
+**v1 freezes with the first public release.** Until then the file changes freely — that
+freedom is the point of not having users yet.
 
 ---
 
