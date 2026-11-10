@@ -110,6 +110,13 @@ bool topicIs(const PublishInfo& info, const char* expected);
 // Human-readable CONNACK code, for the serial log only.
 const char* connackText(uint8_t code);
 
+// "btwh_" + the last six hex digits of a BLE address, lower case. Stable across reflashes,
+// which is what keeps Home Assistant entities alive after an update. Lives here (not in
+// mqtt_client.cpp) so the self test can pin it: the output is a client id and a topic
+// fragment, and MQTT forbids control characters in both - an unterminated hex buffer once
+// shipped stack garbage into a client id and every broker connection was refused.
+void deviceIdFromAddress(const char* address, char* out, size_t cap);
+
 // ---------------------------------------------------------------- self test
 SelfTestResult runSelfTest(LogFn log, void* ctx);
 

@@ -35,7 +35,7 @@ class HostSelftest(unittest.TestCase):
         # proto 64 + net 16 + mqtt 32 + discovery 73, printed by the runner's last line.
         # If these drift, update this number AND the board result in AGENTS.md - the two
         # must stay in lockstep or one of them is no longer running what it claims.
-        self.assertIn("host selftest passed: 185 checks", self.proc.stdout)
+        self.assertIn("host selftest passed: 192 checks", self.proc.stdout)
 
 
 if __name__ == "__main__":

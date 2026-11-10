@@ -27,7 +27,8 @@ namespace net {
 
 // Bumped when the published surface changes; the panel and HA users see it in attributes.
 // 2.3.0: attributes became HA diagnostic entities (8), rssi published, last_disconnect added.
-constexpr const char* kFirmwareVersion = "2.5.0-profiles";
+// 2.5.1: device id terminated properly; the client id no longer carries stack garbage.
+constexpr const char* kFirmwareVersion = "2.5.1-device-id";
 
 // Slow-changing metadata, published retained on every connect and refreshed on the
 // attributes heartbeat. Kept out of the state payload so the 4-second message stays small.
@@ -48,9 +49,8 @@ typedef void (*CommandFn)(void* ctx, const char* verb);
 // "host" or "host:port". Empty or malformed returns false and the client stays off.
 bool parseBroker(const char* text, char* host, size_t hostCap, uint16_t* port);
 
-// "btwh_" + the last six hex digits of the BLE address, lower case. Stable across reflashes,
-// which is what keeps Home Assistant entities alive after an update.
-void deviceIdFromAddress(const char* address, char* out, size_t cap);
+// The device id lives in mqtt_wire.h next to its self test: it is a pure string function,
+// and the wire layer is the part of net/ that runs in the host self test.
 
 void mqttBegin(const char* broker, const char* deviceId);
 // Broker account. Called right after every mqttBegin(); empty strings mean anonymous.

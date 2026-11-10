@@ -348,20 +348,6 @@ bool parseBroker(const char* text, char* host, size_t hostCap, uint16_t* port) {
   return true;
 }
 
-void deviceIdFromAddress(const char* address, char* out, size_t cap) {
-  if (!out || cap == 0) return;
-  out[0] = 0;
-  if (!address) return;
-
-  char hex[40];
-  size_t n = 0;
-  for (const char* p = address; *p && n < sizeof(hex); p++) {
-    if (isxdigit((unsigned char)*p)) hex[n++] = (char)tolower((unsigned char)*p);
-  }
-  const char* tail = n >= 6 ? hex + n - 6 : "000000";
-  snprintf(out, cap, "%s_%s", contract::kBaseTopic, tail);
-}
-
 void mqttBegin(const char* broker, const char* deviceId) {
   uint16_t port = 1883;
   if (!parseBroker(broker, gHost, sizeof(gHost), &port)) {
@@ -416,7 +402,7 @@ void mqttPoll(const Snapshot* snap, bool newFrame) {
     return;
   }
 
-  const uint32_t now = millis();
+  uint32_t now = millis();
 
   if (gState == kIdle) {
     if (now - gLastAttempt >= gBackoffMs) beginConnect();
@@ -433,6 +419,11 @@ void mqttPoll(const Snapshot* snap, bool newFrame) {
 
   drainSocket();
   if (gState != kUp) return;
+
+  // Re-sample: drainSocket() may have just stamped gLastRx with a millis() newer than the
+  // `now` sampled at the top of this call (a SUBACK landing inside this iteration), and
+  // `now - gLastRx` would then underflow to ~4e9 and kill the link 0.1 s after CONNACK.
+  now = millis();
 
   // A socket can stay "connected" for a long time after the broker stopped answering, so
   // silence is treated as failure: 90 s is three keepalive intervals and far longer than the

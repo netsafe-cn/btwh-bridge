@@ -245,7 +245,7 @@ static void refreshMqttInfo() {
 // `broker` changes the address; a refresh is enough because the client owns its socket.
 static void startMqtt() {
   char deviceId[20];
-  net::deviceIdFromAddress(gCfg.heater, deviceId, sizeof(deviceId));
+  net::mqtt::deviceIdFromAddress(gCfg.heater, deviceId, sizeof(deviceId));
 
   refreshMqttInfo();
   net::mqttSetHooks(onMqttSetpoint, onMqttCommand, nullptr);

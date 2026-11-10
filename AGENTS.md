@@ -45,6 +45,12 @@ The four C++ suites run in two places, and the check counts must stay in lockste
   executed nowhere, which is the exact window this runner closes.
 - **on the board** — the `selftest` serial command runs the same suites against real hardware.
 
+Both stay green through bugs the other layers only find live: the client id once shipped
+unterminated stack garbage (the host's stack happened to be zero) and the watchdog once
+dropped a healthy link via a `millis()` underflow only reachable with a real broker answering.
+When the MQTT path changes, bench-test it: configure a real broker over the serial console
+and watch `[MQTT] + connected` hold past one keepalive interval before believing it works.
+
 The suites:
 
 - **proto** — framing, stuffing, per-fragment XOR, checksum, stream reassembly, every A0 field,
@@ -53,7 +59,10 @@ The suites:
 - **net** — the exact MQTT payload bytes for a known snapshot, `ts` omission, fault hex, mode
   words, and the rounding rule
 - **mqtt** — CONNECT (with will, with credentials), PUBLISH/SUBSCRIBE bytes, a packet arriving one
-  byte at a time, a two-byte remaining length, and the malformed-length refusal
+  byte at a time, a two-byte remaining length, the malformed-length refusal, and the device-id
+  invariant: the string that becomes the client id is `[a-z0-9_]` only, terminated, and safe to
+  truncate (an unterminated hex buffer once shipped stack garbage into the client id and every
+  real broker refused the connection while this suite stayed green)
 - **discovery** — the `@DEV@` substitution, buffer refusals, the golden topic/payload pair, the
   invariant that exactly the entities reading the attributes topic are filed as diagnostics,
   the water_heater entity's command-topic binding, and that every generated payload still fits

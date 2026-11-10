@@ -7,6 +7,28 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The MQTT link dropped itself 0.1 s after connecting.** The 90-second watchdog compared
+  `now - gLastRx`, with `now` sampled at the top of the poll - but `drainSocket()` can stamp
+  `gLastRx` with a *newer* `millis()` inside the same call (a SUBACK landing right after
+  CONNACK), so the unsigned subtraction underflowed to ~4e9 and killed the healthy link.
+  Symptoms: connect, subscribe, "no traffic in 90 s", retry, forever - once the client id
+  bug above was fixed and a real broker started accepting the connection. `now` is
+  re-sampled after the drain; the watchdog now measures what it claims.
+
+- **The MQTT client id carried stack garbage, and every broker refused the connection.**
+  `deviceIdFromAddress` collected the hex digits of the BLE address into a buffer it never
+  terminated, then `snprintf`'s `%s` read past it into whatever the stack held - on the board
+  that was `\x10`, a control character MQTT forbids in client ids and topics, so Mosquitto
+  dropped every CONNECT as "client identifier not valid" while the firmware reported "no
+  CONNACK in 4 s". The host self test never saw it: its stack happened to be zero. Found by
+  pointing the board at a fake broker on the bench PC and hexdumping the first packet; fixed
+  by terminating the buffer, and the function moved into the wire layer with 7 new self-test
+  checks pinning the exact invariant (charset `[a-z0-9_]`, fallback, truncation safety).
+  This was the first real-broker contact for the client - the WiFi/MQTT path had never been
+  exercised before this session.
+
 ### Added
 
 - **The model profile registry (`spec/profiles.json`): one row per heater, generated everywhere.**
@@ -46,6 +68,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the demo cannot disagree with the real bridge.
 - Firmware version 2.5.0-profiles. On-board selftest 181 -> 185 checks (proto 60 -> 64); the
   offline suite 186 -> 195 (new `test_profiles`).
+- Firmware version 2.5.1-device-id (bug fix on top). On-board selftest 185 -> 192 checks
+  (mqtt 32 -> 39, the device-id invariant); the offline suite stays at 195.
 
 ### Added
 

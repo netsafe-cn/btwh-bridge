@@ -1,7 +1,10 @@
 #include "net/mqtt_wire.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
+
+#include "net/mqtt_contract.h"
 
 namespace net {
 namespace mqtt {
@@ -208,6 +211,26 @@ size_t buildDisconnect(uint8_t* out, size_t cap) {
   return 2;
 }
 
+void deviceIdFromAddress(const char* address, char* out, size_t cap) {
+  if (!out || cap == 0) return;
+  out[0] = 0;
+  if (!address) return;
+
+  // Only hex digits are collected, and the buffer is terminated: this string becomes an MQTT
+  // client id and every topic the bridge publishes, and MQTT rejects control characters in
+  // both. An unterminated hex[] once leaked stack garbage (\x10) into the client id - the
+  // host self test stayed green (its stack happened to be zero) while every real broker
+  // refused the connection as "client identifier not valid".
+  char hex[13];
+  size_t n = 0;
+  for (const char* p = address; *p && n < sizeof(hex) - 1; p++) {
+    if (isxdigit((unsigned char)*p)) hex[n++] = (char)tolower((unsigned char)*p);
+  }
+  hex[n] = 0;
+  const char* tail = n >= 6 ? hex + n - 6 : "000000";
+  snprintf(out, cap, "%s_%s", contract::kBaseTopic, tail);
+}
+
 // ---------------------------------------------------------------- inbound
 
 int decode(const uint8_t* buf, size_t len, Packet* out, size_t* consumed) {
@@ -387,6 +410,35 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
   check(c, strcmp(connackText(kAccepted), "accepted") == 0, "connack 0 text", nullptr);
   check(c, strcmp(connackText(kBadCredentials), "bad username or password") == 0,
         "connack 4 text", nullptr);
+
+  // 14. Device id: the string that becomes the client id and every topic. MQTT rejects
+  //     control characters in both, so the charset invariant is pinned here - it is exactly
+  //     the invariant an unterminated buffer violated on the board while this suite stayed
+  //     green (the host's stack happened to be zero).
+  {
+    char id[24];
+    deviceIdFromAddress("5c:f8:21:eb:6f:5f", id, sizeof(id));
+    check(c, strcmp(id, "btwh_eb6f5f") == 0, "device id from a full address", nullptr);
+    check(c, strlen(id) == 11, "device id length is exact", nullptr);
+    bool clean = true;
+    for (const char* p = id; *p; p++) {
+      if (!((*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9') || *p == '_')) clean = false;
+    }
+    check(c, clean, "device id charset is [a-z0-9_] only", nullptr);
+
+    deviceIdFromAddress("aa:bb", id, sizeof(id));
+    check(c, strcmp(id, "btwh_000000") == 0, "short address falls back to 000000", nullptr);
+
+    deviceIdFromAddress("ZZ:aa:bb:cc:dd:ee", id, sizeof(id));
+    check(c, strcmp(id, "btwh_ccddee") == 0, "non-hex characters are filtered", nullptr);
+
+    deviceIdFromAddress(nullptr, id, sizeof(id));
+    check(c, id[0] == 0, "null address yields an empty string", nullptr);
+
+    char tiny[6];
+    deviceIdFromAddress("5c:f8:21:eb:6f:5f", tiny, sizeof(tiny));
+    check(c, tiny[sizeof(tiny) - 1] == 0, "a small buffer is still terminated", nullptr);
+  }
 
   return SelfTestResult{c.total, c.failed};
 }
