@@ -152,17 +152,19 @@ static void reportTest(const char* layer, int total, int failed) {
 static void doSelfTest() {
   // Each layer keeps its own suite: proto owns the wire format, net owns the published bytes,
   // net::mqtt owns the broker's packet format, net::rules owns the inbound parsing (setpoint
-  // text, command verbs, broker addresses), and discovery owns the entity table. None of
-  // them can check another's job.
+  // text, command verbs, broker addresses), net::prov owns the provisioning validation, and
+  // discovery owns the entity table. None of them can check another's job.
   proto::SelfTestResult     p = proto::runSelfTest(serialLine, nullptr);
   net::SelfTestResult       n = net::runSelfTest(serialLine, nullptr);
   net::SelfTestResult       w = net::mqtt::runSelfTest(serialLine, nullptr);
   net::SelfTestResult       r = net::rules::runSelfTest(serialLine, nullptr);
+  net::SelfTestResult       v = net::prov::runSelfTest(serialLine, nullptr);
   net::SelfTestResult       d = net::discovery::runSelfTest(serialLine, nullptr);
   reportTest("proto", p.total, p.failed);
   reportTest("net", n.total, n.failed);
   reportTest("mqtt", w.total, w.failed);
   reportTest("rules", r.total, r.failed);
+  reportTest("provision", v.total, v.failed);
   reportTest("discovery", d.total, d.failed);
 }
 

@@ -81,6 +81,16 @@ bool commandDeliveryAllowed(bool retained);
 // was not. Callers must sample their clock AFTER the receive path that updates the timestamp.
 uint32_t elapsedMs(uint32_t newer, uint32_t older);
 
+// ---------------------------------------------------------------- backoff
+
+// The reconnect schedule: double after every failed attempt, capped at one minute. Called
+// from both the drop path and the TCP-unreachable path, which is why it is a function and
+// not an inline expression - the two sites once carried identical copies of it, and a copy
+// that drifts is a schedule nobody can reason about. Note the sequence overshoots once
+// (32000 -> 64000) before settling at 60000: the cap applies to the output, not the doubling.
+// One good session resets the schedule at the caller (onConnected), not here.
+uint32_t nextBackoffMs(uint32_t current);
+
 // ---------------------------------------------------------------- self test
 
 SelfTestResult runSelfTest(LogFn log, void* ctx);

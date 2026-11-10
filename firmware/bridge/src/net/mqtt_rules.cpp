@@ -101,6 +101,10 @@ bool commandDeliveryAllowed(bool retained) { return !retained; }
 
 uint32_t elapsedMs(uint32_t newer, uint32_t older) { return newer - older; }
 
+uint32_t nextBackoffMs(uint32_t current) {
+  return current < 60000 ? current * 2 : 60000;
+}
+
 // ---------------------------------------------------------------- self test
 
 namespace {
@@ -257,6 +261,17 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
   // The wrap itself is only safe because the comparison threshold is far below UINT32_MAX;
   // pin that the watchdog limit (90 s) stays far from the wrap magnitude.
   check(t, 90000u < 0xFFFFFFFFu / 2, "watchdog threshold far below wrap magnitude");
+
+  // 6. The reconnect schedule: doubling, capped at a minute, with the one-step overshoot
+  //    pinned as intended behaviour (the cap applies to the output). This is the schedule
+  //    that once looked broken during the 2.5.1 bench session - a good session resets it,
+  //    so a flapping-at-4-s loop meant the link was being killed, not that the doubling
+  //    failed. With the sequence pinned here, that diagnosis no longer needs a bench.
+  check(t, nextBackoffMs(2000) == 4000, "backoff doubles from the start");
+  check(t, nextBackoffMs(32000) == 64000, "backoff overshoots once before the cap");
+  check(t, nextBackoffMs(64000) == 60000, "backoff caps at one minute");
+  check(t, nextBackoffMs(60000) == 60000, "backoff stays at the cap");
+  check(t, nextBackoffMs(0) == 0, "zero backoff stays zero (never used, never surprising)");
 
   return SelfTestResult{t.total, t.failed};
 }

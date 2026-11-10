@@ -152,7 +152,7 @@ void drop(const char* why) {
   gRxLen       = 0;
   gState       = kIdle;
   gLastAttempt = millis();
-  gBackoffMs   = gBackoffMs < 60000 ? gBackoffMs * 2 : 60000;
+  gBackoffMs   = rules::nextBackoffMs(gBackoffMs);
   Serial.printf("[MQTT] x %s (retry in %lus)\n", why, (unsigned long)(gBackoffMs / 1000));
 }
 
@@ -166,7 +166,7 @@ void beginConnect() {
     gWhy[sizeof(gWhy) - 1] = 0;
     gLastDropAt = nowEpoch();
     gState = kIdle;
-    gBackoffMs = gBackoffMs < 60000 ? gBackoffMs * 2 : 60000;
+    gBackoffMs = rules::nextBackoffMs(gBackoffMs);
     Serial.printf("[MQTT] x %s:%u unreachable (retry in %lus)\n",
                   gHost, (unsigned)gPort, (unsigned long)(gBackoffMs / 1000));
     return;

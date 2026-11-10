@@ -9,9 +9,33 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The golden CONNECT: bench-verified bytes, pinned.** The exact 82-byte CONNECT packet the
+  firmware builds (client id, retained will, credentials, 60 s keepalive) is now a byte-for-byte
+  check in the mqtt suite, calibrated from the live bench session and re-submitted to the real
+  Mosquitto for confirmation (CONNACK rc=5 on test credentials - the packet parses, the client
+  id is valid, only the password is not). Any future edit to the flag order, length prefixes
+  or field order fails at the bytes, not as a silent refusal at some user's broker.
+
+- **`rules::nextBackoffMs` - the reconnect schedule as a function.** The doubling-with-a-
+  minute-cap expression existed twice (drop path and TCP-unreachable path) as identical
+  inline copies; it is one host-tested function now, with the sequence pinned including its
+  one-step overshoot (32000 -> 64000 before settling at 60000 - the cap applies to the
+  output). During the 2.5.1 bench session that schedule looked broken; with the sequence
+  pinned, "flapping at a constant 4 s" can only mean the link is being killed, not that the
+  doubling failed.
+
+- **`net::prov` self test: the provisioning validation, 19 checks.** `validateRequest` gates
+  the pairing flow, and a malformed attempt still counts toward the heater's three-failure
+  lockout - yet the MAC grammar, the six-digit code rule and the `pair_state` words that
+  mirror the Home Assistant attribute had never executed in a test. They now run on the host
+  and on the board: five state words, the baseline request, dash/uppercase MAC forms, short/
+  non-hex/trailing-junk/empty addresses, the empty and maximum SSID, and the pairing code
+  boundary cases (empty keeps the pairing; five, seven, lettered and spaced codes are
+  refused before anything is transmitted).
+
 - **`net::mqtt_rules` - the inbound contract parsers, out of the socket code and into a
   host-testable layer.** Broker addresses, setpoint text, command verbs, the live-only
-  command rule and the elapsed-time arithmetic now live in one pure-C file with a 43-check
+  command rule and the elapsed-time arithmetic now live in one pure-C file with a 48-check
   self test. The client calls these functions; the host self test pins them without a broker
   in the room. First contact with the tests found three parser edges that had never been
   exercised (see Fixed).
@@ -88,8 +112,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Firmware version 2.5.1-device-id (bug fix on top). On-board selftest 185 -> 192 checks
   (mqtt 32 -> 39, the device-id invariant); the offline suite stays at 195.
 - Firmware version 2.6.0-rules. On-board selftest 192 -> 235 checks (new `rules` suite, 43);
-  the offline suite stays at 195. All five suites now run on the host as well: proto 64 /
-  net 16 / mqtt 39 / rules 43 / discovery 73.
+  the offline suite stays at 195. All suites run on the host as well.
+- Firmware version 2.6.1-golden. On-board selftest 235 -> 261: the golden CONNECT (mqtt 39 ->
+  41), the backoff schedule and five more parser checks (rules 43 -> 48), and the new
+  `provision` suite (19). Six suites: proto 64 / net 16 / mqtt 41 / rules 48 / provision 19 /
+  discovery 73; the offline suite stays at 195.
 
 ### Added
 

@@ -34,6 +34,7 @@ SOURCES = [
     SRC / "net" / "state_json.cpp",
     SRC / "net" / "mqtt_wire.cpp",
     SRC / "net" / "mqtt_rules.cpp",
+    SRC / "net" / "provision.cpp",
     SRC / "net" / "discovery.cpp",
 ]
 
@@ -49,6 +50,7 @@ HEADERS = [
     SRC / "net" / "state_json.h",
     SRC / "net" / "mqtt_wire.h",
     SRC / "net" / "mqtt_rules.h",
+    SRC / "net" / "provision.h",
     SRC / "net" / "mqtt_contract.h",
     SRC / "net" / "discovery.h",
     SRC / "net" / "selftest.h",

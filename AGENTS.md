@@ -32,12 +32,12 @@ python firmware/bridge/tools/gen_vectors.py                # after changing spec
 python firmware/bridge/tools/gen_profiles.py               # after changing spec/profiles.json
 python firmware/bridge/tools/gen_mqtt.py                   # after changing spec/mqtt.json (cross-checks profiles.json)
 python firmware/bridge/tools/gen_ha.py                     # after changing spec/mqtt.json
-python firmware/bridge/tools/host_selftest.py              # the five C++ suites, on the host
-# then flash and type: selftest                            # the same five suites, on the board
+python firmware/bridge/tools/host_selftest.py              # the six C++ suites, on the host
+# then flash and type: selftest                            # the same six suites, on the board
 ```
 
-The five C++ suites (proto 64 / net 16 / mqtt 39 / rules 43 / discovery 73) run in two
-places, and the check counts must stay in lockstep:
+The six C++ suites (proto 64 / net 16 / mqtt 41 / rules 48 / provision 19 / discovery 73)
+run in two places, and the check counts must stay in lockstep:
 
 - **on the host** — `host_selftest.py` compiles the framework-free layers with g++/clang++
   (or `pip install ziglang`) and runs them; `run_tests.py` includes this via
@@ -60,15 +60,24 @@ The suites:
 - **net** — the exact MQTT payload bytes for a known snapshot, `ts` omission, fault hex, mode
   words, and the rounding rule
 - **mqtt** — CONNECT (with will, with credentials), PUBLISH/SUBSCRIBE bytes, a packet arriving one
-  byte at a time, a two-byte remaining length, the malformed-length refusal, and the device-id
+  byte at a time, a two-byte remaining length, the malformed-length refusal, the device-id
   invariant: the string that becomes the client id is `[a-z0-9_]` only, terminated, and safe to
   truncate (an unterminated hex buffer once shipped stack garbage into the client id and every
-  real broker refused the connection while this suite stayed green)
-- **rules** — the inbound parsers every consumer's bytes go through before touching hardware:/n  broker-address grammar (trailing colon rejected, bare IPv6 kept whole, port bounds),
+  real broker refused the connection while this suite stayed green), and the golden CONNECT:
+  the exact 82-byte production packet, pinned byte for byte and re-submitted to a real
+  Mosquitto during the bench session (rc=5 on test credentials proves the layout parses; the
+  garbage client id would have been dropped as invalid before the password was ever read)
+- **rules** — the inbound parsers every consumer's bytes go through before touching hardware:
+  broker-address grammar (trailing colon rejected, bare IPv6 kept whole, port bounds),
   setpoint text (the `"42.0"` Home Assistant sends, trailing newlines trimmed, fractional
   and out-of-range refused, profile bounds pinned), command verbs, the live-only rule for
-  retained commands, and `elapsedMs`'s argument order - the arithmetic shape of the 2.5.1
+  retained commands, the backoff schedule (`nextBackoffMs`, the doubling sequence with its
+  one-step overshoot), and `elapsedMs`'s argument order - the arithmetic shape of the 2.5.1
   watchdog underflow (three edges in these parsers were caught by this suite's first run)
+- **provision** — the pairing form's gate: MAC grammar (dash/uppercase accepted, short/
+  non-hex/trailing junk refused), the SSID field bounds, the six-digit pairing code rule
+  that protects the heater's three-failure lockout, and the `pair_state` words mirrored
+  into the Home Assistant attribute
 - **discovery** — the `@DEV@` substitution, buffer refusals, the golden topic/payload pair, the
   invariant that exactly the entities reading the attributes topic are filed as diagnostics,
   the water_heater entity's command-topic binding, and that every generated payload still fits

@@ -21,6 +21,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "net/selftest.h"
+
 namespace net {
 
 // Where the board is in its life. Mirrors the `pair_state` attribute in spec/mqtt.json so
@@ -54,6 +56,14 @@ struct ProvisionRequest {
 // sent over the air, because a malformed pairing attempt counts toward the heater's
 // three-failure lockout.
 const char* validateRequest(const ProvisionRequest& r);
+
+// Self test for the validation above (and provStateText). Runs on the host and on the board,
+// like every ADR-008 suite: a rule that gates the pairing lockout must not ship unexecuted.
+// Namespaced like the other suites (net::mqtt, net::rules, net::discovery) so the suite
+// name in the report is the namespace you called.
+namespace prov {
+SelfTestResult runSelfTest(LogFn log, void* ctx);
+}  // namespace prov
 
 }  // namespace net
 

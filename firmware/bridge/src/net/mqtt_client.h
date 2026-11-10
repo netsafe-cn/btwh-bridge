@@ -30,7 +30,9 @@ namespace net {
 // 2.5.1: device id terminated properly; the client id no longer carries stack garbage.
 // 2.6.0: inbound parsing moved to net::mqtt_rules with a host-testable suite; three parser
 //       edges fixed along the way.
-constexpr const char* kFirmwareVersion = "2.6.0-rules";
+// 2.6.1: golden CONNECT bytes pinned (bench-verified against a real Mosquitto), the backoff
+//       schedule extracted to rules::nextBackoffMs, provisioning validation under test.
+constexpr const char* kFirmwareVersion = "2.6.1-golden";
 
 // Slow-changing metadata, published retained on every connect and refreshed on the
 // attributes heartbeat. Kept out of the state payload so the 4-second message stays small.

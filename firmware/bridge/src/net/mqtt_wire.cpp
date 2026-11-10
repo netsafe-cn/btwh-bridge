@@ -440,6 +440,43 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
     check(c, tiny[sizeof(tiny) - 1] == 0, "a small buffer is still terminated", nullptr);
   }
 
+  // 15. Golden CONNECT, byte for byte: the full production shape - client id from the BLE
+  // address, retained will on the availability topic, credentials, 60 s keepalive. These are
+  // the exact bytes a real Mosquitto accepted during the first bench session (2026-11-10,
+  // board -> PC hotspot -> ICS -> LAN -> broker on HAOS); the same session caught the client
+  // id carrying an unterminated buffer, which no broker-free check had seen. Pin the whole
+  // packet so any future edit to buildConnect - flag order, length prefixes, field order -
+  // fails here, at the bytes, instead of as a silent 'client identifier not valid' at some
+  // user's broker. Test credentials, not real ones.
+  {
+    ConnectOpts golden{};
+    golden.clientId     = "btwh_eb6f5f";
+    golden.willTopic    = "btwh/btwh_eb6f5f/availability";
+    golden.willMessage  = "offline";
+    golden.username     = "btwh";
+    golden.password     = "benchpass";
+    golden.keepAliveSec = 60;
+    golden.cleanSession = true;
+
+    const uint8_t want[] = {
+        0x10, 0x50,                                   // CONNECT, 80-byte body
+        0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04,         // protocol name, level 3.1.1
+        0xE6,                                         // clean + will + will-retain + user + pass
+        0x00, 0x3C,                                   // keepalive 60 s
+        0x00, 0x0B, 'b', 't', 'w', 'h', '_', 'e', 'b', '6', 'f', '5', 'f',
+        0x00, 0x1D, 'b', 't', 'w', 'h', '/', 'b', 't', 'w', 'h', '_', 'e', 'b', '6', 'f',
+        '5', 'f', '/', 'a', 'v', 'a', 'i', 'l', 'a', 'b', 'i', 'l', 'i', 't', 'y',
+        0x00, 0x07, 'o', 'f', 'f', 'l', 'i', 'n', 'e',
+        0x00, 0x04, 'b', 't', 'w', 'h',
+        0x00, 0x09, 'b', 'e', 'n', 'c', 'h', 'p', 'a', 's', 's',
+    };
+
+    const size_t got = buildConnect(buf, sizeof(buf), golden);
+    check(c, got == sizeof(want), "golden connect: exact length", nullptr);
+    check(c, got == sizeof(want) && memcmp(buf, want, sizeof(want)) == 0,
+          "golden connect: byte for byte", nullptr);
+  }
+
   return SelfTestResult{c.total, c.failed};
 }
 
