@@ -7,7 +7,24 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`net::mqtt_rules` - the inbound contract parsers, out of the socket code and into a
+  host-testable layer.** Broker addresses, setpoint text, command verbs, the live-only
+  command rule and the elapsed-time arithmetic now live in one pure-C file with a 43-check
+  self test. The client calls these functions; the host self test pins them without a broker
+  in the room. First contact with the tests found three parser edges that had never been
+  exercised (see Fixed).
+
 ### Fixed
+
+- **Three `parseBroker` edges, caught by the new rules self test on its first run.**
+  `broker host:` (a colon announcing a port that never arrives) was stored as a literal
+  "host:" address instead of being rejected; a bare IPv6 literal like `fe80::1` was torn
+  apart by the last-colon split into host "fe80:" port 1, which would have connected to the
+  wrong port; and a setpoint payload with leading whitespace was silently accepted by
+  `strtod` where the contract says the text is a plain number. The demo bridge clamped
+  out-of-range setpoints where the firmware refuses them - it rehearses the firmware now.
 
 - **The MQTT link dropped itself 0.1 s after connecting.** The 90-second watchdog compared
   `now - gLastRx`, with `now` sampled at the top of the poll - but `drainSocket()` can stamp
@@ -70,6 +87,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   offline suite 186 -> 195 (new `test_profiles`).
 - Firmware version 2.5.1-device-id (bug fix on top). On-board selftest 185 -> 192 checks
   (mqtt 32 -> 39, the device-id invariant); the offline suite stays at 195.
+- Firmware version 2.6.0-rules. On-board selftest 192 -> 235 checks (new `rules` suite, 43);
+  the offline suite stays at 195. All five suites now run on the host as well: proto 64 /
+  net 16 / mqtt 39 / rules 43 / discovery 73.
 
 ### Added
 

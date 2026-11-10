@@ -40,6 +40,7 @@
 #include "net/portal.h"
 #include "net/discovery.h"
 #include "net/mqtt_client.h"
+#include "net/mqtt_rules.h"
 #include "net/mqtt_wire.h"
 #include "net/station.h"
 #include "net/state_json.h"
@@ -150,15 +151,18 @@ static void reportTest(const char* layer, int total, int failed) {
 
 static void doSelfTest() {
   // Each layer keeps its own suite: proto owns the wire format, net owns the published bytes,
-  // net::mqtt owns the broker's packet format, and discovery owns the entity table. None of
+  // net::mqtt owns the broker's packet format, net::rules owns the inbound parsing (setpoint
+  // text, command verbs, broker addresses), and discovery owns the entity table. None of
   // them can check another's job.
   proto::SelfTestResult     p = proto::runSelfTest(serialLine, nullptr);
   net::SelfTestResult       n = net::runSelfTest(serialLine, nullptr);
   net::SelfTestResult       w = net::mqtt::runSelfTest(serialLine, nullptr);
+  net::SelfTestResult       r = net::rules::runSelfTest(serialLine, nullptr);
   net::SelfTestResult       d = net::discovery::runSelfTest(serialLine, nullptr);
   reportTest("proto", p.total, p.failed);
   reportTest("net", n.total, n.failed);
   reportTest("mqtt", w.total, w.failed);
+  reportTest("rules", r.total, r.failed);
   reportTest("discovery", d.total, d.failed);
 }
 

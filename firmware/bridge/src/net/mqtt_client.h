@@ -28,7 +28,9 @@ namespace net {
 // Bumped when the published surface changes; the panel and HA users see it in attributes.
 // 2.3.0: attributes became HA diagnostic entities (8), rssi published, last_disconnect added.
 // 2.5.1: device id terminated properly; the client id no longer carries stack garbage.
-constexpr const char* kFirmwareVersion = "2.5.1-device-id";
+// 2.6.0: inbound parsing moved to net::mqtt_rules with a host-testable suite; three parser
+//       edges fixed along the way.
+constexpr const char* kFirmwareVersion = "2.6.0-rules";
 
 // Slow-changing metadata, published retained on every connect and refreshed on the
 // attributes heartbeat. Kept out of the state payload so the 4-second message stays small.
@@ -46,11 +48,9 @@ typedef void (*SetpointFn)(void* ctx, int celsius);
 // A consumer asked for an operational command: "refresh", "reboot", "unpair".
 typedef void (*CommandFn)(void* ctx, const char* verb);
 
-// "host" or "host:port". Empty or malformed returns false and the client stays off.
-bool parseBroker(const char* text, char* host, size_t hostCap, uint16_t* port);
-
-// The device id lives in mqtt_wire.h next to its self test: it is a pure string function,
-// and the wire layer is the part of net/ that runs in the host self test.
+// The broker-address grammar and the inbound payload parsers live in mqtt_rules.h next to
+// their self test: they are pure functions, and the rules layer is the part of net/ that runs
+// in the host self test.
 
 void mqttBegin(const char* broker, const char* deviceId);
 // Broker account. Called right after every mqttBegin(); empty strings mean anonymous.

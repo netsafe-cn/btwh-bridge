@@ -207,25 +207,36 @@ def main() -> int:
             # A consumer (HA, the panel) commanding the bridge: the whole point of the demo.
             print("[cmd  ] %s <- %s" % (topic, payload))
             if topic.endswith("/set/temperature") and args.demo:
-                try:
-                    value = float(payload)
-                except ValueError:
-                    print("[demo] setpoint not a number, ignored: %r" % payload)
+                if payload[:1].isspace():
+                    # The firmware's rules::parseSetpoint refuses leading whitespace (no
+                    # legitimate consumer sends it); the demo rehearses the firmware.
+                    print("[demo] setpoint leading whitespace, ignored: %r" % payload)
                 else:
-                    # Whole degrees only, mirroring the firmware's contract; bounds come from
-                    # the model profile so this demo cannot disagree with the real bridge.
-                    if value != int(value):
-                        print("[demo] setpoint not a whole degree, ignored: %r" % payload)
+                    try:
+                        value = float(payload)
+                    except ValueError:
+                        print("[demo] setpoint not a number, ignored: %r" % payload)
                     else:
-                        profiles = json.loads(PROFILES_SPEC.read_text(encoding="utf-8"))
-                        row = next(p for p in profiles["profiles"]
-                                   if p["id"] == profiles["default_profile"])
-                        lo = row["setpoint"]["min"]
-                        hi = row["setpoint"]["max"]
-                        clamped = max(lo, min(hi, int(value)))
-                        demo_setpoint[0] = clamped
-                        print("[demo] setpoint accepted -> %d (echoed from next state)"
-                              % clamped)
+                        # Whole degrees only, mirroring the firmware's contract; bounds come
+                        # from the model profile so this demo cannot disagree with the real
+                        # bridge. Out-of-range is REFUSED, not clamped, exactly like
+                        # rules::parseSetpoint: the demo exists to rehearse the bridge's
+                        # behaviour, and the bridge never silently turns a 70 into a 60.
+                        if value != int(value):
+                            print("[demo] setpoint not a whole degree, ignored: %r" % payload)
+                        else:
+                            profiles = json.loads(PROFILES_SPEC.read_text(encoding="utf-8"))
+                            row = next(p for p in profiles["profiles"]
+                                       if p["id"] == profiles["default_profile"])
+                            lo = row["setpoint"]["min"]
+                            hi = row["setpoint"]["max"]
+                            if not (lo <= value <= hi):
+                                print("[demo] setpoint out of range %d..%d, ignored: %r"
+                                      % (lo, hi, payload))
+                            else:
+                                demo_setpoint[0] = int(value)
+                                print("[demo] setpoint accepted -> %d (echoed from next state)"
+                                      % int(value))
 
     client.on_connect = on_connect
     client.on_message = on_message

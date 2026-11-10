@@ -2,13 +2,12 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
-#include <ctype.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "net/discovery.h"
 #include "net/mqtt_contract.h"
+#include "net/mqtt_rules.h"
 #include "net/mqtt_wire.h"
 #include "net/station.h"
 
@@ -200,28 +199,21 @@ void handleSetpoint(const wire::PublishInfo& in) {
   const size_t n = in.payloadLen < sizeof(text) - 1 ? in.payloadLen : sizeof(text) - 1;
   memcpy(text, in.payload, n);
   text[n] = 0;
-  // Some clients append a newline; a trailing space should not turn 42 into "ignored".
-  for (int i = (int)n - 1; i >= 0 && isspace((unsigned char)text[i]); i--) text[i] = 0;
 
-  char* end = nullptr;
-  // strtod, not strtol: Home Assistant's number entity publishes str(float) - "42.0" - and an
-  // integer-only parser would silently drop every command from it. Whole values only, still:
-  // "42.5" is a range error, not something to round and hope.
-  const double value = strtod(text, &end);
-  const bool numeric = end && *end == 0 && end != text;
-  const bool whole  = numeric && value == (double)(long)value;
-
-  // The contract says out-of-range values are ignored, not clamped: a consumer that sends 70
-  // asked for something the heater cannot do, and silently turning it into 60 hides the bug.
-  // Bounds come from the generated contract header - same profile row the app layer checks
-  // against, so the two validations cannot disagree.
-  if (!whole || value < contract::kSetpointMin || value > contract::kSetpointMax) {
-    Serial.printf("[MQTT] setpoint ignored: [%s] (whole degrees %d..%d)\n",
-                  text, contract::kSetpointMin, contract::kSetpointMax);
+  int celsius = 0;
+  const rules::Setpoint r = rules::parseSetpoint(text, &celsius);
+  if (r != rules::Setpoint::kOk) {
+    // The reason is printed with the raw text on purpose: the categories are for the code,
+    // the log is for the human who typed the command (or the automation that built it).
+    const char* why = r == rules::Setpoint::kNotANumber ? "not a number"
+                    : r == rules::Setpoint::kNotWhole   ? "fractional degrees"
+                                                        : "out of range";
+    Serial.printf("[MQTT] setpoint ignored: [%s] (%s; whole degrees %d..%d)\n",
+                  text, why, contract::kSetpointMin, contract::kSetpointMax);
     return;
   }
-  Serial.printf("[MQTT] setpoint -> %d C\n", (int)value);
-  if (gOnSetpoint) gOnSetpoint(gHookCtx, (int)value);
+  Serial.printf("[MQTT] setpoint -> %d C\n", celsius);
+  if (gOnSetpoint) gOnSetpoint(gHookCtx, celsius);
 }
 
 void handleCommand(const wire::PublishInfo& in) {
@@ -230,13 +222,7 @@ void handleCommand(const wire::PublishInfo& in) {
   memcpy(text, in.payload, n);
   text[n] = 0;
 
-  // A tiny substring match instead of a JSON parser: the contract allows three words, and
-  // dragging in a parser for them would cost more than it explains.
-  const char* verb = nullptr;
-  if (strstr(text, "refresh")) verb = "refresh";
-  else if (strstr(text, "reboot")) verb = "reboot";
-  else if (strstr(text, "unpair")) verb = "unpair";
-
+  const char* verb = rules::commandVerb(text);
   if (!verb) {
     Serial.printf("[MQTT] command ignored: [%s]\n", text);
     return;
@@ -275,10 +261,11 @@ void handle(const wire::Packet& p) {
       if (wire::topicIs(in, topic)) { handleSetpoint(in); return; }
       makeTopic(topic, sizeof(topic), "cmd");
       if (wire::topicIs(in, topic)) {
-        // Commands are live-only. A retained "reboot" would replay on every reconnect and
-        // reboot the board forever; the retained flag on a delivery says exactly that happened.
-        // set/temperature is deliberately allowed: replaying the last setpoint is idempotent.
-        if (in.retained) {
+        // Commands are live-only (rules::commandDeliveryAllowed): a retained "reboot" would
+        // replay on every reconnect and reboot the board forever; the retained flag on a
+        // delivery says exactly that happened. set/temperature is deliberately exempt -
+        // replaying the last setpoint is idempotent.
+        if (!rules::commandDeliveryAllowed(in.retained)) {
           Serial.println("[MQTT] retained command ignored (commands are live-only)");
           return;
         }
@@ -326,31 +313,11 @@ void drainSocket() {
 
 // ---------------------------------------------------------------- public
 
-bool parseBroker(const char* text, char* host, size_t hostCap, uint16_t* port) {
-  if (!text || !text[0] || !host || hostCap < 2) return false;
-
-  size_t hostLen = strlen(text);
-  long   p = 1883;
-
-  const char* colon = strrchr(text, ':');
-  if (colon && colon[1]) {
-    char* end = nullptr;
-    const long v = strtol(colon + 1, &end, 10);
-    if (!end || *end != 0 || v <= 0 || v > 65535) return false;
-    p = v;
-    hostLen = (size_t)(colon - text);
-  }
-  if (hostLen == 0 || hostLen >= hostCap) return false;
-
-  memcpy(host, text, hostLen);
-  host[hostLen] = 0;
-  if (port) *port = (uint16_t)p;
-  return true;
-}
-
 void mqttBegin(const char* broker, const char* deviceId) {
   uint16_t port = 1883;
-  if (!parseBroker(broker, gHost, sizeof(gHost), &port)) {
+  // The broker-address grammar (host, host:port, validation) lives in rules::parseBroker -
+  // host-testable, and shared by the console, the portal and boot by construction.
+  if (!rules::parseBroker(broker, gHost, sizeof(gHost), &port)) {
     gState = kOff;
     strncpy(gWhy, "no broker configured", sizeof(gWhy) - 1);
     gWhy[sizeof(gWhy) - 1] = 0;
@@ -405,13 +372,13 @@ void mqttPoll(const Snapshot* snap, bool newFrame) {
   uint32_t now = millis();
 
   if (gState == kIdle) {
-    if (now - gLastAttempt >= gBackoffMs) beginConnect();
+    if (rules::elapsedMs(now, gLastAttempt) >= gBackoffMs) beginConnect();
     return;
   }
 
   if (gState == kWaitConnack) {
     drainSocket();
-    if (gState == kWaitConnack && now - gLastAttempt > 4000) drop("no CONNACK in 4 s");
+    if (gState == kWaitConnack && rules::elapsedMs(now, gLastAttempt) > 4000) drop("no CONNACK in 4 s");
     return;
   }
 
@@ -421,29 +388,30 @@ void mqttPoll(const Snapshot* snap, bool newFrame) {
   if (gState != kUp) return;
 
   // Re-sample: drainSocket() may have just stamped gLastRx with a millis() newer than the
-  // `now` sampled at the top of this call (a SUBACK landing inside this iteration), and
-  // `now - gLastRx` would then underflow to ~4e9 and kill the link 0.1 s after CONNACK.
+  // `now` sampled at the top of this call (a SUBACK landing inside this iteration). Every
+  // elapsed below goes through rules::elapsedMs(later, earlier) - the argument order the
+  // rules self test pins - but the order only helps if the later sample really is later.
   now = millis();
 
   // A socket can stay "connected" for a long time after the broker stopped answering, so
   // silence is treated as failure: 90 s is three keepalive intervals and far longer than the
   // 4 s A0 cadence, which means nothing here fired for a reason unrelated to the broker.
-  if (now - gLastRx > 90000) { drop("no traffic in 90 s"); return; }
+  if (rules::elapsedMs(now, gLastRx) > 90000) { drop("no traffic in 90 s"); return; }
 
   // Keepalive at 25 s against a 60 s interval: one lost PINGRESP is forgiven, a dead broker is
   // noticed well inside the interval the broker itself would use to declare us gone.
-  if (now - gLastPing > 25000) {
+  if (rules::elapsedMs(now, gLastPing) > 25000) {
     const size_t n = wire::buildPingreq(gTx, sizeof(gTx));
     if (!n || gSock.write(gTx, n) != n) { drop("ping write failed"); return; }
     gLastPing = now;
   }
 
-  const bool heartbeat = now - gLastPublish > 60000;
+  const bool heartbeat = rules::elapsedMs(now, gLastPublish) > 60000;
   // The attributes heartbeat rides the same 60 s cadence as the state heartbeat: uptime and
   // RSSI must age at most a minute, or the diagnostics tell a remote user lies about a bridge
   // that is up but deaf. It does not wait for a snapshot - attributes exist before the first
   // A0 frame, which is exactly when the pairing state is worth reading.
-  if (now - gLastAttrs > 60000) {
+  if (rules::elapsedMs(now, gLastAttrs) > 60000) {
     publishAttributes();
     gLastAttrs = now;
   }
