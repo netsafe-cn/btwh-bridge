@@ -81,8 +81,20 @@ def _cmd(*args):
     return out + list(args)
 
 
-def build():
+def build(clean=False):
     sync_sketch()
+    if clean and BUILD.exists():
+        # arduino-cli's dependency tracking missed a header-only edit once (2026-11-11):
+        # mqtt_client.h changed after mqtt_client.cpp.o existed, only main.cpp was rebuilt,
+        # and the flashed binary said 2.6.1-golden on the banner while publishing
+        # 2.6.0-rules in attributes. A mixed build is worse than no build, so --clean is
+        # the default advice after editing any header.
+        # The stale tree is RENAMED, not deleted: bulk-deleting from a build script trips
+        # every sane safety hook, and a rename achieves the same forced full rebuild with
+        # nothing destroyed. Delete the .stale-* dirs by hand when disk gets tight.
+        stale = WORK / ("build.stale-" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))
+        print("  moving %s aside -> %s (clean build)" % (BUILD, stale))
+        BUILD.rename(stale)
     libs = ["--libraries", LIBS] if LIBS.is_dir() else []
     # arduino-cli adds an include path for each subdirectory of src/ but not for src/ itself, so
     # a layered include written as "app/session.h" resolves relative to the caller and then
@@ -160,11 +172,13 @@ def main():
     ap.add_argument("--baud", type=int, default=115200)
     ap.add_argument("--build", action="store_true")
     ap.add_argument("--flash", action="store_true")
+    ap.add_argument("--clean", action="store_true",
+                    help="remove the build directory first (use after editing any header)")
     ap.add_argument("--no-monitor", action="store_true")
     a = ap.parse_args()
     port = a.port or find_port()
     if a.build or a.flash:
-        rc = build()
+        rc = build(clean=a.clean)
         if rc != 0:
             print("\nbuild failed, exit=%d" % rc); return rc
         print("\n[OK] build passed")

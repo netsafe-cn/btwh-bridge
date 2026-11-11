@@ -23,6 +23,13 @@ python firmware/bridge/tools/gateway_cli.py            # console only, no rebuil
   original tree. The same header then exists at two paths, `#pragma once` keys on the file rather
   than the name, and the build fails with `redefinition of 'struct app::Config'`. Measured, not
   theoretical: it cost two 15-minute builds to find.
+- **After editing any header, build with `--clean`.** arduino-cli's dependency tracking missed a
+  header-only edit once (2026-11-11): `mqtt_client.h` changed after `mqtt_client.cpp.o` existed,
+  only `main.cpp` was rebuilt, and the flashed binary said 2.6.1-golden on its banner while
+  publishing 2.6.0-rules in attributes - a mixed build, worse than no build. `--flash --clean`
+  costs the cold 15 minutes; a silent mixed build costs a bench day.
+- The CH343 serial port can re-enumerate (COM3 -> COM8 after a re-plug or reboot);
+  `gateway_cli.py` auto-detects it, and `--port COM8` overrides.
 
 ## Before you touch protocol or payload code
 
@@ -72,8 +79,11 @@ The suites:
   setpoint text (the `"42.0"` Home Assistant sends, trailing newlines trimmed, fractional
   and out-of-range refused, profile bounds pinned), command verbs, the live-only rule for
   retained commands, the backoff schedule (`nextBackoffMs`, the doubling sequence with its
-  one-step overshoot), and `elapsedMs`'s argument order - the arithmetic shape of the 2.5.1
-  watchdog underflow (three edges in these parsers were caught by this suite's first run)
+  one-step overshoot), `elapsedMs`'s argument order - the arithmetic shape of the 2.5.1
+  watchdog underflow (three edges in these parsers were caught by this suite's first run) -
+  and the OTA URL grammar (`parseOtaUrl`: http only, port bounds, path required, oversized
+  host/path refused rather than truncated; the retained guard applies to this topic too,
+  because a retained URL is a boot loop that reflashes every reconnect)
 - **provision** — the pairing form's gate: MAC grammar (dash/uppercase accepted, short/
   non-hex/trailing junk refused), the SSID field bounds, the six-digit pairing code rule
   that protects the heater's three-failure lockout, and the `pair_state` words mirrored

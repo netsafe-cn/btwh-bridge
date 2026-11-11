@@ -126,6 +126,9 @@ def main() -> int:
     ap.add_argument("--device", help="device id, e.g. btwh_eb6f5f (default: every device)")
     ap.add_argument("--demo", action="store_true", help="publish as a fake bridge")
     ap.add_argument("--set", type=int, dest="setpoint", help="publish this setpoint and exit")
+    ap.add_argument("--ota", metavar="URL",
+                    help="publish a firmware URL to the device's ota topic and exit "
+                         "(live-only: sent unretained, exactly as the firmware requires)")
     ap.add_argument("--interval", type=float, default=4.0, help="demo publish interval")
     ap.add_argument("--user", help="broker username (empty: anonymous)")
     ap.add_argument("--password", help="broker password (use with --user)")
@@ -266,6 +269,15 @@ def main() -> int:
                     print("[attrs] %s" % attrs)
         elif args.setpoint is not None:
             time.sleep(1.0)          # let the subscription settle so attributes arrive
+        elif args.ota:
+            if not args.device:
+                print("[ota  ] --ota needs --device: two bridges, two otas")
+                return 2
+            time.sleep(1.0)          # let the connection settle before the one live shot
+            ota_topic = "%s/%s/ota" % (base, args.device)
+            client.publish(ota_topic, args.ota, qos=0, retain=False)
+            print("[ota  ] %s <- %s (unretained on purpose: a retained URL would "
+                  "reflash on every reconnect)" % (ota_topic, args.ota))
         else:
             print("[watch] Ctrl-C to stop")
             while True:

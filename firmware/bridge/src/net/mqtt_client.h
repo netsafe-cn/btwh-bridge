@@ -32,7 +32,11 @@ namespace net {
 //       edges fixed along the way.
 // 2.6.1: golden CONNECT bytes pinned (bench-verified against a real Mosquitto), the backoff
 //       schedule extracted to rules::nextBackoffMs, provisioning validation under test.
-constexpr const char* kFirmwareVersion = "2.6.1-golden";
+// 2.7.0: OTA - the ota topic accepts a http URL, net/ota flashes the inactive slot and the
+//       board reboots into it. URL grammar host-tested in rules; live-only like commands.
+// 2.7.1: the same OTA image used as the OTA *test payload*: shipped over the air from the
+//       bench server to prove the path end to end (serial banner + attrs both move).
+constexpr const char* kFirmwareVersion = "2.7.1-ota2";
 
 // Slow-changing metadata, published retained on every connect and refreshed on the
 // attributes heartbeat. Kept out of the state payload so the 4-second message stays small.

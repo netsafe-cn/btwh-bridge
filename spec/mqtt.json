@@ -52,6 +52,13 @@
       ],
       "purpose": "Operational commands. 'refresh' asks for an immediate state publish."
     },
+    "ota": {
+      "topic": "btwh/{device_id}/ota",
+      "direction": "consumer -> bridge",
+      "payload": "text",
+      "grammar": "http://host[:port]/path",
+      "purpose": "Firmware update URL. The bridge downloads the image over HTTP, flashes the inactive slot, validates, and reboots into it; on any failure the running firmware is untouched. http only (https has no TLS stack in the flasher path); port defaults to 80; a bare host without a path is refused. Delivery must be live - a retained URL would reflash the board on every reconnect, which is a boot loop that overwrites the firmware each time."
+    },
     "attributes": {
       "topic": "btwh/{device_id}/attributes",
       "direction": "bridge -> consumer",

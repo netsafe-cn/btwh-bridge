@@ -13,6 +13,7 @@
 //   command verb     refresh / reboot / unpair, by substring
 //   live-only rule   a retained command delivery is never executed
 //   elapsed time     unsigned milliseconds arithmetic, argument order included
+//   OTA URL          "http://host[:port]/path" -> host + port (default 80) + path
 #pragma once
 // Macro guard as well as #pragma once: arduino-cli compiles a copy of src/ under
 // <build>/sketch/, so a header can be reached through two paths.
@@ -90,6 +91,30 @@ uint32_t elapsedMs(uint32_t newer, uint32_t older);
 // (32000 -> 64000) before settling at 60000: the cap applies to the output, not the doubling.
 // One good session resets the schedule at the caller (onConnected), not here.
 uint32_t nextBackoffMs(uint32_t current);
+
+// ---------------------------------------------------------------- OTA URL
+
+// The ota topic's payload: an absolute http URL of a firmware image, exactly what the
+// flasher in net/ota.cpp will request. Grammar:
+//   "http://" host [":" port] "/" path
+// - http only: https needs a TLS stack the flasher deliberately does not carry, and
+//   silently pretending to support it would make a "successful" update impossible to
+//   diagnose. Other schemes (ftp, file) are refused outright.
+// - host: no '/', no whitespace, must fit hostCap. The [IPv6] bracket form is out of
+//   scope (same call as parseBroker).
+// - port: digits only, 1..65535, defaults to 80.
+// - path: must start with '/' and be non-empty; a bare "http://host" is refused - an
+//   implicit "/" means the publisher did not finish the URL.
+// - trailing whitespace is trimmed (mosquitto_pub and friends append a newline); leading
+//   is an error, same reasoning as parseSetpoint.
+// - no '?' or '#' handling: the flasher would fetch the literal string and a server
+//   answering a query with an image is a server worth configuring properly.
+//
+// Like commands, OTA is live-only at the client: a retained URL would reflash the board
+// on every reconnect, so the retained guard (commandDeliveryAllowed) is applied to this
+// topic as well - the two-line cost of forgetting it is a boot loop.
+bool parseOtaUrl(const char* text, char* host, size_t hostCap, uint16_t* port,
+                 char* path, size_t pathCap);
 
 // ---------------------------------------------------------------- self test
 

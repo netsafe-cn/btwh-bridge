@@ -9,6 +9,30 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **OTA: the bridge can now be reflashed over its own MQTT link.** The new `btwh/<id>/ota`
+  topic accepts a `http://host[:port]/path` firmware URL; `net/ota.cpp` downloads it with a
+  120 s budget, streams it to the inactive slot in 2 KB chunks, validates (Update
+  checksum) and only then reboots - any failure leaves the running firmware untouched.
+  The URL grammar lives in `rules::parseOtaUrl` (host-tested, 19 new checks: https
+  refused, missing path refused, port bounds, truncation-free buffers) and delivery is
+  live-only like commands, because a retained URL would reflash on every reconnect.
+  `mqtt_watch.py --ota <url> --device <id>` is the one-line bench driver. https and a
+  Home Assistant `update` entity are deliberate non-goals for now: the flasher carries no
+  TLS stack, and the entity needs a version-manifest design first.
+  Bench-verified end to end (2026-11-11): 2.7.0-ota flashed over USB, then 2.7.1-ota2
+  shipped over the air from a plain `python -m http.server` on the bench PC - MQTT command
+  to reboot into the new image in 24 s wall clock (1.16 MB image, 5.0 s download+flash,
+  banner and published attributes both moved to 2.7.1-ota2).
+
+### Fixed
+
+- **Wi-Fi join is retried, not only attempted.** `stationConnect` ran once at boot; a board
+  that boots before its AP (router recovering from a power cut, laptop hotspot started by
+  hand) stayed offline forever - reproduced on the bench 2026-11-11, when the bridge came up
+  before the hotspot and needed a manual `reboot` to ever join. `loop()` now retries the
+  join every 30 s while credentials exist and the station is down (portal excluded);
+  Arduino's auto-reconnect already covered the associated-then-dropped case.
+
 - **The golden CONNECT: bench-verified bytes, pinned.** The exact 82-byte CONNECT packet the
   firmware builds (client id, retained will, credentials, 60 s keepalive) is now a byte-for-byte
   check in the mqtt suite, calibrated from the live bench session and re-submitted to the real
@@ -117,6 +141,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   41), the backoff schedule and five more parser checks (rules 43 -> 48), and the new
   `provision` suite (19). Six suites: proto 64 / net 16 / mqtt 41 / rules 48 / provision 19 /
   discovery 73; the offline suite stays at 195.
+- Firmware version 2.7.1-ota2 (the 2.7.0-ota feature, shipped over the air as its own
+  proof). On-board selftest 261 -> 280 (rules 48 -> 67, the OTA URL grammar). Six suites:
+  proto 64 / net 16 / mqtt 41 / rules 67 / provision 19 / discovery 73; the offline suite
+  stays at 195. Bench note: the 2.6.1 binary previously on the board was a mixed build
+  (banner 2.6.1, attributes 2.6.0 - arduino-cli did not rebuild mqtt_client.cpp.o after
+  its header changed); `gateway_cli.py --clean` exists because of it, and this version
+  was built clean, then updated over the air.
 
 ### Added
 

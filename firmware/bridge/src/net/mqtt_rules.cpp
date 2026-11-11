@@ -105,6 +105,84 @@ uint32_t nextBackoffMs(uint32_t current) {
   return current < 60000 ? current * 2 : 60000;
 }
 
+// ---------------------------------------------------------------- OTA URL
+
+bool parseOtaUrl(const char* text, char* host, size_t hostCap, uint16_t* port,
+                 char* path, size_t pathCap) {
+  if (!text || !host || hostCap < 2 || !path || pathCap < 2) return false;
+
+  // Bounded copy first: every decision below works on this buffer, so a URL of any
+  // length is safe before it is even inspected.
+  char buf[128];
+  size_t n = strlen(text);
+  if (n == 0 || n >= sizeof(buf)) return false;
+  memcpy(buf, text, n + 1);
+  trimTrailing(buf, n);
+  if (!buf[0] || isspace((unsigned char)buf[0])) return false;
+
+  // Scheme: exactly "http://". Case-sensitive on purpose (the contract documents lower
+  // case; "HTTP://" hiding in a payload is worth seeing, not silently accepting).
+  static const char kScheme[] = "http://";
+  const size_t schemeLen = sizeof(kScheme) - 1;
+  if (strncmp(buf, kScheme, schemeLen) != 0) return false;
+  const char* authority = buf + schemeLen;
+
+  // Path starts at the first '/'; everything before it is host[:port]. No '/' means no
+  // path at all.
+  const char* slash = strchr(authority, '/');
+  if (!slash || slash == authority) return false;   // no path / empty host
+  const size_t hostPartLen = (size_t)(slash - authority);
+  if (hostPartLen >= hostCap) return false;
+
+  // Port: the last ':' inside the authority. Unlike parseBroker (where a bare IPv6 literal
+  // is valid input), a URL authority cannot carry a raw ':' - an IPv6 host would need the
+  // [bracket] form, which is out of scope. So a colon whose tail is not valid digits is a
+  // malformed authority and is refused, and a colon with nothing after it is a typo.
+  long p = 80;
+  size_t hostLen = hostPartLen;
+  // Last ':' inside the authority, found backwards by hand: memrchr is a GNU extension
+  // and this file must compile with the plain C standard library on the host.
+  const char* colon = nullptr;
+  for (int i = (int)hostPartLen - 1; i >= 0; i--) {
+    if (authority[i] == ':') { colon = authority + i; break; }
+  }
+  if (colon) {
+    const size_t portLen = (size_t)(slash - colon - 1);
+    if (portLen == 0) return false;                  // "host:"
+    char portText[8];
+    if (portLen >= sizeof(portText)) return false;   // 5 digits max fit uint16 anyway
+    bool digits = true;
+    for (size_t i = 0; i < portLen; i++) {
+      if (!isdigit((unsigned char)colon[1 + i])) { digits = false; break; }
+    }
+    if (!digits) return false;                       // raw ':' in a URL host is malformed
+    memcpy(portText, colon + 1, portLen);
+    portText[portLen] = 0;
+    char* end = nullptr;
+    const long v = strtol(portText, &end, 10);
+    if (!end || *end != 0 || v <= 0 || v > 65535) return false;
+    p = v;
+    hostLen = (size_t)(colon - authority);
+  }
+  if (hostLen == 0) return false;
+
+  // Host syntax: no whitespace (the one-byte-at-a-time wire layer can deliver it, and a
+  // space in a URL is a mangled paste), no '?' (authority would secretly be a query).
+  for (size_t i = 0; i < hostLen; i++) {
+    if (isspace((unsigned char)authority[i]) || authority[i] == '?') return false;
+  }
+
+  const size_t pathLen = strlen(slash);
+  if (pathLen == 0 || pathLen >= pathCap) return false;
+
+  memcpy(host, authority, hostLen);
+  host[hostLen] = 0;
+  memcpy(path, slash, pathLen);
+  path[pathLen] = 0;
+  if (port) *port = (uint16_t)p;
+  return true;
+}
+
 // ---------------------------------------------------------------- self test
 
 namespace {
@@ -170,6 +248,22 @@ void checkVerb(Tally& t, const char* text, const char* want) {
   if (!ok) {
     t.failed++;
     line(t, "  x commandVerb(\"%s\"): got %s", text, got ? got : "(null)");
+  }
+}
+
+void checkOta(Tally& t, const char* text, bool wantOk, const char* wantHost,
+              long wantPort, const char* wantPath) {
+  char host[32] = {0};
+  uint16_t port = 0;
+  char path[64] = {0};
+  const bool ok = parseOtaUrl(text, host, sizeof(host), &port, path, sizeof(path));
+  t.total++;
+  if (ok != wantOk
+      || (wantOk && (strcmp(host, wantHost) != 0 || port != (uint16_t)wantPort
+                     || strcmp(path, wantPath) != 0))) {
+    t.failed++;
+    line(t, "  x parseOtaUrl(\"%s\"): got ok=%d host=%s port=%u path=%s",
+         text ? text : "(null)", ok, host, (unsigned)port, path);
   }
 }
 
@@ -272,6 +366,56 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
   check(t, nextBackoffMs(64000) == 60000, "backoff caps at one minute");
   check(t, nextBackoffMs(60000) == 60000, "backoff stays at the cap");
   check(t, nextBackoffMs(0) == 0, "zero backoff stays zero (never used, never surprising)");
+
+  // 7. OTA URL grammar. The bench shape first: a plain-LAN http server is what the update
+  //    path will actually talk to. Then every refusal: https (no TLS stack in the flasher),
+  //    missing scheme, missing path, empty port, out-of-range port, oversized anything.
+  checkOta(t, "http://192.168.137.1:8000/firmware.bin", true,
+           "192.168.137.1", 8000, "/firmware.bin");
+  checkOta(t, "http://192.168.137.1/firmware.bin", true,
+           "192.168.137.1", 80, "/firmware.bin");            // default port
+  checkOta(t, "http://nas.local:8123/ota/v2.bin\n", true,
+           "nas.local", 8123, "/ota/v2.bin");                // trailing newline trimmed
+  checkOta(t, "https://192.168.137.1/firmware.bin", false, "", 0, "");   // no TLS in the flasher
+  checkOta(t, "HTTP://192.168.137.1/firmware.bin", false, "", 0, "");    // case-sensitive scheme
+  checkOta(t, "ftp://192.168.137.1/firmware.bin", false, "", 0, "");
+  checkOta(t, "192.168.137.1:8000/firmware.bin", false, "", 0, "");      // no scheme
+  checkOta(t, "http://192.168.137.1", false, "", 0, "");     // no path at all
+  checkOta(t, "http://192.168.137.1:8000", false, "", 0, ""); // port but no path
+  checkOta(t, "http://192.168.137.1:8000/", true, "192.168.137.1", 8000, "/");   // bare root is a path
+  checkOta(t, "http://host:/firmware.bin", false, "", 0, "");  // empty port is a typo
+  checkOta(t, "http://host:0/firmware.bin", false, "", 0, ""); // port 0
+  checkOta(t, "http://host:65536/firmware.bin", false, "", 0, "");
+  checkOta(t, "http://host:80x0/firmware.bin", false, "", 0, "");  // raw ':' in a URL host is malformed
+  checkOta(t, " http://host/firmware.bin", false, "", 0, "");  // leading whitespace, visible problem
+  checkOta(t, "", false, "", 0, "");
+  checkOta(t, nullptr, false, "", 0, "");
+  // A host that does not fit must refuse, not truncate: a truncated host fetches the wrong
+  // server, which is exactly how a "successful" OTA lands on the wrong image.
+  {
+    char tiny[8];
+    uint16_t port = 0;
+    char path[64];
+    t.total++;
+    if (parseOtaUrl("http://192.168.137.1:8000/firmware.bin", tiny, sizeof(tiny), &port,
+                    path, sizeof(path))) {
+      t.failed++;
+      line(t, "  x parseOtaUrl: undersized host buffer accepted");
+    }
+  }
+  // Same for the path: a truncated path serves the wrong file, so refusal is the only
+  // honest answer when it does not fit.
+  {
+    char host[32];
+    uint16_t port = 0;
+    char tinyPath[8];
+    t.total++;
+    if (parseOtaUrl("http://192.168.137.1:8000/firmware.bin", host, sizeof(host), &port,
+                    tinyPath, sizeof(tinyPath))) {
+      t.failed++;
+      line(t, "  x parseOtaUrl: undersized path buffer accepted");
+    }
+  }
 
   return SelfTestResult{t.total, t.failed};
 }

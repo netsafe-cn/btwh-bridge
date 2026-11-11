@@ -9,6 +9,7 @@
 #include "net/mqtt_contract.h"
 #include "net/mqtt_rules.h"
 #include "net/mqtt_wire.h"
+#include "net/ota.h"
 #include "net/station.h"
 
 namespace net {
@@ -133,6 +134,7 @@ void onConnected() {
   publishDiscovery();
   subscribe("set/temperature");
   subscribe("cmd");
+  subscribe("ota");
 
   Serial.printf("[MQTT] + connected to %s:%u as %s\n", gHost, (unsigned)gPort, gDeviceId);
 }
@@ -232,6 +234,35 @@ void handleCommand(const wire::PublishInfo& in) {
   if (gOnCommand) gOnCommand(gHookCtx, verb);
 }
 
+void handleOta(const wire::PublishInfo& in) {
+  char text[128];
+  const size_t n = in.payloadLen < sizeof(text) - 1 ? in.payloadLen : sizeof(text) - 1;
+  memcpy(text, in.payload, n);
+  text[n] = 0;
+
+  char     host[32];
+  uint16_t port = 0;
+  char     path[64];
+  if (!rules::parseOtaUrl(text, host, sizeof(host), &port, path, sizeof(path))) {
+    Serial.printf("[MQTT] ota ignored: [%s] (http://host[:port]/path only)\n", text);
+    return;
+  }
+
+  Serial.printf("[MQTT] ota: %s:%u%s\n", host, (unsigned)port, path);
+  // install() blocks for the length of the download (budgeted inside); the MQTT session
+  // is idle-but-open during that and the broker may drop it - that is fine, because the
+  // only two exits are "validated, reboot now" and "failed, the session recovers on the
+  // next poll like any drop".
+  if (ota::install(host, port, path)) {
+    // Flush before the restart so the last line - the one a debugging human needs - is
+    // not still in the UART FIFO when the chip resets.
+    Serial.flush();
+    delay(100);
+    ESP.restart();
+  }
+  Serial.println("[MQTT] ota failed; firmware unchanged");
+}
+
 void handle(const wire::Packet& p) {
   switch (p.type) {
     case wire::kTypeConnack: {
@@ -270,6 +301,18 @@ void handle(const wire::Packet& p) {
           return;
         }
         handleCommand(in);
+        return;
+      }
+      makeTopic(topic, sizeof(topic), "ota");
+      if (wire::topicIs(in, topic)) {
+        // OTA is live-only for a sharper reason than reboot: a retained URL would reflash
+        // the board on every reconnect - a boot loop that overwrites the firmware each
+        // time. The same one-line guard, the same one-line cost for forgetting it.
+        if (!rules::commandDeliveryAllowed(in.retained)) {
+          Serial.println("[MQTT] retained ota ignored (ota is live-only)");
+          return;
+        }
+        handleOta(in);
         return;
       }
       Serial.printf("[MQTT] publish on an unknown topic ignored (%u bytes)\n",

@@ -152,8 +152,8 @@ static void reportTest(const char* layer, int total, int failed) {
 static void doSelfTest() {
   // Each layer keeps its own suite: proto owns the wire format, net owns the published bytes,
   // net::mqtt owns the broker's packet format, net::rules owns the inbound parsing (setpoint
-  // text, command verbs, broker addresses), net::prov owns the provisioning validation, and
-  // discovery owns the entity table. None of them can check another's job.
+  // text, command verbs, broker addresses, OTA URLs), net::prov owns the provisioning
+  // validation, and discovery owns the entity table. None of them can check another's job.
   proto::SelfTestResult     p = proto::runSelfTest(serialLine, nullptr);
   net::SelfTestResult       n = net::runSelfTest(serialLine, nullptr);
   net::SelfTestResult       w = net::mqtt::runSelfTest(serialLine, nullptr);
@@ -310,6 +310,7 @@ static void printHelp() {
   Serial.println("  mqtt              print the payload this state would publish");
   Serial.println("  broker HOST[:P]   set the MQTT broker ( - clears it ); restarts the client");
   Serial.println("  mqttuser U PASS   set the broker account ( - clears ); restarts the client");
+  Serial.println("  ota               print how to update firmware over MQTT");
   Serial.println("  portal            start the setup portal (LAN page if already online, else AP)");
   Serial.println("  wifi SSID PASS    join a network and save it (open network: wifi SSID -)");
   Serial.println("  raw on / raw off  show / hide raw A0 bytes");
@@ -422,6 +423,14 @@ static void handleCommand(String line) {
   if (low == "portal") {
     if (net::portalActive()) { Serial.println("[PORTAL] already running"); return; }
     net::startPortal(onProvisioned, nullptr);
+    return;
+  }
+  if (low == "ota") {
+    // The serial console can read and reboot, but the flasher deliberately listens to one
+    // surface only: the ota MQTT topic. A second entry point would be a second parser to
+    // keep honest, so the console points at the real path instead of duplicating it.
+    Serial.println("[OTA] publish the image URL to btwh/<device>/ota (live, not retained):");
+    Serial.println("      mosquitto_pub -h <broker> -t btwh/<device>/ota -m http://<host>[:port]/firmware.bin");
     return;
   }
   if (low.startsWith("wifi")) {
@@ -587,6 +596,22 @@ void loop() {
   pollSerial();
   net::portalPoll();
   app::poll();
+
+  // Wi-Fi rejoin. stationConnect runs once at boot, and the AP is not guaranteed to be
+  // first: a router recovers from a power cut slower than this board, and a laptop hotspot
+  // starts whenever its owner gets around to it. On the bench (2026-11-11) a board that
+  // booted before the AP stayed offline until a manual reboot. Arduino's auto-reconnect
+  // covers an AP that disappears and returns while we are associated; this retry covers
+  // the never-associated-at-boot case. 30 s cadence, one 15 s join budget each: slow
+  // enough not to fight the scan-and-join cycle, fast enough to come back inside a minute
+  // of the AP appearing.
+  static uint32_t lastWifiRetryMs = 0;
+  if (gCfg.ssid[0] && !net::stationUp() && !net::portalActive()
+      && millis() - lastWifiRetryMs > 30000) {
+    lastWifiRetryMs = millis();
+    Serial.println("[WIFI] rejoining (AP may have come up after boot)");
+    net::stationConnect(gCfg.ssid, gCfg.wifiPass);
+  }
 
   // Diagnostics metadata, resampled every 5 s: pairing state and RSSI move while the bridge
   // runs, and the MQTT attributes heartbeat (60 s) republishes whatever this sampled last.
