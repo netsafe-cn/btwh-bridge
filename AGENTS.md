@@ -43,7 +43,7 @@ python firmware/bridge/tools/host_selftest.py              # the six C++ suites,
 # then flash and type: selftest                            # the same six suites, on the board
 ```
 
-The six C++ suites (proto 64 / net 16 / mqtt 41 / rules 48 / provision 19 / discovery 73)
+The six C++ suites (proto 64 / net 16 / mqtt 41 / rules 76 / provision 19 / discovery 79)
 run in two places, and the check counts must stay in lockstep:
 
 - **on the host** — `host_selftest.py` compiles the framework-free layers with g++/clang++
@@ -83,7 +83,10 @@ The suites:
   watchdog underflow (three edges in these parsers were caught by this suite's first run) -
   and the OTA URL grammar (`parseOtaUrl`: http only, port bounds, path required, oversized
   host/path refused rather than truncated; the retained guard applies to this topic too,
-  because a retained URL is a boot loop that reflashes every reconnect)
+  because a retained URL is a boot loop that reflashes every reconnect), and the manifest
+  version (`parseManifestVersion`: the shell echo's CRLF trimmed, printable-only, refused
+  rather than truncated - a cut-off version string never string-matches and the update
+  badge never clears)
 - **provision** — the pairing form's gate: MAC grammar (dash/uppercase accepted, short/
   non-hex/trailing junk refused), the SSID field bounds, the six-digit pairing code rule
   that protects the heater's three-failure lockout, and the `pair_state` words mirrored

@@ -57,6 +57,12 @@ char     gWhy[64] = "not started";
 // When the broker link last dropped, epoch seconds; 0 = never since boot. Published in the
 // attributes payload so a remote user can see a flapping link while it happens to be up.
 int64_t  gLastDropAt = 0;
+// The retained manifest (update/latest + update/url), re-delivered by the broker on every
+// subscribe. RAM only: losing it across a reboot costs one retained replay, which is the
+// whole point of publishing the manifest retained. Empty latest means no manifest seen and
+// the update entity honestly reports 'unknown' for latest_version.
+char     gLatestVersion[32] = "";
+char     gManifestUrl[128]  = "";
 
 uint8_t gTx[kTxCap];
 uint8_t gRx[wire::kMaxPacket];
@@ -97,6 +103,24 @@ void publishAttributes() {
   publishText("attributes", json, true);
 }
 
+void publishUpdateState() {
+  // The update entity's state: installed comes from this binary, latest from the manifest.
+  // latest_version is omitted until a manifest has been seen - Home Assistant then shows
+  // 'unknown' instead of a fake 'up to date'. Version strings are this file's literals and
+  // rules-validated manifest bytes (printable, no quotes), so no JSON escaping is needed.
+  if (gLatestVersion[0]) {
+    char json[112];
+    snprintf(json, sizeof(json),
+             "{\"installed_version\":\"%s\",\"latest_version\":\"%s\"}",
+             kFirmwareVersion, gLatestVersion);
+    publishText("update/state", json, true);
+  } else {
+    char json[48];
+    snprintf(json, sizeof(json), "{\"installed_version\":\"%s\"}", kFirmwareVersion);
+    publishText("update/state", json, true);
+  }
+}
+
 // Discovery is retained and idempotent, so it is republished on every connect: that also
 // repairs an entity deleted from Home Assistant without touching the bridge.
 void publishDiscovery() {
@@ -131,10 +155,13 @@ void onConnected() {
 
   publishText("availability", "online", true);
   publishAttributes();
+  publishUpdateState();
   publishDiscovery();
   subscribe("set/temperature");
   subscribe("cmd");
   subscribe("ota");
+  subscribe("update/latest");
+  subscribe("update/url");
 
   Serial.printf("[MQTT] + connected to %s:%u as %s\n", gHost, (unsigned)gPort, gDeviceId);
 }
@@ -240,15 +267,30 @@ void handleOta(const wire::PublishInfo& in) {
   memcpy(text, in.payload, n);
   text[n] = 0;
 
+  // Home Assistant's update entity sends the payload_install word ("install"); the bench
+  // tool sends a full URL. One topic, two verbs, one flasher.
   char     host[32];
   uint16_t port = 0;
   char     path[64];
-  if (!rules::parseOtaUrl(text, host, sizeof(host), &port, path, sizeof(path))) {
-    Serial.printf("[MQTT] ota ignored: [%s] (http://host[:port]/path only)\n", text);
+  if (strcmp(text, "install") == 0) {
+    if (!gManifestUrl[0]) {
+      Serial.println("[MQTT] ota install refused: no manifest URL seen on update/url");
+      return;
+    }
+    Serial.println("[MQTT] ota: install (URL from update/url)");
+    if (!rules::parseOtaUrl(gManifestUrl, host, sizeof(host), &port, path, sizeof(path))) {
+      // The manifest URL was validated when it arrived; if this fires, the cache was
+      // corrupted - say so rather than flash garbage.
+      Serial.println("[MQTT] x cached manifest URL no longer parses; firmware unchanged");
+      return;
+    }
+  } else if (!rules::parseOtaUrl(text, host, sizeof(host), &port, path, sizeof(path))) {
+    Serial.printf("[MQTT] ota ignored: [%s] (http://host[:port]/path or 'install' only)\n", text);
     return;
+  } else {
+    Serial.printf("[MQTT] ota: %s:%u%s\n", host, (unsigned)port, path);
   }
 
-  Serial.printf("[MQTT] ota: %s:%u%s\n", host, (unsigned)port, path);
   // install() blocks for the length of the download (budgeted inside); the MQTT session
   // is idle-but-open during that and the broker may drop it - that is fine, because the
   // only two exits are "validated, reboot now" and "failed, the session recovers on the
@@ -261,6 +303,48 @@ void handleOta(const wire::PublishInfo& in) {
     ESP.restart();
   }
   Serial.println("[MQTT] ota failed; firmware unchanged");
+}
+
+// The manifest topics are deliberately NOT live-only: they are retained, the broker
+// replays them on every (re)subscribe, and replaying state is idempotent - the exact
+// opposite of the ota topic one level up, where a retained replay would reflash the chip.
+void handleManifestLatest(const wire::PublishInfo& in) {
+  char text[48];
+  const size_t n = in.payloadLen < sizeof(text) - 1 ? in.payloadLen : sizeof(text) - 1;
+  memcpy(text, in.payload, n);
+  text[n] = 0;
+
+  char version[32];
+  if (!rules::parseManifestVersion(text, version, sizeof(version))) {
+    Serial.println("[MQTT] update/latest ignored (empty or not printable text)");
+    return;
+  }
+  if (strcmp(version, gLatestVersion) != 0) {
+    snprintf(gLatestVersion, sizeof(gLatestVersion), "%s", version);
+    Serial.printf("[MQTT] manifest: latest %s\n", gLatestVersion);
+  }
+  publishUpdateState();
+}
+
+void handleManifestUrl(const wire::PublishInfo& in) {
+  // Validate on arrival with the same parser the flash path uses; store only the raw
+  // bytes. Revalidate at install time - the cache is two-way consistent then.
+  char text[128];
+  const size_t n = in.payloadLen < sizeof(text) - 1 ? in.payloadLen : sizeof(text) - 1;
+  memcpy(text, in.payload, n);
+  text[n] = 0;
+
+  char     host[32];
+  uint16_t port = 0;
+  char     path[64];
+  if (text[0] && !rules::parseOtaUrl(text, host, sizeof(host), &port, path, sizeof(path))) {
+    Serial.println("[MQTT] update/url ignored (http://host[:port]/path only)");
+    return;
+  }
+  // An empty payload is a publish-clear (mqtt_watch publishes retained '' to reset);
+  // accept it as "no manifest".
+  snprintf(gManifestUrl, sizeof(gManifestUrl), "%s", text);
+  Serial.printf("[MQTT] manifest: url %s\n", text[0] ? text : "(cleared)");
 }
 
 void handle(const wire::Packet& p) {
@@ -315,6 +399,13 @@ void handle(const wire::Packet& p) {
         handleOta(in);
         return;
       }
+      // The manifest topics are the ota topic's mirror image: retained is the point.
+      // Everything above refuses a retained delivery; these two cache whatever they see,
+      // because state replayed is state restored, not an action repeated.
+      makeTopic(topic, sizeof(topic), "update/latest");
+      if (wire::topicIs(in, topic)) { handleManifestLatest(in); return; }
+      makeTopic(topic, sizeof(topic), "update/url");
+      if (wire::topicIs(in, topic)) { handleManifestUrl(in); return; }
       Serial.printf("[MQTT] publish on an unknown topic ignored (%u bytes)\n",
                     (unsigned)in.payloadLen);
       break;
@@ -456,6 +547,9 @@ void mqttPoll(const Snapshot* snap, bool newFrame) {
   // A0 frame, which is exactly when the pairing state is worth reading.
   if (rules::elapsedMs(now, gLastAttrs) > 60000) {
     publishAttributes();
+    // The update entity rides the same cadence: after an OTA reboot the installed_version
+    // must move within a minute, or the entity lies about which firmware is running.
+    publishUpdateState();
     gLastAttrs = now;
   }
   if (snap && (newFrame || gWantPublish || heartbeat)) {

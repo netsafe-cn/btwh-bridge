@@ -56,8 +56,30 @@
       "topic": "btwh/{device_id}/ota",
       "direction": "consumer -> bridge",
       "payload": "text",
+      "grammar": "http://host[:port]/path | install",
+      "purpose": "Firmware update URL, or the literal 'install' to flash the URL last seen on update/url. The bridge downloads the image over HTTP, flashes the inactive slot, validates, and reboots into it; on any failure the running firmware is untouched. http only (https has no TLS stack in the flasher path); port defaults to 80; a bare host without a path is refused. Delivery must be live - a retained URL would reflash the board on every reconnect, which is a boot loop that overwrites the firmware each time."
+    },
+    "update_manifest_latest": {
+      "topic": "btwh/{device_id}/update/latest",
+      "direction": "consumer -> bridge",
+      "payload": "text",
+      "grammar": "one printable line, trimmed, 1..31 chars",
+      "retain": true,
+      "purpose": "Latest available firmware version, published by whoever owns the manifest (the bench tool today, a release pipeline later). Retained on purpose: a rebooted bridge learns the current manifest from the broker on its first subscribe, so the update entity never lies about what is available. Replaying it is idempotent state, not a command - this is the deliberate opposite of the live-only ota topic."
+    },
+    "update_manifest_url": {
+      "topic": "btwh/{device_id}/update/url",
+      "direction": "consumer -> bridge",
+      "payload": "text",
       "grammar": "http://host[:port]/path",
-      "purpose": "Firmware update URL. The bridge downloads the image over HTTP, flashes the inactive slot, validates, and reboots into it; on any failure the running firmware is untouched. http only (https has no TLS stack in the flasher path); port defaults to 80; a bare host without a path is refused. Delivery must be live - a retained URL would reflash the board on every reconnect, which is a boot loop that overwrites the firmware each time."
+      "retain": true,
+      "purpose": "Firmware image URL backing the version on update/latest. Retained like update/latest: the bridge caches it and only ever flashes on an explicit live 'install'. A bad URL is refused by the same parser as the ota topic (rules::parseOtaUrl), so both paths share one grammar and one test suite."
+    },
+    "update_state": {
+      "topic": "btwh/{device_id}/update/state",
+      "direction": "bridge -> consumer",
+      "payload": "json",
+      "purpose": "The update entity's state: {\"installed_version\":...,\"latest_version\":...}. latest_version is omitted entirely until a manifest has been seen, so Home Assistant shows 'unknown' rather than a fake up-to-date. Republished on connect, on every manifest change, and on the 60 s heartbeat, retained."
     },
     "attributes": {
       "topic": "btwh/{device_id}/attributes",
@@ -273,12 +295,25 @@
       "name": "Water heater"
     },
     "entity_note": "One entity per state field. Sensors use state_class measurement; setpoint is a number entity; flame is a binary_sensor; mode is an enum sensor; fault is a sensor with an icon template. Every attributes field is also an entity, but entity_category diagnostic, so Home Assistant files it under diagnostics instead of cluttering the device page - a remote user can read firmware, RSSI and the last disconnect without shell access to the board.",
+    "update_entity": {
+      "component": "update",
+      "state": "topics.update_state",
+      "command": "topics.ota",
+      "payload_install": "install",
+      "title": "BTWH Bridge",
+      "device_class": "firmware",
+      "entity_category": "config",
+      "note": "The HA update entity: installed_version comes from the firmware itself, latest_version from the retained manifest topics (update/latest + update/url). Clicking Install in HA publishes 'install' to the existing ota topic - the same live-only path the bench tool uses, so there is exactly one flasher and one grammar. The bridge mediates the state (rather than HA reading the manifest topics directly) because the install command needs the URL cached on the board anyway. Version strings are compared as strings by HA; dev suffixes like '-ota2' are bench-only - release builds must use plain semver."
+    },
     "water_heater_entity": {
       "component": "water_heater",
       "current_temperature": "temp_out",
       "target_temperature": "setpoint",
       "command_topic": "topics.set_temperature",
-      "modes": ["off", "gas"],
+      "modes": [
+        "off",
+        "gas"
+      ],
       "mode_template": "{{ 'gas' if value_json.flame else 'off' }}",
       "temperature_unit": "C",
       "min_temp": 35,

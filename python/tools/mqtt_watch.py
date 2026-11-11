@@ -127,8 +127,11 @@ def main() -> int:
     ap.add_argument("--demo", action="store_true", help="publish as a fake bridge")
     ap.add_argument("--set", type=int, dest="setpoint", help="publish this setpoint and exit")
     ap.add_argument("--ota", metavar="URL",
-                    help="publish a firmware URL to the device's ota topic and exit "
-                         "(live-only: sent unretained, exactly as the firmware requires)")
+                    help="publish a firmware URL (or 'install') to the device's ota topic and "
+                         "exit (live-only: sent unretained, exactly as the firmware requires)")
+    ap.add_argument("--manifest", metavar="LATEST,URL",
+                    help="publish the retained update manifest (latest version, image URL) "
+                         "for --device and exit; the bridge turns it into update/state")
     ap.add_argument("--interval", type=float, default=4.0, help="demo publish interval")
     ap.add_argument("--user", help="broker username (empty: anonymous)")
     ap.add_argument("--password", help="broker password (use with --user)")
@@ -278,6 +281,20 @@ def main() -> int:
             client.publish(ota_topic, args.ota, qos=0, retain=False)
             print("[ota  ] %s <- %s (unretained on purpose: a retained URL would "
                   "reflash on every reconnect)" % (ota_topic, args.ota))
+        elif args.manifest:
+            if not args.device:
+                print("[manif] --manifest needs --device")
+                return 2
+            latest, _, url = args.manifest.partition(",")
+            time.sleep(1.0)
+            # Retained is the point: a rebooted bridge re-learns the manifest from the
+            # broker, and the HA update entity follows the bridge's own update/state.
+            client.publish("%s/%s/update/latest" % (base, args.device), latest, retain=True)
+            client.publish("%s/%s/update/url" % (base, args.device), url, retain=True)
+            print("[manif] %s/%s/update/latest <- %s (retained)"
+                  % (base, args.device, latest))
+            print("[manif] %s/%s/update/url <- %s (retained)"
+                  % (base, args.device, url))
         else:
             print("[watch] Ctrl-C to stop")
             while True:

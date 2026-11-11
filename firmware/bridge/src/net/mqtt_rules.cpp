@@ -183,6 +183,29 @@ bool parseOtaUrl(const char* text, char* host, size_t hostCap, uint16_t* port,
   return true;
 }
 
+// ---------------------------------------------------------------- manifest version
+
+bool parseManifestVersion(const char* text, char* out, size_t cap) {
+  if (!text || !out || cap == 0) return false;
+  size_t len = strlen(text);
+  // Trim everything the wire can leave around a shell-echoed line: spaces, CR, LF, tabs.
+  size_t begin = 0;
+  while (begin < len && isspace((unsigned char)text[begin])) begin++;
+  size_t end = len;                                   // one past the last kept byte
+  while (end > begin && isspace((unsigned char)text[end - 1])) end--;
+  if (begin == end) return false;                     // empty or all whitespace
+  const size_t kept = end - begin;
+  if (kept >= cap) return false;                      // refuse rather than truncate
+  // Printable ASCII only: a control character inside a version string means the payload is
+  // not text at all, and Home Assistant would string-compare the invisible garbage anyway.
+  for (size_t i = begin; i < end; i++) {
+    if (!isgraph((unsigned char)text[i])) return false;
+  }
+  memcpy(out, text + begin, kept);
+  out[kept] = 0;
+  return true;
+}
+
 // ---------------------------------------------------------------- self test
 
 namespace {
@@ -414,6 +437,47 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
                     tinyPath, sizeof(tinyPath))) {
       t.failed++;
       line(t, "  x parseOtaUrl: undersized path buffer accepted");
+    }
+  }
+
+  // ---- manifest version (update/latest): trim a shell echo, refuse the rest
+  {
+    auto checkVer = [&](const char* text, const char* want) {
+      t.total++;
+      char out[32];
+      const bool ok = parseManifestVersion(text, out, sizeof(out));
+      const bool wantOk = want != nullptr;
+      if (ok != wantOk || (wantOk && strcmp(out, want) != 0)) {
+        t.failed++;
+        line(t, "  x parseManifestVersion(\"%s\"): got [%s], want [%s]", text ? text : "(null)",
+             ok ? out : "(refused)", wantOk ? want : "(refused)");
+      }
+    };
+    checkVer("2.8.0", "2.8.0");
+    checkVer("  2.8.1-rc1\r\n", "2.8.1-rc1");     // the shell publisher's echo
+    checkVer("\t2.8.0 \n", "2.8.0");
+    checkVer("", nullptr);                          // empty
+    checkVer("   \r\n  ", nullptr);                 // whitespace only, still nothing to say
+    checkVer("2.8.0\t1", nullptr);                  // control character inside: not text
+    checkVer(nullptr, nullptr);
+    // A version that does not fit is refused, not truncated: "2.8.0" truncated to "2.8."
+    // string-matches nothing and the update badge never clears. ("2.8.0" is 5 bytes.)
+    {
+      t.total++;
+      char tiny[5];
+      if (parseManifestVersion("2.8.0", tiny, sizeof(tiny))) {
+        t.failed++;
+        line(t, "  x parseManifestVersion: undersized buffer accepted");
+      }
+    }
+    // Exact fit is fine: kept bytes == cap - 1.
+    {
+      t.total++;
+      char exact[6];
+      if (!parseManifestVersion("2.8.0", exact, sizeof(exact))) {
+        t.failed++;
+        line(t, "  x parseManifestVersion: exact fit refused");
+      }
     }
   }
 

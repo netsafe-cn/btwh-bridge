@@ -36,7 +36,11 @@ namespace net {
 //       board reboots into it. URL grammar host-tested in rules; live-only like commands.
 // 2.7.1: the same OTA image used as the OTA *test payload*: shipped over the air from the
 //       bench server to prove the path end to end (serial banner + attrs both move).
-constexpr const char* kFirmwareVersion = "2.7.1-ota2";
+// 2.8.0: the Home Assistant update entity. The retained manifest topics update/latest and
+//       update/url cache on arrival (rules::parseManifestVersion for the version), update/state
+//       publishes the entity's JSON, and payload_install "install" on the ota topic flashes the
+//       cached URL - the same flasher, the same grammar, one path from bench and UI alike.
+constexpr const char* kFirmwareVersion = "2.8.1-ota3";
 
 // Slow-changing metadata, published retained on every connect and refreshed on the
 // attributes heartbeat. Kept out of the state payload so the 4-second message stays small.

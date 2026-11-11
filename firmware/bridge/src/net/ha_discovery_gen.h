@@ -65,8 +65,10 @@ static const EntityDesc kEntities[] = {
    "{\"name\":\"Last MQTT disconnect (epoch)\",\"unique_id\":\"@DEV@_last_disconnect_at\",\"state_topic\":\"btwh/@DEV@/attributes\",\"availability_topic\":\"btwh/@DEV@/availability\",\"payload_available\":\"online\",\"payload_not_available\":\"offline\",\"entity_category\":\"diagnostic\",\"value_template\":\"{% if value_json.last_disconnect_at %}{{ value_json.last_disconnect_at }}{% endif %}\",\"device\":{\"identifiers\":[\"@DEV@\"],\"manufacturer\":\"Bosch\",\"model\":\"Therm 4800i\",\"name\":\"Water heater\"},\"device_class\":\"timestamp\",\"icon\":\"mdi:clock-remove\"}"},
   {"water_heater", "water_heater", "homeassistant/water_heater/@DEV@/water_heater/config",
    "{\"name\":null,\"default_entity_id\":\"water_heater\",\"unique_id\":\"@DEV@_water_heater\",\"current_temperature_topic\":\"btwh/@DEV@/state\",\"current_temperature_template\":\"{{ value_json.temp_out }}\",\"temperature_state_topic\":\"btwh/@DEV@/state\",\"temperature_state_template\":\"{{ value_json.setpoint }}\",\"temperature_command_topic\":\"btwh/@DEV@/set/temperature\",\"temperature_unit\":\"C\",\"min_temp\":35,\"max_temp\":60,\"precision\":1.0,\"modes\":[\"off\",\"gas\"],\"mode_state_topic\":\"btwh/@DEV@/state\",\"mode_state_template\":\"{{ 'gas' if value_json.flame else 'off' }}\",\"optimistic\":false,\"availability_topic\":\"btwh/@DEV@/availability\",\"payload_available\":\"online\",\"payload_not_available\":\"offline\",\"device\":{\"identifiers\":[\"@DEV@\"],\"manufacturer\":\"Bosch\",\"model\":\"Therm 4800i\",\"name\":\"Water heater\"}}"},
+  {"update", "update", "homeassistant/update/@DEV@/update/config",
+   "{\"name\":\"Firmware\",\"unique_id\":\"@DEV@_update\",\"state_topic\":\"btwh/@DEV@/update/state\",\"command_topic\":\"btwh/@DEV@/ota\",\"payload_install\":\"install\",\"title\":\"BTWH Bridge\",\"device_class\":\"firmware\",\"entity_category\":\"config\",\"availability_topic\":\"btwh/@DEV@/availability\",\"payload_available\":\"online\",\"payload_not_available\":\"offline\",\"device\":{\"identifiers\":[\"@DEV@\"],\"manufacturer\":\"Bosch\",\"model\":\"Therm 4800i\",\"name\":\"Water heater\"}}"},
 };
-static const size_t kEntityCount = 20;
+static const size_t kEntityCount = 21;
 
 // Golden pair for selftest: the first entity with a known device id substituted.
 constexpr const char* kGoldenTopic =

@@ -116,6 +116,13 @@ uint32_t nextBackoffMs(uint32_t current);
 bool parseOtaUrl(const char* text, char* host, size_t hostCap, uint16_t* port,
                  char* path, size_t pathCap);
 
+// The manifest version from update/latest: one printable line. Whitespace and CRLF around
+// it are trimmed (a shell publisher echoes a newline), the inside must be printable ASCII
+// (Home Assistant compares versions as strings, so whatever survives is compared verbatim),
+// and it must fit the buffer without truncation - a truncated version string silently
+// string-matches nothing and the update entity never clears its badge.
+bool parseManifestVersion(const char* text, char* out, size_t cap);
+
 // ---------------------------------------------------------------- self test
 
 SelfTestResult runSelfTest(LogFn log, void* ctx);

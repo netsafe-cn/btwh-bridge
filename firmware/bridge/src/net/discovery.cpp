@@ -122,7 +122,8 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
     const char* payload = entityPayload(i);
     const bool ok = payload && (strstr(payload, "\"state_topic\":\"btwh/@DEV@/state\"")
                                 || strstr(payload, "\"state_topic\":\"btwh/@DEV@/attributes\"")
-                                || strstr(payload, "\"current_temperature_topic\":\"btwh/@DEV@/state\""));
+                                || strstr(payload, "\"current_temperature_topic\":\"btwh/@DEV@/state\"")
+                                || strstr(payload, "\"state_topic\":\"btwh/@DEV@/update/state\""));
     check(c, ok, "entity names a state or attributes topic", entityTopic(i));
   }
 
@@ -135,6 +136,20 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
           "water_heater binds the contract command topic", entityTopic(i));
     check(c, strstr(payload, "\"optimistic\":false") != nullptr,
           "water_heater is not optimistic", entityTopic(i));
+  }
+
+  // 5c. The update entity must install through the existing ota topic and say the word the
+  //     firmware dispatches ("install") - the UI button and the bench tool must drive the
+  //     same flasher, and payload_install is the one string that couples them.
+  for (size_t i = 0; i < entityCount(); i++) {
+    const char* payload = entityPayload(i);
+    if (!payload || !strstr(payload, "\"payload_install\"")) continue;
+    check(c, strstr(payload, "\"command_topic\":\"btwh/@DEV@/ota\"") != nullptr,
+          "update installs through the ota topic", entityTopic(i));
+    check(c, strstr(payload, "\"payload_install\":\"install\"") != nullptr,
+          "update says the install word the firmware dispatches", entityTopic(i));
+    check(c, strstr(payload, "\"state_topic\":\"btwh/@DEV@/update/state\"") != nullptr,
+          "update reads the bridge-mediated state", entityTopic(i));
   }
 
   // 6. Exactly the entities on the attributes topic must be entity_category diagnostic -

@@ -9,6 +9,28 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The Home Assistant `update` entity: firmware updates from the HA UI.** A 21st discovery
+  entity (component `update`, device_class firmware) gives the bridge an "update available"
+  card with an Install button. The design keeps one flasher and one grammar: the retained
+  manifest topics `btwh/<id>/update/latest` + `update/url` (version, image URL) are cached
+  by the bridge on arrival (`rules::parseManifestVersion` trims the shell echo, refuses
+  non-printable or oversized), the bridge publishes the entity's state as
+  `{"installed_version":...,"latest_version":...}` on `btwh/<id>/update/state` (latest
+  omitted until a manifest is seen, so HA shows 'unknown' rather than a fake up-to-date),
+  and Install publishes the `payload_install` word "install" to the existing live-only
+  `ota` topic, which flashes the cached URL. Manifest topics are retained on purpose -
+  replaying state is idempotent, the exact opposite of the live-only ota topic - so a
+  rebooted bridge re-learns the manifest from the broker on its first subscribe.
+  `mqtt_watch.py --manifest LATEST,URL --device <id>` is the bench driver. Note: HA
+  string-compares versions, so dev suffixes are bench-only; release builds must use plain
+  semver. Non-goal still: https images (no TLS stack in the flasher path).
+  Bench-verified end to end through the real HA path (2026-11-11): manifest published
+  retained, the entity appeared as `update.<...>_water_heater_firmware` state **on**
+  (installed 2.8.0-update, latest 2.8.1-ota3), the `update.install` service call - the
+  exact action behind the UI button - flashed 1.16 MB in 4.5 s, the board rebooted into
+  2.8.1-ota3, and the entity settled at **off** (installed = latest) after the retained
+  manifest replayed on the post-flash reconnect.
+
 - **OTA: the bridge can now be reflashed over its own MQTT link.** The new `btwh/<id>/ota`
   topic accepts a `http://host[:port]/path` firmware URL; `net/ota.cpp` downloads it with a
   120 s budget, streams it to the inactive slot in 2 KB chunks, validates (Update
@@ -16,9 +38,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The URL grammar lives in `rules::parseOtaUrl` (host-tested, 19 new checks: https
   refused, missing path refused, port bounds, truncation-free buffers) and delivery is
   live-only like commands, because a retained URL would reflash on every reconnect.
-  `mqtt_watch.py --ota <url> --device <id>` is the one-line bench driver. https and a
-  Home Assistant `update` entity are deliberate non-goals for now: the flasher carries no
-  TLS stack, and the entity needs a version-manifest design first.
+  `mqtt_watch.py --ota <url> --device <id>` is the one-line bench driver. https remains a
+  deliberate non-goal (the flasher carries no TLS stack); the Home Assistant `update`
+  entity has since landed - see the entry above.
   Bench-verified end to end (2026-11-11): 2.7.0-ota flashed over USB, then 2.7.1-ota2
   shipped over the air from a plain `python -m http.server` on the bench PC - MQTT command
   to reboot into the new image in 24 s wall clock (1.16 MB image, 5.0 s download+flash,
@@ -148,6 +170,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (banner 2.6.1, attributes 2.6.0 - arduino-cli did not rebuild mqtt_client.cpp.o after
   its header changed); `gateway_cli.py --clean` exists because of it, and this version
   was built clean, then updated over the air.
+
+- Firmware version 2.8.0-update. On-board selftest 280 -> 295: the manifest version
+  grammar (rules 67 -> 76) and the update-entity bindings (discovery 73 -> 79: installs
+  through the ota topic, says the install word, reads the bridge-mediated state). Six
+  suites: proto 64 / net 16 / mqtt 41 / rules 76 / provision 19 / discovery 79. The same
+  bench day also measured the broker-unreachable backoff live (Mosquitto addon stopped
+  via the HA websocket API): retry in 32 s -> 64 s -> 60 s -> 60 s, matching the pinned
+  `nextBackoffMs` sequence to the second, and full recovery on the first retry after the
+  broker returned.
 
 ### Added
 

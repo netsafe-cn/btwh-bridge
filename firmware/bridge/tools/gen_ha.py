@@ -22,7 +22,8 @@ troubleshooting surface: firmware, uptime, RSSI, pairing state, last disconnect.
 On top of those, one `water_heater` domain entity: current outlet temperature, the setpoint
 bound to the existing command topic, and a read-only mode ('gas' while the burner fires,
 'off' while idle). It reuses the v1 contract topics; the heater becomes a first-class
-water heater card instead of a pile of sensors.
+water heater card instead of a pile of sensors. And one `update` entity over the OTA
+path: state from update/state (bridge-mediated), install via the existing ota topic.
 
 Usage:
     python firmware/bridge/tools/gen_ha.py            # write the header
@@ -192,6 +193,42 @@ def ha_entity(field: dict, doc: dict) -> dict | None:
     return {"component": component, "key": key, "config": cfg}
 
 
+def ha_update_entity(doc: dict) -> dict:
+    """The update entity: HA's 'there is newer firmware' card over the existing OTA path.
+
+    Everything comes from spec home_assistant.update_entity. The command topic is the
+    plain ota topic (payload_install "install" triggers the cached manifest URL), so the
+    update button and the bench tool drive the same flasher. state is bridge-mediated JSON:
+    installed_version from the firmware, latest_version from the retained manifest topics.
+    """
+    base = doc["base_topic"]
+    ha = doc["home_assistant"]
+    ue = ha["update_entity"]
+    state_topic = doc["topics"]["update_state"]["topic"].replace("{device_id}", DEV)
+    command_topic = doc["topics"]["ota"]["topic"].replace("{device_id}", DEV)
+
+    cfg: dict = {
+        "name": ue.get("name") or "Firmware",
+        "unique_id": "%s_update" % DEV,
+        "state_topic": state_topic,
+        "command_topic": command_topic,
+        "payload_install": ue["payload_install"],
+        "title": ue["title"],
+        "device_class": ue["device_class"],
+        "entity_category": ue["entity_category"],
+        "availability_topic": "%s/%s/availability" % (base, DEV),
+        "payload_available": "online",
+        "payload_not_available": "offline",
+        "device": {
+            "identifiers": [DEV],
+            "manufacturer": ha["device"]["manufacturer"],
+            "model": ha["device"]["model"],
+            "name": ha["device"]["name"],
+        },
+    }
+    return {"component": "update", "key": "update", "config": cfg}
+
+
 def ha_water_heater_entity(doc: dict) -> dict:
     """The water_heater domain entity: one device-level heater view over the same topics.
 
@@ -258,6 +295,8 @@ def build() -> str:
     entities += [ha_diag_entity(f, doc) for f in doc["attributes_fields"]]
     if "water_heater_entity" in doc.get("home_assistant", {}):
         entities.append(ha_water_heater_entity(doc))
+    if "update_entity" in doc.get("home_assistant", {}):
+        entities.append(ha_update_entity(doc))
 
     out = []
     out.append("""\
