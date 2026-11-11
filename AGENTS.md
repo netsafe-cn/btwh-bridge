@@ -3,6 +3,14 @@
 Read this before changing firmware or protocol code. Project-wide conventions live in
 [`CONTRIBUTING.md`](CONTRIBUTING.md); this file is the short version an agent needs first.
 
+## Keep the authorship note true
+
+The README states in two places that most of this code is AI-written, and that the human side of
+the collaboration is hardware, decisions, review and the bench. Both remain true for whatever you
+add, so do not soften the claim, move it below the fold, or drop it in a rewrite. It is the reason
+the rest of the documentation can be trusted instead of merely read. If a task asks you to make the
+project look more polished, this paragraph is where you stop and ask.
+
 ## Build and flash
 
 ```bash

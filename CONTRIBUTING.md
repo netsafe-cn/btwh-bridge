@@ -4,6 +4,12 @@ Let's be clear about the boundary up front: this project is an **interoperabilit
 implementation for hardware you own**, not a cracking tool. Before you submit,
 make sure your change respects the red lines below.
 
+**On authorship.** Most of this repository was written by an AI assistant under human
+direction — see [How this was built](README.md#how-this-was-built) for what that does and does
+not imply. The same applies to patches: AI-assisted contributions are welcome, and saying so in
+the pull request is the expectation, not a confession. It tells the reviewer which parts deserve
+a second read.
+
 ---
 
 ## 1. Compliance red lines (hard, no exceptions)

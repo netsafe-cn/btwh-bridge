@@ -9,6 +9,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The README now says who wrote this.** Most of the code was written by an AI assistant under
+  human direction, and both READMEs say so above the fold, with a section covering the split
+  between human and AI work, the failure mode that arrangement creates (generated code reads as
+  if it was thought through), the three bugs that were caught by running it rather than reading
+  it, and what a reader should therefore do differently. The reason is not modesty: this firmware
+  drives a gas appliance, and a reader who assumes months of human authorship is being misled
+  about how much review stands behind the code. `AGENTS.md` now says the disclosure must survive
+  future edits, and `CONTRIBUTING.md` asks AI-assisted patches to say so in the pull request.
+
 - **An architecture diagram at the top of both READMEs.** Hand-drawn SVG goes stale the moment a
   layer or a topic changes, so the picture is generated: `docs/diagrams/gen_architecture.py`
   emits `architecture-{light,dark}.svg` from one description, and the READMEs pick the right one

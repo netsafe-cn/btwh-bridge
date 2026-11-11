@@ -12,6 +12,10 @@
 > Not affiliated with, authorised by, or endorsed by Robert Bosch GmbH or its
 > affiliates in any way.
 
+> **Most of the code in this repository was written by an AI assistant**, under human
+> direction and against a real heater. [How this was built](#how-this-was-built) says what
+> that does and does not mean — read it before you trust this with a gas appliance.
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.svg">
   <img src="docs/diagrams/architecture-light.svg" width="100%"
@@ -41,6 +45,40 @@ as first-class sensor and number entities, with no cloud anywhere in the loop.
 implementation, cross-platform golden vectors, and an ESP32 C++ implementation are
 all pinned to the same set of hex vectors, so the two implementations cannot drift
 apart silently.
+
+---
+
+## How this was built
+
+Most of the code here — the Python reference implementation, the ESP32 firmware, the tools, the
+test suites and this documentation — was written by an **AI assistant** (a large language model)
+from human direction. That is worth saying plainly rather than leaving people to work out, because
+you are being asked to flash firmware onto an appliance that burns gas.
+
+| | Human | AI |
+|---|---|---|
+| **Hardware** | owns the heater, wired and flashed the board, built the bench, runs the broker and Home Assistant | — |
+| **Decisions** | the target (Home Assistant first, nothing in the cloud), the layer boundaries, what counts as done | proposed and compared the alternatives |
+| **Protocol** | captured the real BLE traffic, judged what the frames meant | turned the captures into a codec and into `BLE_PROTOCOL.md` |
+| **Code** | reviewed what was kept, decided what ships | wrote most of it |
+| **Verification** | ran the bench, watched the board for hours, answers for the result | wrote the tests it has to pass |
+
+**The failure mode this creates.** Generated code reads as if someone thought it through:
+consistent, commented, plausible. Wrong code that looks considered is much harder to catch than
+wrong code that looks wrong. The defence here is not care, it is execution — every protocol claim
+is a test, the same C++ suites run on a host compiler and on the board, and the golden vectors
+make the Python and C++ implementations prove they agree byte for byte instead of promising it.
+
+**Every bug found so far was found by running it, not by reading it.** A Wi-Fi join that only
+happened at boot, so a bridge whose access point came up second stayed offline until a reboot. A
+build that mixed a new header with an old object file, so the boot banner and the published
+attributes disagreed about the version. A self-check that asserted a 12-byte fit as 10. None of
+these were visible in review.
+
+**What that means for you.** Read the code before trusting it — it is small on purpose, and the
+protocol layer is one pair of files. Where the tests are silent, the documentation is a claim, not
+a guarantee. The code has had one pair of review eyes and no years of production use behind it.
+And "this looks generated, and it is wrong" is a perfectly good opening line for an issue.
 
 ---
 
