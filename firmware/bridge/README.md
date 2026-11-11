@@ -25,15 +25,31 @@ firmware/bridge/
 │   │   ├── frame.h  frame.cpp     codec: build, stuff, XOR, checksum, reassembly
 │   │   ├── a0.h     a0.cpp        A0 broadcast -> A0State
 │   │   ├── selftest.h  selftest.cpp   runs the golden vectors on the board
-│   │   └── vectors_gen.h      GENERATED from spec/protocol_vectors.json
+│   │   ├── vectors_gen.h      GENERATED from spec/protocol_vectors.json
+│   │   └── profiles_gen.h     GENERATED from spec/profiles.json (one row per model)
 │   ├── ble/                   link.h  link.cpp    the only place NimBLE appears
 │   ├── auth/                  login.h login.cpp   A2/07 + A2/08 behind a Transport
-│   └── app/                   config.{h,cpp}  NVS config
-│                              session.{h,cpp} connect order, A0 state, link watch
+│   ├── app/                   config.{h,cpp}  NVS config (broker + credentials)
+│   │                          session.{h,cpp} connect order, A0 state, link watch
+│   └── net/                   the network stack (ADR-008's top layer, now landed)
+│       ├── station.cpp/h      Wi-Fi join + SNTP clock, 30 s join retry
+│       ├── portal.cpp/h + portal_html.h   one-submit provisioning form
+│       ├── provision.cpp/h    Improv-style provisioning gates
+│       ├── mqtt_wire.cpp/h    hand-written MQTT 3.1.1 packets (pure C++)
+│       ├── mqtt_rules.cpp/h   inbound grammar: broker, setpoint, commands, OTA URL
+│       ├── mqtt_client.cpp/h  the session: connect, backoff, publish, subscribe
+│       ├── discovery.cpp/h + ha_discovery_gen.h  21 entities, GENERATED from spec
+│       ├── state_json.cpp/h   snapshot -> contract JSON bytes
+│       ├── ota.cpp/h          HTTP flasher: 2 KB chunks, 120 s budget, checksum-gated
+│       └── selftest.h         shared selftest plumbing
 ├── platformio.ini             PlatformIO configuration (NimBLE pinned to 1.4.3)
 ├── tools/
 │   ├── gateway_cli.py         build / flash / serial console / logging in one command
 │   ├── gen_vectors.py         spec/protocol_vectors.json -> src/proto/vectors_gen.h
+│   ├── gen_profiles.py        spec/profiles.json -> src/proto/profiles_gen.h
+│   ├── gen_mqtt.py            spec/mqtt.json -> src/net/mqtt_contract.h
+│   ├── gen_ha.py              spec/mqtt.json -> src/net/ha_discovery_gen.h (21 entities)
+│   ├── host_selftest.py       the six C++ suites on the host (g++/clang++/zig)
 │   ├── esp32_panel.py         always-on-top control panel (enter the six-digit code)
 │   ├── pair_once.py           pair in one command and report a verdict
 │   ├── watch_a0.py            A0 broadcast as a table with per-field ranges
@@ -58,13 +74,13 @@ Split by **what a module is allowed to know**, so dependency arrows only point o
 
 ```
 src/
-├── main.cpp        setup / loop / serial console          (~270 lines, board boundary only)
+├── main.cpp        setup / loop / serial console          (board boundary only)
 ├── proto/          frames, A0 fields                      done: no Arduino, no NimBLE
 ├── ble/            NimBLE: connect, subscribe, reassemble, send   done
 ├── auth/           A2/07 + A2/08 behind a Transport       done: no NimBLE, no Serial
 ├── app/            session order, NVS config, A0 state    done
-├── net/            wifi, mqtt, ha_discovery, ota          planned
-└── diag/           (serial console stays in main.cpp)     planned
+├── net/            wifi, portal, mqtt, discovery, ota     done (see the layout above)
+└── diag/           (serial console stays in main.cpp)     deliberate: not split yet
 ```
 
 Why this order and not "bluetooth part / protocol part / config part":
@@ -87,10 +103,18 @@ stay put.
 Splitting is not free: it changes every call site and needs a rebuild plus a reflash to prove the
 board still links. Do it as one commit, with the golden vectors as the judge.
 
-### 2.2 Proving `proto/` still correct
+### 2.2 Proving the layers still correct
 
-The toolchain here only produces Xtensa binaries, so the golden vectors run **on the board**,
-not on the host. After flashing, type:
+The six C++ suites (proto 64 / net 16 / mqtt 41 / rules 76 / provision 19 / discovery 79 — 295
+checks) run in **two places**, and the counts are pinned in lockstep by
+`python/tests/test_cpp_selftest.py`:
+
+1. **On the host**, no board needed: `tools/host_selftest.py` compiles the framework-free
+   layers with the host's g++/clang++ (or `pip install ziglang` when neither exists) and runs
+   the same suites. A broken codec is caught before a commit, not after a flash — the
+   hardware once shipped a discovery check asserting a 12-byte fit as 10 that had never
+   executed anywhere until the board ran it.
+2. **On the board**: after flashing, type:
 
 ```
 selftest
@@ -99,6 +123,11 @@ selftest
 It rebuilds every frame from its parameters, stuffs it, XORs it fragment by fragment, feeds the
 fragments back through the reassembler, corrupts a checksum on purpose, and compares every A0
 field against `spec/protocol_vectors.json`. One line per failure, a count at the end.
+
+Both stay green through bugs the other only finds live: the client id once shipped unterminated
+stack garbage while the host's stack happened to be zero, and the watchdog once dropped a healthy
+link via a `millis()` underflow only reachable with a real broker answering. When the MQTT path
+changes, bench it against a real broker before believing it.
 
 ```bash
 python firmware/bridge/tools/gen_vectors.py          # spec -> src/proto/vectors_gen.h
@@ -134,12 +163,20 @@ Code expired or rejected? **Read a new one and type it again** — no build invo
 | Input | Effect |
 |---|---|
 | `311522` | Six-digit panel code → connect, pair and log in immediately |
+| `pin <code>` | Same, explicit form |
 | `go` | Reconnect with the current code (no new pairing) |
 | `pair` | Clear the local bond and force a fresh SMP pairing |
 | `scan` | Scan for 5 s and list nearby BLE devices (address / RSSI) |
 | `mac AA:BB:CC:DD:EE:FF` | Set the login MAC (the host on the device's whitelist) |
 | `addr AA:BB:CC:DD:EE:FF` | Set the heater's BLE address |
+| `wifi <ssid> <password>` | Join a network now, persisted to NVS (open network: `wifi <ssid> -`; `wifi` alone prints the state) |
+| `broker <host[:port]>` | Set the MQTT broker; `broker` alone prints the current one (`-` clears) |
+| `mqttuser <name> <password>` | Broker credentials, persisted in NVS (`-` clears both; a password may contain spaces) |
+| `portal` | Start the Wi-Fi provisioning portal (one form: Wi-Fi + heater + code + broker) |
+| `ota` | Prints how to flash: the URL goes to the MQTT `ota` topic — the console deliberately refuses to become a second flasher |
 | `status` | Print configuration and runtime state |
+| `mqtt` | Print the payload for the live MQTT state |
+| `selftest` | Run the six C++ suites on the board (295 checks) |
 | `raw on` / `raw off` | Show / hide raw A0 bytes |
 | `reboot` / `help` | Reboot / help |
 
@@ -159,17 +196,19 @@ Code expired or rejected? **Read a new one and type it again** — no build invo
 | Service not found | Pairing did not take effect | Look at the `[SMP]` stage |
 | A2 answers but no A0 | The login did not really pass | Confirm `A2/08` = `01` |
 | A0 fields look wrong | Incomplete frame | `raw on` and check the payload is 34 bytes |
-| No serial output | Wrong port | **Use COM3 (CH343), not COM4**; do not enable USB CDC On Boot |
+| No serial output | Wrong port | **Use the CH343 port, not the native-USB one** (identified as COM3 at first bring-up; it can re-enumerate, e.g. to COM8 — `gateway_cli.py` finds it, or pass `--port`); do not enable USB CDC On Boot |
 
-## 6. Expansion order once verification passes
+## 6. Expansion order (as executed)
 
 ```
-1. Wi-Fi connection (first provisioning without touching code)
-2. MQTT reporting + Home Assistant discovery
-3. Bemfa reporting (Mi Home channel, reusing the existing topic convention)
-4. Setpoint commands downstream (D3 write, sendFrame is already usable)
-5. OTA updates (no more unplugging to reach USB)
-6. Reconnect hardening + watchdog (soak for two days)
+1. Wi-Fi connection (first provisioning without touching code)          done
+2. MQTT reporting + Home Assistant discovery (21 entities)              done, bench-verified
+3. Setpoint commands downstream (D3 write, sendFrame is already usable) bench round-trip done
+4. OTA updates (no more unplugging to reach USB)                        done, incl. HA update entity
+5. Reconnect hardening + watchdog (soak for two days)                   partially: 25-min soak green,
+                                                                         AP-outage recovery 6 s; one-week
+                                                                         live soak with the heater pending
+6. Bemfa reporting (Mi Home channel, reusing the existing topics)       not started
 ```
 
 ## 7. Hardware facts
@@ -187,7 +226,7 @@ Code expired or rejected? **Read a new one and type it again** — no build invo
 | Login MAC | This host's Bluetooth address, set with `mac <MAC>` (placeholder `11:22:33:44:55:66`) |
 
 Protocol references: `docs/BLE_PROTOCOL.md` in the repository root (field calibration in §6, B0/D7 in
-§16), `docs/API.md`, and `python/bosch_api.py` (150 tests). The SMP pin behaviour is corroborated by captures
+§16), `docs/API.md`, and `python/bosch_api.py` (204 tests). The SMP pin behaviour is corroborated by captures
 on real hardware — see `docs/API.md §10`.
 
 ## 8. Build environment (new machine / reinstall)
@@ -229,18 +268,22 @@ the `\\?\` long-path prefix or it aborts partway; and completeness must be judge
 of `libexec/gcc/xtensa-esp32s3-elf/8.4.0/cc1plus.exe` — a leftover `gcc.exe` makes it look
 finished when it is not.
 
-## 9. Status (2026-11-07)
+## 9. Status (2026-11-11)
 
 | Stage | State |
 |---|---|
 | Vendor manuals / schematic / datasheet / driver | ✅ `manual/` |
-| Board identification (COM3 = CH343, COM4 = native USB) | ✅ |
+| Board identification (CH343 port; can re-enumerate, e.g. COM3 → COM8 after a re-plug — `gateway_cli.py` auto-detects, `--port` overrides) | ✅ |
 | arduino-cli toolchain (short path, local packages, NimBLE 1.4.3) | ✅ |
-| v2 firmware (runtime code entry, SMP pin, `A2/07`/`A2/08`, A0 parsing) | ✅ builds at 536 569 B, flash hash verified, boot banner clean |
+| v2 firmware (runtime code entry, SMP pin, `A2/07`/`A2/08`, A0 parsing) | ✅ |
 | Real-heater BLE session | ✅ **passed**: encrypted link, `A2/07` = `01`, `A2/08` = `01`, steady A0 |
-| Power-cycle recovery | ✅ reconnects unattended using the code stored in NVS |
+| Power-cycle recovery | ✅ reconnects unattended using the code stored in NVS, including booting before the AP (30 s join retry) |
+| Wi-Fi / provisioning portal / broker credentials | ✅ |
+| MQTT + Home Assistant discovery (21 entities) | ✅ bench-verified against a production HAOS Mosquitto |
+| OTA + HA update entity | ✅ end to end: MQTT URL flash, manifest, Install button, 4.5 s reflash, entity settles off |
+| Host-side C++ selftest (`host_selftest.py`, 295 checks) | ✅ in CI |
+| Stability soak | ✅ 25 min: zero heartbeat drift, forced AP outage recovered in 6 s; one-week live soak pending |
 | Hardware facts (16 MB flash, 8 MB Octal PSRAM idle) | ✅ identified; the configuration upgrade is the next step |
-| Wi-Fi / MQTT / Home Assistant | ⏳ next |
 
 > ⚠️ Do not run `gateway_cli.py --flash` casually: changing the FQBN triggers a full rebuild that
 > takes over 20 minutes on Windows, and it flashes a firmware whose boot has not been verified

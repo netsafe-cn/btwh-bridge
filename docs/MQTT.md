@@ -18,7 +18,18 @@ The topics and the field list are **not** documented here by hand: they live in
 | `btwh/<device>/attributes` | bridge → consumer | yes | JSON: firmware, board, heater address, pair state, uptime, RSSI, last disconnect (reason + epoch); refreshed every 60 s |
 | `btwh/<device>/set/temperature` | consumer → bridge | no | integer `35`..`60`; anything else is ignored |
 | `btwh/<device>/cmd` | consumer → bridge | no | JSON or text containing `refresh`, `reboot` or `unpair` |
+| `btwh/<device>/ota` | consumer → bridge | **no — live-only, enforced by tests** | `http://host[:port]/path`, or the literal `install` to flash the URL last seen on `update/url` |
+| `btwh/<device>/update/latest` | consumer → bridge | yes | latest available version, one printable line; published by whoever owns the manifest |
+| `btwh/<device>/update/url` | consumer → bridge | yes | the image URL backing `update/latest` |
+| `btwh/<device>/update/state` | bridge → consumer | no (republished on connect, manifest change and the 60 s heartbeat) | JSON: `{"installed_version":...,"latest_version":...}` |
 | `homeassistant/<component>/<device>/<key>/config` | bridge → Home Assistant | yes | discovery document, one per entity |
+
+The two update-manifest topics and the `ota` topic form a deliberate mirror pair, and
+`test_mqtt_contract.py` pins it: a **retained** `ota` URL would reflash the bridge on every
+reconnect (a broker-triggered boot loop), while a **non-retained** manifest would leave a
+rebooted bridge believing it is up to date. State is retained and replayed; actions are
+live-only. `update/state` carries `latest_version` only after a manifest has been seen, so
+Home Assistant shows `unknown` rather than a fake "no update available".
 
 `<device>` is `btwh_` plus the last six hex digits of the heater's BLE address, lower case
 (`5c:f8:21:eb:6f:5f` → `btwh_eb6f5f`). It is derived, never configured, and it survives a
@@ -74,8 +85,8 @@ Commands:
 
 ## 3. Home Assistant
 
-Twenty entities, all grouped under one device — one water heater, eleven measurements, and
-eight diagnostics:
+Twenty-one entities, all grouped under one device — one water heater, eleven measurements,
+eight diagnostics, and one firmware-update entity:
 
 | Entity | Component | Notes |
 |---|---|---|
@@ -93,6 +104,7 @@ eight diagnostics:
 | BLE RSSI | sensor | `device_class: signal_strength`, `dBm`; `0` = link down |
 | Pairing state | sensor | `device_class: enum` |
 | Last disconnect reason / time | sensor | diagnostics; survives the reconnect, so a flapping link is visible while it happens to be up. Time is `unknown` while the link has never dropped |
+| **Firmware update** | **update** | `device_class: firmware`, entity category `config`; state from `update/state`, Install publishes `install` to the live-only `ota` topic — the same single flasher the bench tool drives. Version comparison in HA is string-based, so only plain semver builds should be offered to it |
 
 ### The water_heater domain entity
 
@@ -172,12 +184,23 @@ With the board in the loop:
 
 ```
 broker 192.168.110.10            # serial console; restarts the client
+mqttuser btwh <password>         # optional: broker credentials, persisted in NVS
 status                           # shows "mqtt : up 192.168.110.10:1883 as btwh_eb6f5f"
 mqtt                             # prints the payload for the live state
 ```
 
 Point Home Assistant at the same broker and the device appears under *Settings → Devices* as
 "Water heater" (Bosch / Therm 4800i). No YAML.
+
+The OTA paths have one-line bench drivers (live-only publish, never retained):
+
+```bash
+python python/tools/mqtt_watch.py --ota http://192.168.137.1:8000/firmware.bin --device <id>
+python python/tools/mqtt_watch.py --manifest 2.8.1,http://192.168.137.1:8000/firmware.bin --device <id>
+```
+
+`--ota` flashes immediately; `--manifest` publishes the retained version/URL pair that turns
+the Home Assistant update entity on, whose Install button then flashes the same way.
 
 ---
 
@@ -187,10 +210,15 @@ Point Home Assistant at the same broker and the device appears under *Settings �
   byte-identical to the Python reference (`D3 02 55 00 <value>`) and the Python side has driven
   the heater, but this firmware path has only been compiled and reasoned about. Treat the first
   live test as a test, not as a formality.
-- **No broker authentication, no TLS.** `broker` accepts `host[:port]` only. On a home LAN behind
-  the router that is a defensible first version; it is not a product decision.
-- **Attributes do not carry `rssi`.** The contract lists it, but nothing in `ble/` exposes the
-  connection's signal strength yet, and publishing a made-up number is worse than omitting it.
-- **The portal does not ask for the broker.** It is set with the `broker` command (or NVS). The
-  form is one submit for Wi-Fi + heater + code; adding a fourth field is a change to
-  `portal_html.h` and the request struct, and it has not been done.
+- **No TLS anywhere, by design.** Broker credentials are supported (`mqttuser <name>
+  <password>` over serial, or the provisioning portal form), and the OTA flasher takes plain
+  `http://` URLs only — it carries no TLS stack. On a home LAN behind the router that is a
+  defensible first version; it is not a product decision. An https image URL is refused at
+  parse time, so it fails loudly rather than falling back to something unverified.
+- **OTA has no rollback logic of its own.** `Update.end(true)` validates before the reboot,
+  so a corrupt image never reaches the boot slot; the arduino-esp32 rollback-on-boot mechanism
+  is not additionally configured yet.
+- **One week attached to a real heater is the remaining v1 gate.** The bench record so far:
+  a 25-minute soak with zero heartbeat drift (60 s ± 0.1 s), a forced AP outage detected in
+  83 s (keepalive semantics) and recovered in 6 s, and the backoff schedule (32 → 64 → 60 s
+  capped) matching the pinned sequence second for second.

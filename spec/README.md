@@ -23,9 +23,11 @@ Putting them in one JSON file means:
 - a rename in the bridge fails CI until `mqtt.json` is updated and every consumer follows
 - Home Assistant discovery, the panel UI and the Mi Home bridge all read the same field list
 
-`mqtt.json` is `status: draft` until the bridge actually publishes. When the first bridge
-release ships, the flag flips to `stable` and the same freeze rules as `api_contract.json`
-apply: additive only, breaking changes need a major version.
+`mqtt.json` is `status: draft` until the first public bridge release ships. The bridge already
+publishes against it — bench-verified end to end against a production Mosquitto on HAOS, twice
+over the OTA path — so the flag is now a release gate, not a placeholder: the day it flips to
+`stable` the same freeze rules as `api_contract.json` apply: additive only, breaking changes
+need a major version.
 
 ## Regenerating
 

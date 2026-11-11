@@ -9,6 +9,24 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The OTA pair is now pinned by contract tests (195 → 204 tests).** `test_mqtt_contract.py`
+  fails if the `ota` topic ever gains `retain` (a retained URL reflashes on every reconnect -
+  a broker-triggered boot loop) or if the two manifest topics ever lose it (a rebooted bridge
+  must re-learn the manifest, not assume it is current). `test_ha_discovery.py` gains a
+  `TestUpdateEntity` suite pinning the one-flasher rule - the entity's command topic must be
+  the plain `ota` topic, never the manifest URL topic - plus a cross-table check that no two
+  discovery entities share a `unique_id` (two colliding ids silently overwrite each other in
+  Home Assistant; the device page shows one and no error anywhere).
+
+- **Docs refreshed to the 2.8 reality.** The README status tables now name 21 entities and the
+  OTA path; the suite list carries all 13 test modules; MQTT.md's topic table includes the four
+  update topics and its known-limits section drops three claims the firmware has since
+  overturned (broker auth, RSSI in attributes, portal broker field); ARCHITECTURE.md gains
+  ADR-011 (OTA: one flasher, live-only actions, retained state), retires ADR-008's
+  "no host compiler" caveat, and updates the roadmap; firmware/bridge/README.md's serial
+  command table now lists all commands incl. `mqttuser` / `broker` / `portal` / `wifi`, and
+  its status table reflects the 2026-11-11 bench record (25-min soak, 6 s AP-outage recovery).
+
 - **The Home Assistant `update` entity: firmware updates from the HA UI.** A 21st discovery
   entity (component `update`, device_class firmware) gives the bridge an "update available"
   card with an Install button. The design keeps one flasher and one grammar: the retained

@@ -39,10 +39,11 @@ apart silently.
 
 | Component | State | Notes |
 |---|---|---|
-| Python library `bosch_api` | ✅ Ready | **195** offline tests green; signature-freeze contract + golden vectors |
+| Python library `bosch_api` | ✅ Ready | **204** offline tests green; signature-freeze contract + golden vectors |
 | Desktop console / Mi Home bridge | ✅ Ready | tkinter GUI + Bemfa cloud (China region, optional) |
-| ESP32-S3 gateway firmware v2 | ✅ Verified | Real-device link-up: SMP encryption → `A2/07` → `A2/08=01` → steady `A0` stream; auto-recovers after power cycle |
-| MQTT / Home Assistant auto-discovery | ✅ Verified end-to-end | 19 entities auto-discovered (11 measurements + 8 diagnostics, incl. RSSI and last-disconnect for remote troubleshooting); setpoint commands round-trip verified against a production Mosquitto on HAOS; see [MQTT.md](docs/MQTT.md) |
+| ESP32-S3 gateway firmware v2 | ✅ Verified | Real-device link-up: SMP encryption → `A2/07` → `A2/08=01` → steady `A0` stream; auto-recovers after power cycle, including "board boots before the AP" |
+| MQTT / Home Assistant auto-discovery | ✅ Verified end-to-end | 21 entities auto-discovered (water heater + 11 measurements + 8 diagnostics + 1 firmware-update, incl. RSSI and last-disconnect for remote troubleshooting); setpoint commands round-trip verified against a production Mosquitto on HAOS; see [MQTT.md](docs/MQTT.md) |
+| OTA firmware updates | ✅ Verified end-to-end | The bridge reflashes itself over its own MQTT link (HTTP image, checksum-gated; a failed image never touches the running firmware). The Home Assistant update entity's Install button drives the same path; see [CHANGELOG](CHANGELOG.md) |
 | Wi-Fi provisioning (Improv) | 📐 Spec done | Defined by `python/device_fsm.py` + [API.md §9](docs/API.md) |
 
 ---
@@ -94,6 +95,7 @@ is involved at all.
 | Desktop console | Single-window GUI with four temperatures, chart, and history dialogs |
 | Mi Home / Xiaoai | Optional sync through Bemfa cloud for voice queries and setpoint changes |
 | Reusable API | `python/bosch_api.py` works as a library for any Python program, with its own regression suite |
+| Remote firmware updates | MQTT-triggered OTA: an `http://` image URL flashes the inactive slot with checksum validation, then reboots; the Home Assistant update entity shows a card with an Install button that drives the same single flasher |
 
 ---
 
@@ -215,6 +217,11 @@ python firmware/bridge/tools/log_diag.py            # newest logs/*.log
 python firmware/bridge/tools/log_diag.py <logfile>
 ```
 
+Since those three fixes the bridge has grown its network stack: Wi-Fi with a provisioning
+portal, MQTT publishing plus Home Assistant discovery (21 entities), and OTA reflashing
+over its own MQTT link — the bench flow, the serial console and the HA update entity all
+drive the same single flasher. [MQTT.md](docs/MQTT.md) documents the contract.
+
 ---
 
 ## Mi Home / Xiaoai (China region, optional)
@@ -258,6 +265,11 @@ python run_tests.py -v       # per-test output
 | `test_contract` | 7 | **Signature freeze**, protocol constant freeze, **cross-platform golden vectors** |
 | `test_profiles` | 9 | Model profile table: range/write-param sanity, lockstep with mqtt.json, bosch_api, the golden D3 vector, the A0-reported max |
 | `test_fsm` | 28 | Provisioning/pairing orthogonality, timeouts, recovery, safety constraints |
+| `test_mqtt_contract` | 14 | `spec/mqtt.json` honesty: topics carry `{device_id}`, state fields exist on `DeviceState`, setpoint range single-sourced, the live-only `ota` topic vs the retained manifest pair |
+| `test_ha_discovery` | 26 | The generated discovery table: every state/diagnostic field has an entity, the water_heater and update adapter views reuse contract topics only, unique_ids do not collide |
+| `test_firmware_contract` | 9 | Firmware serial-log grammar stays in lockstep with `log_diag.py`; attributes carry every contracted key |
+| `test_broker_config_contract` | 8 | The `broker` / `mqttuser` serial grammar mirrors `mqtt_rules.cpp` |
+| `test_cpp_selftest` | 2 | The six C++ selftest suites, compiled and executed on the host (`host_selftest.py`) |
 
 Three rules:
 
@@ -290,7 +302,7 @@ change is a patch, minor or major bump live in
 │   ├── bemfa.py                Bemfa cloud client (Mi Home channel)
 │   ├── boschlog.py             Logging: rotating file + in-memory ring buffer
 │   ├── singlelock.py           Single-instance guard for the background bridge
-│   ├── tests/                  ★ 195 offline tests, auto-discovered
+│   ├── tests/                  ★ 204 offline tests, auto-discovered
 │   └── tools/                  Console, headless bridge, capture, launchers
 │
 ├── firmware/                   One directory per application, no shared source
@@ -301,11 +313,12 @@ change is a patch, minor or major bump live in
 ├── spec/                       ★ Cross-language contracts, machine-checked in CI
 │   ├── api_contract.json       Signature-freeze snapshot
 │   ├── protocol_vectors.json   Golden vectors (Python <-> ESP32, byte for byte)
-│   └── mqtt.json               Bridge <-> panel contract: topics, fields, units
+│   ├── profiles.json           One row per heater model: range, write encoding, identity
+│   └── mqtt.json               Bridge <-> consumer contract: topics, fields, units, OTA
 │
 ├── docs/                       API.md, BLE_PROTOCOL.md, ARCHITECTURE.md, hardware/
 ├── integrations/               Reserved: Home Assistant, Node-RED, ESPHome
-├── run_tests.py                One command, 195 tests, fully offline
+├── run_tests.py                One command, 204 tests, fully offline
 ├── pyproject.toml              Packaging metadata (`pip install .`)
 ├── config.example.json         Config template (contains no real data)
 ├── CHANGELOG.md  CONTRIBUTING.md  SECURITY.md  CODE_OF_CONDUCT.md  LICENSE
@@ -370,7 +383,9 @@ close other Bluetooth software or restart the Bluetooth service.
 - Three consecutive connection failures trigger device-side protection; recovery takes
   about 3 minutes. Do not retry in a tight loop
 - The device may drop the link when idle (historically observed at ~45–50 s with the Python
-  client; the ESP32 build ran 8 minutes without a drop)
+  client; the ESP32 build has held a broker session through a 25-minute soak with zero
+  heartbeat drift and recovered a forced AP outage in 6 s — a week attached to a real heater
+  is the remaining gate)
 - Windows caps MTU at 23, so long frames are split and reassembled
 - Bemfa is a third-party service with no availability guarantee (its Tmall Genie channel
   shut down at the end of 2024)

@@ -216,13 +216,14 @@ Two rules carry most of the value:
   has a machine-readable spec (`spec/protocol_vectors.json`). Nothing else in the firmware can
   claim that.
 
-  Honest caveat: the toolchain here is Xtensa-only, so today the vectors are executed **on the
-  board** (`selftest`) rather than on a host. That still beats a manual check — it validates the
-  exact binary that ships — but it means a broken codec is caught after a flash, not before a
-  commit. CI covers what it can without a compiler: the generated header must match the spec, and
-  `proto/` must not gain a framework include. The day a host compiler is available,
-  `proto/selftest.cpp` already takes a log callback instead of `Serial`, so the same test runs
-  unchanged.
+  The day a host compiler would be available arrived: `tools/host_selftest.py` compiles the
+  framework-free layers (`proto/`, `net/`'s rules and wire code, `app/`'s provisioning —
+  everything that carries no Arduino include) with the host's g++/clang++ — or `pip install
+  ziglang` when neither exists — and runs the same six suites the board's `selftest` command
+  runs. The check counts are pinned on both sides (`test_cpp_selftest.py`), so a suite that
+  only ever executed nowhere cannot exist — that window once shipped a discovery check
+  asserting a 12-byte fit as 10. Compiling still is not linking: when the MQTT path changes,
+  bench it against a real broker before believing it.
 - **Nothing may depend on `diag/`.** Diagnostics are the outermost layer; the moment a business
   path calls into the console, the console becomes load-bearing.
 
@@ -238,10 +239,13 @@ not the name — lets both through. Every header therefore carries a macro guard
 firmware later moves to ESP-IDF, these same directories become `components/` and the include
 paths do not change — the split is portable in both directions.
 
-**Status (2026-11-08)**: `proto/`, `ble/`, `auth/` and `app/` have landed; `main.cpp` is down to
-273 lines of `setup()` / `loop()` / serial console. `net/` (Wi-Fi provisioning, MQTT, HA
-discovery, OTA) and `diag/` are still empty. Each split was flashed and observed on the board
-before being committed, because compiling is not the same as still linking to the heater.
+**Status (2026-11-11)**: `proto/`, `ble/`, `auth/`, `app/` and `net/` have landed; `main.cpp`
+is the serial console and board boundary. `net/` carries Wi-Fi (`station`), the provisioning
+`portal`, the hand-written MQTT client (`mqtt_wire` + `mqtt_client`), Home Assistant discovery
+(`discovery` + generated `ha_discovery_gen.h`), the inbound grammar layer (`mqtt_rules`, pinned
+by contract tests) and the OTA flasher (`ota`). `diag/` remains deliberately unsplit — the
+console stays in `main.cpp` until it misbehaves. Each split was flashed and observed on the
+board before being committed, because compiling is not the same as still linking to the heater.
 
 **Rejected**: extracting `bosch_proto` into `firmware/components/` today. It has exactly one
 consumer (the bridge); the panel never touches BLE. A shared component with one user is a
@@ -309,13 +313,47 @@ broker quirks are ours to find. The self test is what makes that acceptable, and
 listed in `docs/MQTT.md` §5 rather than discovered by a user.
 
 **Related decision**: the Home Assistant discovery documents are **generated** from
-`spec/mqtt.json` (`tools/gen_ha.py`) rather than written by hand. Eleven entities across nine
-state fields is exactly the size at which one renamed key silently breaks one entity, and a
-generated table cannot disagree with the contract.
+`spec/mqtt.json` (`tools/gen_ha.py`) rather than written by hand. Twenty-one entities across
+nine state fields and eight diagnostics is exactly the size at which one renamed key silently
+breaks one entity, and a generated table cannot disagree with the contract.
 
 **Rejected**: PubSubClient (fixed 256-byte buffer, global client state, callbacks that fight the
 loop); async-mqtt (its own task and queue — see above); publishing only on change (a diff needs a
 second copy of the snapshot, and a stale `ts` is a useful signal that "no change" hides).
+
+---
+
+### ADR-011 OTA over the bridge's own MQTT link: one flasher, live-only actions, retained state
+
+**Context**: the bench workflow unplugs the board and reflashes over USB; a user with the board
+mounted next to the heater has no serial access at all. An update mechanism that requires a laptop
+is a mechanism most installs will never use.
+
+**Decision**: the bridge reflashes itself, over the MQTT link it already maintains.
+
+- The `ota` topic accepts `http://host[:port]/path` (or the literal `install`) and is
+  **live-only** — `test_mqtt_contract.py` fails if it ever gains `retain`. A retained URL would
+  reflash on every reconnect: a boot loop whose trigger is the broker replaying state.
+- The version manifest (`update/latest` + `update/url`) is **retained on purpose** — the exact
+  mirror of the rule above. State replays idempotently; a rebooted bridge re-learns the manifest
+  from the broker on its first subscribe instead of believing it is current.
+- One flasher and one grammar: the Home Assistant `update` entity's Install button, the serial
+  console and the bench tool all publish to the same `ota` topic and through the same
+  `rules::parseOtaUrl`. There is no second path that could disagree with the first.
+- `Update.end(true)` is the gate: a short, corrupt or wrong-size image never reaches the boot
+  slot, and any failure leaves the running firmware in charge.
+- https image URLs are refused at parse time (the flasher carries no TLS stack); GitHub-release
+  style https sources need an http mirror or a reverse proxy until TLS is a real requirement.
+
+**Cost**: no TLS, no signed images — the trust boundary is the broker and the LAN, same as the
+rest of the contract. The install path blocks `loop()` for its 120 s budget; the MQTT client is
+not servicing the broker while it flashes, by design, because a half-written slot plus a live
+command stream is a worse combination than a brief heartbeat gap.
+
+**Bench-verified (2026-11-11)**: a 1.16 MB image flashed over the air in 24 s end to end from
+`python -m http.server` on the bench PC; the HA update entity's `update.install` service call
+(the exact action behind the UI button) flashed the same image in 4.5 s and the entity settled
+back to "no update available" after the retained manifest replayed on reconnect.
 
 ---
 
@@ -329,7 +367,7 @@ share.
 python/                     Reference implementation
   python/bosch_api.py              codec / session / resident service
   python/device_fsm.py             provisioning + pairing state machine
-  tests/                    150 offline tests
+  tests/                    204 offline tests
   tools/                    console, headless bridge, capture
 
 firmware/                   One directory per application
@@ -340,7 +378,8 @@ firmware/                   One directory per application
 spec/                       Cross-language contracts, checked in CI
   api_contract.json         Python signature freeze
   protocol_vectors.json     Python <-> C byte vectors
-  mqtt.json                 bridge <-> consumer contract
+  profiles.json             one row per heater model: range, write encoding, identity
+  mqtt.json                 bridge <-> consumer contract (incl. the OTA topics)
 
 docs/                       API, protocol notes, this file, hardware guides
 integrations/               reserved: Home Assistant, Node-RED, ESPHome
@@ -386,10 +425,10 @@ breaking change.
 | Phase | Content | Exit criteria |
 |---|---|---|
 | **0 · done** | Protocol work, Python reference implementation, test suite, ESP32 feasibility firmware | Regression green; firmware boots |
-| **1 · done** | Real-heater verification (SMP / A2/07 / A2/08 / A0), runtime pairing code, power-cycle recovery, repository restructured for multiple applications | All three log stages pass on hardware; 150 tests green |
-| **2 · current** | `bosch_proto` extracted into `firmware/components`, MQTT publishing against `spec/mqtt.json`, HA discovery | A panel can be built against the contract with no bridge changes |
-| **3** | Move to ESP-IDF, OTA, watchdog; touch panel in `firmware/panel`; ESPHome component | Seven days without a drop; OTA rollback works; second application shipped |
-| **3** | Optional ESPHome external component, field mapping for more models, more language bindings | At least two models verified by the community |
+| **1 · done** | Real-heater verification (SMP / A2/07 / A2/08 / A0), runtime pairing code, power-cycle recovery, repository restructured for multiple applications | All three log stages pass on hardware |
+| **2 · done** | MQTT publishing against `spec/mqtt.json`, HA discovery (21 entities), broker credentials, HTTP OTA + the HA update entity | Bench-verified end to end on a production HAOS Mosquitto; a panel can be built against the contract with no bridge changes |
+| **3 · current** | One week attached to a real heater; ESP-IDF migration; OTA rollback configuration; watchdog; touch panel in `firmware/panel/` | Seven days without a drop; rollback proven; second application shipped |
+| **4 · optional** | ESPHome external component, field mapping for more models, more language bindings, https OTA sources | At least two models verified by the community |
 
 ---
 
@@ -415,3 +454,5 @@ breaking change.
 | 2026-11-08 | Firmware layering (ADR-008) and the repository-split criteria (ADR-009); the panel stays in-repo until it earns its own release cadence |
 | 2026-11-08 | Layout restructured by role (ADR-007): `python/`, `firmware/{components,bridge,panel}`, `spec/`, `integrations/`; `spec/mqtt.json` added as the bridge/consumer contract; 136 -> 145 tests |
 | 2026-11-09 | MQTT client and Home Assistant discovery (ADR-010); `net/` grows `mqtt_wire`, `mqtt_client`, `discovery` plus two self-test suites; 145 -> 157 tests |
+| 2026-11-10 | Inbound grammar layer (`mqtt_rules`) and broker-credential commands, host-tested; the six C++ suites run on the host via `host_selftest.py` (ADR-008 caveat retired); 157 -> 195 checks pinned on both sides |
+| 2026-11-11 | OTA and the HA update entity (ADR-011): live-only `ota` topic, retained manifest pair, one flasher; Wi-Fi join retried at boot; 195 -> 204 tests; bench soak recorded (25 min, zero heartbeat drift, 6 s AP-outage recovery) |

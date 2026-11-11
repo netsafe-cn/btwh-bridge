@@ -74,6 +74,41 @@ class TestMqttContract(unittest.TestCase):
                           "topic %r would collide between two heaters" % name)
             self.assertIn(spec["direction"], ("bridge -> consumer", "consumer -> bridge"))
 
+    # ---- the OTA pair: live-only trigger, retained manifest --------------------
+    def test_ota_delivery_is_live_only(self):
+        # A retained ota URL would reflash the bridge on every reconnect - a boot loop
+        # whose trigger is the broker replaying state. The topic must never gain
+        # "retain": true; the guard belongs here because the failure mode is contractual,
+        # not a firmware bug.
+        spec = self.doc["topics"]["ota"]
+        self.assertFalse(spec.get("retain"),
+                         "the ota topic must stay live-only; a retained URL reflashes "
+                         "on every reconnect")
+        self.assertIn("http://host[:port]/path", spec.get("grammar", ""),
+                      "the ota grammar is the one the firmware parser implements "
+                      "(rules::parseOtaUrl); keep them in lockstep")
+
+    def test_manifest_topics_are_retained(self):
+        # The mirror of the rule above: the manifest (latest version + image URL) is
+        # state, so it is retained on purpose. A rebooted bridge re-learns it from the
+        # broker on the first subscribe instead of believing it is up to date, and HA
+        # shows 'unknown' rather than a fake 'no update' until the bridge confirms.
+        for name in ("update_manifest_latest", "update_manifest_url"):
+            spec = self.doc["topics"][name]
+            self.assertTrue(spec.get("retain"),
+                            "%s must be retained: replaying the manifest is idempotent"
+                            % name)
+            self.assertEqual(spec["direction"], "consumer -> bridge", name)
+
+    def test_update_state_is_bridge_published_and_live(self):
+        # update/state is republished on connect, on manifest change and on the 60 s
+        # heartbeat - all bridge-initiated - so it needs no retain flag to stay fresh,
+        # and HA never has to infer it from the manifest topics directly.
+        spec = self.doc["topics"]["update_state"]
+        self.assertEqual(spec["direction"], "bridge -> consumer")
+        self.assertFalse(spec.get("retain"))
+        self.assertIn("installed_version", spec.get("purpose", ""))
+
     # ---- coupling to the library ------------------------------------------------
     def test_every_source_attribute_exists_on_device_state(self):
         # A source may be a dataclass field or a derived property (failure_text is one), so

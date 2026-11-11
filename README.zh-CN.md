@@ -32,10 +32,11 @@ ESP32 C++ 实现，三者用同一组十六进制向量对齐，防止两端实�
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
-| Python 协议库 `bosch_api` | ✅ 可用 | **195 项**离线测试全绿，含签名冻结契约与黄金向量 |
+| Python 协议库 `bosch_api` | ✅ 可用 | **204 项**离线测试全绿，含签名冻结契约与黄金向量 |
 | 桌面控制台 / 米家桥接 | ✅ 可用 | tkinter GUI + 巴法云（中国区可选，非主线） |
-| ESP32-S3 网关固件 v2 | ✅ 已验证 | 实机连通通过：SMP 加密 → `A2/07` → `A2/08=01` → `A0` 稳定刷帧；断电重启自动恢复 |
-| MQTT / Home Assistant 自动发现 | ✅ 端到端验证 | 19 个实体自动发现（11 个测量 + 8 个诊断，含 RSSI 与最近断连原因，远程排障用）；调温命令往返闭环，已在 HAOS 生产级 Mosquitto 上验证，见 [MQTT.md](docs/MQTT.md) |
+| ESP32-S3 网关固件 v2 | ✅ 已验证 | 实机连通通过：SMP 加密 → `A2/07` → `A2/08=01` → `A0` 稳定刷帧；断电重启自动恢复，含「板子比 AP 先启动」场景 |
+| MQTT / Home Assistant 自动发现 | ✅ 端到端验证 | 21 个实体自动发现（热水器 + 11 测量 + 8 诊断 + 1 固件更新，含 RSSI 与最近断连原因，远程排障用）；调温命令往返闭环，已在 HAOS 生产级 Mosquitto 上验证，见 [MQTT.md](docs/MQTT.md) |
+| OTA 固件远程更新 | ✅ 端到端验证 | 板子经自己的 MQTT 链路自刷（HTTP 镜像 + 校验门禁，失败绝不碰在跑固件）；HA update 实体的「安装」按钮走同一条刷写路径，见 [CHANGELOG](CHANGELOG.md) |
 | 配网（Improv WiFi） | 📐 契约已定 | 以 `python/device_fsm.py` + [API.md §9](docs/API.md) 为准 |
 
 ---
@@ -85,6 +86,7 @@ ESP32 C++ 实现，三者用同一组十六进制向量对齐，防止两端实�
 | 桌面控制台 | 单窗口 GUI，四路温度 + 曲线 + 历史弹窗 |
 | 米家小爱 | 经巴法云同步，语音查询与调温（可选） |
 | 通用 API | `python/bosch_api.py` 可被任意 Python 程序复用，自带回归测试 |
+| 固件远程更新 | MQTT 触发的 OTA：`http://` 镜像 URL 流式刷入备用槽、校验通过才重启；HA update 实体出一张带「安装」按钮的卡片，与 bench 工具共用同一个刷写器 |
 
 ---
 
@@ -194,6 +196,10 @@ python firmware/bridge/tools/log_diag.py            # 自动取最新 logs/*.log
 python firmware/bridge/tools/log_diag.py <日志路径>
 ```
 
+三项修复之后，网关长出了完整的网络栈：Wi-Fi 配网门户、MQTT 发布 + Home Assistant
+自动发现（21 个实体）、以及经自身 MQTT 链路的 OTA 自刷——bench 工具、串口控制台和
+HA update 实体共用同一个刷写器。契约见 [MQTT.md](docs/MQTT.md)。
+
 ---
 
 ## 米家 / 小爱接入（中国区可选，非主线）
@@ -235,6 +241,11 @@ python run_tests.py -v       # 逐条列出
 | `test_contract` | 7 | **签名冻结**、协议常量冻结、**跨端黄金向量** |
 | `test_profiles` | 9 | 型号 profile 表：范围/写参数合法性，与 mqtt.json、bosch_api、黄金 D3 向量、A0 自报上限的锁步 |
 | `test_fsm` | 28 | 配网/配对正交性、超时、恢复、安全约束 |
+| `test_mqtt_contract` | 14 | `spec/mqtt.json` 诚实性：主题含 `{device_id}`、状态字段存在于 `DeviceState`、调温范围单一来源、`ota` 主题 live-only 与 manifest 主题 retained 的镜像设计 |
+| `test_ha_discovery` | 26 | 生成的发现表：每个状态/诊断字段都有实体、water_heater 与 update 视图只复用契约主题、unique_id 不冲突 |
+| `test_firmware_contract` | 9 | 固件串口日志语法与 `log_diag.py` 锁步；attributes 覆盖全部契约字段 |
+| `test_broker_config_contract` | 8 | `broker` / `mqttuser` 串口语法与 `mqtt_rules.cpp` 镜像 |
+| `test_cpp_selftest` | 2 | 六套 C++ 自检在宿主机上编译并执行（`host_selftest.py`） |
 
 三条纪律：
 
@@ -264,7 +275,7 @@ CI 覆盖 Linux + Windows × Python 3.11/3.12，另有一个 job 检查 `config.
 │   ├── bemfa.py                巴法云客户端（米家通道）
 │   ├── boschlog.py             日志：轮转文件 + 内存环形缓冲
 │   ├── singlelock.py           后台桥接的单实例锁
-│   ├── tests/                  ★ 195 项离线测试，自动发现
+│   ├── tests/                  ★ 204 项离线测试，自动发现
 │   └── tools/                  控制台、无界面桥接、采集、启动器
 │
 ├── firmware/                   一个应用一个目录，互不共享源码
@@ -275,11 +286,12 @@ CI 覆盖 Linux + Windows × Python 3.11/3.12，另有一个 job 检查 `config.
 ├── spec/                       ★ 跨语言契约，CI 机械校验
 │   ├── api_contract.json       签名冻结快照
 │   ├── protocol_vectors.json   跨端黄金向量（Python <-> ESP32 逐字节）
-│   └── mqtt.json               桥 <-> 面板契约：主题、字段、单位
+│   ├── profiles.json           一个型号一行：范围、写参数编码、设备身份
+│   └── mqtt.json               桥 <-> 消费端契约：主题、字段、单位、OTA
 │
 ├── docs/                       API.md、BLE_PROTOCOL.md、ARCHITECTURE.md、hardware/
 ├── integrations/               预留：Home Assistant、Node-RED、ESPHome
-├── run_tests.py                一条命令跑 195 项，全离线
+├── run_tests.py                一条命令跑 204 项，全离线
 ├── pyproject.toml              打包元数据（`pip install .`）
 ├── config.example.json         配置模板（不含任何真实信息）
 ├── CHANGELOG.md  CONTRIBUTING.md  SECURITY.md  CODE_OF_CONDUCT.md  LICENSE
@@ -331,7 +343,7 @@ CI 覆盖 Linux + Windows × Python 3.11/3.12，另有一个 job 检查 `config.
 - 面板码**首次配对**必须在窗口内完成；一旦成功配对过，设备会长期保留该授权，
   之后可用同一码重连（已验证 11 分钟后仍有效，上限未知，以天/周计需长期观察）
 - 连续连接失败 3 次会触发设备侧保护，约 3 分钟才恢复，不要连续重试
-- 设备空闲后可能主动断开（早期在 Python 上观察到约 45~50 秒；ESP32 实测连续 8 分钟未断开）
+- 设备空闲后可能主动断开（早期在 Python 上观察到约 45~50 秒；ESP32 已通过 25 分钟 soak：心跳零漂移、人为断 AP 后 6 秒满血恢复——接真实热水器连续一周是最后一道门槛）
 - Windows 的 MTU 固定为 23，长帧会被拆分后自行重组
 - 巴法云是第三方服务，长期可用性无保证（其天猫精灵通道已于 2024 年底停止）
 - 厂商固件升级可能使私有协议失效，本项目不承诺长期可用

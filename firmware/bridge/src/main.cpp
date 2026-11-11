@@ -1,11 +1,14 @@
 /*
  * ============================================================================
- * Bosch heater BLE gateway  v2.2  --  Waveshare ESP32-S3-DEV-KIT-N8R8
+ * Bosch heater BLE gateway  v2.8  --  Waveshare ESP32-S3-DEV-KIT-N8R8
+ * (published version string: net/mqtt_client.h kFirmwareVersion)
  * ----------------------------------------------------------------------------
  * Phase one (feasibility, complete before any Wi-Fi/MQTT work):
  *   1) connect to the heater and finish SMP pairing (the panel code is the BLE pin)
  *   2) A2/07 submits the MAC, A2/08 submits the pairing code, authorisation follows
  *   3) A0 broadcasts arrive and every field parses correctly
+ * Since then (phase two): Wi-Fi + portal, MQTT + HA discovery (21 entities),
+ * broker credentials, and OTA reflashing over this file's own MQTT link.
  *
  * This file is only the board boundary: setup(), loop() and the serial console. The work lives
  * in the layers below it (ADR-008), each of which compiles on its own terms:
@@ -13,6 +16,7 @@
  *   src/ble/    the only place NimBLE appears: connect, subscribe, reassemble, send
  *   src/auth/   A2/07 + A2/08, driven through a send/wait callback so it can be faked
  *   src/app/    session order of operations plus the NVS config
+ *   src/net/   Wi-Fi, portal, MQTT, discovery, OTA - the network edge
  *
  * Two defects fixed back in v2.0 against v1.0, kept here as history:
  *   1) CRITICAL: v1 used Just Works + NoInputNoOutput and ignored the SMP pin entirely.

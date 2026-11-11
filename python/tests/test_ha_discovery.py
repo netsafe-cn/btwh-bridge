@@ -206,5 +206,78 @@ class TestWaterHeaterEntity(unittest.TestCase):
         self.assertIn('"water_heater", "water_heater"', header)
 
 
+class TestUpdateEntity(unittest.TestCase):
+    """The update entity: HA's 'newer firmware available' card over the existing OTA path.
+
+    These tests pin the design rule from spec home_assistant.update_entity: there is
+    exactly one flasher and one grammar. The entity's command topic must be the plain
+    live-only ota topic - the same path the bench tool drives - so the HA Install button
+    and `mqtt_watch --ota` can never diverge. Its state is bridge-mediated JSON rather
+    than HA reading the manifest topics directly, because the install command needs the
+    URL cached on the board anyway.
+    """
+
+    def setUp(self):
+        self.spec = json.loads(gen_ha.SPEC.read_text(encoding="utf-8"))
+        self.entity = gen_ha.ha_update_entity(self.spec)
+        self.cfg = self.entity["config"]
+
+    def test_component_is_update_and_reads_the_update_state_topic(self):
+        # The state comes from the bridge (installed_version it is running, latest_version
+        # it cached from the manifest), not from HA's own view of the manifest topics.
+        self.assertEqual(self.entity["component"], "update")
+        self.assertEqual(self.cfg["state_topic"].replace("@DEV@", "{device_id}"),
+                         self.spec["topics"]["update_state"]["topic"])
+
+    def test_commands_reuse_the_live_only_ota_topic(self):
+        # Same discipline as the water_heater entity: a new entity must not invent a new
+        # command topic. Rebinding this to update/url would make a retained URL flash on
+        # every reconnect - the exact boot loop the ota topic's live-only rule prevents.
+        self.assertEqual(self.cfg["command_topic"].replace("@DEV@", "{device_id}"),
+                         self.spec["topics"]["ota"]["topic"])
+        self.assertNotEqual(self.cfg["command_topic"].replace("@DEV@", "{device_id}"),
+                            self.spec["topics"]["update_manifest_url"]["topic"])
+        self.assertEqual(self.cfg["payload_install"],
+                         self.spec["home_assistant"]["update_entity"]["payload_install"])
+
+    def test_title_class_and_category_follow_the_contract(self):
+        # HA string-compares versions; the title is what the update card shows next to them.
+        self.assertEqual(self.cfg["title"],
+                         self.spec["home_assistant"]["update_entity"]["title"])
+        self.assertEqual(self.cfg["device_class"], "firmware")
+        self.assertEqual(self.cfg["entity_category"], "config")
+
+    def test_same_availability_wiring_as_every_other_entity(self):
+        # An offline bridge must grey out the update card too, not offer an install that
+        # cannot reach the board.
+        self.assertEqual(self.cfg["availability_topic"], "btwh/@DEV@/availability")
+        self.assertEqual(self.cfg["payload_available"], "online")
+        self.assertEqual(self.cfg["payload_not_available"], "offline")
+
+    def test_the_generated_header_carries_the_entity(self):
+        header = HEADER.read_text(encoding="utf-8")
+        self.assertIn('"update", "update"', header)
+        self.assertIn(r'"payload_install\":\"install', header)
+
+
+class TestEntityIdentity(unittest.TestCase):
+    """Cross-entity checks that only make sense over the whole table at once."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.header = HEADER.read_text(encoding="utf-8")
+
+    def test_unique_ids_do_not_collide(self):
+        # Two entities with the same unique_id overwrite each other in Home Assistant
+        # silently: the device page shows one of them and no error anywhere. The
+        # generated table is flattened C-escaped JSON, so the ids read straight out of it.
+        import re
+        ids = re.findall(r'unique_id\\":\\"([^\\]+)', self.header)
+        self.assertGreater(len(ids), 1)
+        self.assertEqual(len(ids), len(set(ids)),
+                         "duplicate unique_id in the discovery table: %s"
+                         % sorted(i for i in ids if ids.count(i) > 1))
+
+
 if __name__ == "__main__":
     unittest.main()

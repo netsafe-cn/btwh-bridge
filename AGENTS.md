@@ -6,7 +6,7 @@ Read this before changing firmware or protocol code. Project-wide conventions li
 ## Build and flash
 
 ```bash
-python run_tests.py                                    # 195 offline tests, no hardware
+python run_tests.py                                    # 204 offline tests, no hardware
 python firmware/bridge/tools/gateway_cli.py --build    # compile only (~15 min cold)
 python firmware/bridge/tools/gateway_cli.py --flash    # compile, flash COM3, open console
 python firmware/bridge/tools/gateway_cli.py            # console only, no rebuild
