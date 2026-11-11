@@ -121,6 +121,11 @@ jobs:
       - name: generated Home Assistant discovery matches the spec
         shell: bash
         run: python firmware/bridge/tools/gen_ha.py --check
+      # The README diagram is generated from docs/diagrams/gen_architecture.py. Hand-editing
+      # the SVG is exactly how a diagram starts describing a system that no longer exists.
+      - name: generated architecture diagram matches its generator
+        shell: bash
+        run: python docs/diagrams/gen_architecture.py --check
       # state_json / mqtt_wire / discovery are the parts of net/ that the on-board self test
       # checks byte for byte. They stay free of Arduino for the same reason proto/ does; the
       # socket-facing files (station, portal, mqtt_client) are allowed to include WiFi.

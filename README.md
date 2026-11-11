@@ -12,6 +12,15 @@
 > Not affiliated with, authorised by, or endorsed by Robert Bosch GmbH or its
 > affiliates in any way.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.svg">
+  <img src="docs/diagrams/architecture-light.svg" width="100%"
+       alt="Architecture: the Bosch Therm 4800i speaks PowerBus BLE to an ESP32-S3 bridge, which publishes MQTT to a broker that Home Assistant subscribes to; a separate path lets the bridge fetch and flash its own firmware over HTTP.">
+</picture>
+
+*Solid arrows are the live path. Dashed arrows are the bench and update paths: a laptop can talk
+to the heater directly, and the bridge can reflash itself without a USB cable.*
+
 ## Why this exists
 
 The official **Bosch Water** app talks to one phone at a time over Bluetooth, and
@@ -317,6 +326,7 @@ change is a patch, minor or major bump live in
 │   └── mqtt.json               Bridge <-> consumer contract: topics, fields, units, OTA
 │
 ├── docs/                       API.md, BLE_PROTOCOL.md, ARCHITECTURE.md, hardware/
+│   └── diagrams/               architecture-{light,dark}.svg, generated from a script
 ├── integrations/               Reserved: Home Assistant, Node-RED, ESPHome
 ├── run_tests.py                One command, 204 tests, fully offline
 ├── pyproject.toml              Packaging metadata (`pip install .`)

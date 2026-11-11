@@ -9,6 +9,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **An architecture diagram at the top of both READMEs.** Hand-drawn SVG goes stale the moment a
+  layer or a topic changes, so the picture is generated: `docs/diagrams/gen_architecture.py`
+  emits `architecture-{light,dark}.svg` from one description, and the READMEs pick the right one
+  with `<picture>` + `prefers-color-scheme` so it stays readable in both GitHub themes. CI runs
+  the generator with `--check`, so a hand-edit or a stale render fails the build instead of
+  quietly describing a system that no longer exists.
+
 - **The OTA pair is now pinned by contract tests (195 → 204 tests).** `test_mqtt_contract.py`
   fails if the `ota` topic ever gains `retain` (a retained URL reflashes on every reconnect -
   a broker-triggered boot loop) or if the two manifest topics ever lose it (a rebooted bridge

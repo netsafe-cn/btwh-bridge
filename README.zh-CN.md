@@ -10,6 +10,14 @@
 >
 > 本项目与 Robert Bosch GmbH 及其关联公司**无任何关系**，未获其授权、认可或支持。
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.svg">
+  <img src="docs/diagrams/architecture-light.svg" width="100%"
+       alt="架构图：博世 Therm 4800i 通过 PowerBus BLE 连到 ESP32-S3 网关，网关把数据以 MQTT 发布到 broker，Home Assistant 订阅之；另有一条独立链路让网关通过 HTTP 自行拉取并刷写固件。">
+</picture>
+
+*实线为运行链路；虚线为调试与升级链路——笔记本可直连热水器，网关也能不插 USB 自己刷固件。*
+
 ## 为什么做这个
 
 官方 **Bosch Water** App 一次只能连一台手机，仅限蓝牙距离内：没有本地 API、
@@ -290,6 +298,7 @@ CI 覆盖 Linux + Windows × Python 3.11/3.12，另有一个 job 检查 `config.
 │   └── mqtt.json               桥 <-> 消费端契约：主题、字段、单位、OTA
 │
 ├── docs/                       API.md、BLE_PROTOCOL.md、ARCHITECTURE.md、hardware/
+│   └── diagrams/               架构图（明/暗两版，由脚本生成）
 ├── integrations/               预留：Home Assistant、Node-RED、ESPHome
 ├── run_tests.py                一条命令跑 204 项，全离线
 ├── pyproject.toml              打包元数据（`pip install .`）
