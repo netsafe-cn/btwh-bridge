@@ -299,8 +299,8 @@
       "type": "int",
       "unit": "s",
       "nullable": true,
-      "label": "Last MQTT disconnect (epoch)",
-      "note": "null = the broker link has not dropped since boot. This is the broker link, not the BLE link. Epoch seconds, so the Home Assistant entity formats it with timestamp_custom: device_class timestamp parses ISO 8601 and rejects a bare integer."
+      "label": "Last MQTT disconnect time",
+      "note": "null = the broker link has not dropped since boot. This is the broker link, not the BLE link. The wire value is epoch seconds - the label deliberately does not say so, because the Home Assistant entity renders ISO 8601: device_class timestamp parses ISO 8601 and rejects a bare integer, so the template formats with timestamp_custom. A label promising 'epoch' next to an ISO 8601 value is a small lie a user reads every time they open the device page."
     }
   ],
   "home_assistant": {

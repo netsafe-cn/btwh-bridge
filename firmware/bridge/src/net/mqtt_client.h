@@ -57,7 +57,10 @@ namespace net {
 //       ota7: a 22nd entity (binary_sensor fault_active, device_class problem) and a subscription
 //       to Home Assistant's birth topic, which republishes discovery and the live-only topics
 //       when HA restarts. No topic, payload key or command changed shape; contract stays 1.
-constexpr const char* kFirmwareVersion = "2.9.0-ota7";
+//       ota8: the last_disconnect_at label stops saying "epoch". Since ota6 the entity renders
+//       ISO 8601 through timestamp_custom, so the old label described the wire value and lied
+//       about the display. Label only: no topic, key, template or entity id moves.
+constexpr const char* kFirmwareVersion = "2.9.0-ota8";
 
 // Slow-changing metadata, published on every connect and refreshed on the attributes heartbeat.
 // Live-only like state: uptime and RSSI are readings, not configuration.

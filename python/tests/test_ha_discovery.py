@@ -176,6 +176,10 @@ class TestDiagnosticEntities(unittest.TestCase):
                          "{{ value_json.last_disconnect_at | "
                          "timestamp_custom('%Y-%m-%dT%H:%M:%S%z', true) }}"
                          "{% else %}None{% endif %}")
+        # The label is the same claim in prose. It said "(epoch)" until 2.9.0-ota8, which was true
+        # of the wire value and false of the one thing a user actually sees - the rendered state.
+        self.assertEqual(cfg["name"], "Last MQTT disconnect time")
+        self.assertNotIn("epoch", cfg["name"].lower())
 
     def test_pair_state_is_an_enum(self):
         cfg = self.entities["pair_state"]["config"]

@@ -133,6 +133,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The last-disconnect entity stopped advertising "epoch" in its name (2.9.0-ota8).** Since the
+  ADR-016 fix the entity renders ISO 8601 through `timestamp_custom` and carries
+  `device_class: timestamp`, but the label still read `Last MQTT disconnect (epoch)` - true of the
+  wire value, false of everything the device page shows. Renamed to `Last MQTT disconnect time`
+  and the contract note now says plainly which of the two is epoch and which is ISO 8601. Label
+  only: no topic, key, template or unique id moves, so the existing entity keeps its history.
+
 - **Readings are no longer retained on the broker, only status is (ADR-015).** `state` and
   `attributes` were published with the retain flag, so pulling the bridge's power left
   `42.3 °C, flame on` on the broker for anything that subscribed - the same lie ADR-014 removed
