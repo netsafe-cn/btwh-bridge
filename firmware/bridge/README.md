@@ -32,7 +32,8 @@ firmware/bridge/
 │   ├── app/                   config.{h,cpp}  NVS config (broker + credentials)
 │   │                          session.{h,cpp} connect order, A0 state, link watch
 │   └── net/                   the network stack (ADR-008's top layer, now landed)
-│       ├── station.cpp/h      Wi-Fi join + SNTP clock, 30 s join retry
+│       ├── station.cpp/h      Wi-Fi join + SNTP clock (the retry cadence is recover's)
+│       ├── recover.cpp/h      when to offer the setup AP again (pure policy, ADR-018)
 │       ├── portal.cpp/h + portal_html.h   one-submit provisioning form
 │       ├── provision.cpp/h    Improv-style provisioning gates
 │       ├── mqtt_wire.cpp/h    hand-written MQTT 3.1.1 packets (pure C++)
@@ -49,7 +50,7 @@ firmware/bridge/
 │   ├── gen_profiles.py        spec/profiles.json -> src/proto/profiles_gen.h
 │   ├── gen_mqtt.py            spec/mqtt.json -> src/net/mqtt_contract.h
 │   ├── gen_ha.py              spec/mqtt.json -> src/net/ha_discovery_gen.h (22 entities)
-│   ├── host_selftest.py       the six C++ suites on the host (g++/clang++/zig)
+│   ├── host_selftest.py       the seven C++ suites on the host (g++/clang++/zig)
 │   ├── esp32_panel.py         always-on-top control panel (enter the six-digit code)
 │   ├── pair_once.py           pair in one command and report a verdict
 │   ├── watch_a0.py            A0 broadcast as a table with per-field ranges
@@ -105,8 +106,8 @@ board still links. Do it as one commit, with the golden vectors as the judge.
 
 ### 2.2 Proving the layers still correct
 
-The six C++ suites (proto 64 / net 16 / mqtt 41 / rules 76 / provision 19 / discovery 170 — 386
-checks) run in **two places**, and the counts are pinned in lockstep by
+The seven C++ suites (proto 64 / net 16 / mqtt 41 / rules 76 / provision 19 / discovery 170 /
+recover 25 — 411 checks) run in **two places**, and the counts are pinned in lockstep by
 `python/tests/test_cpp_selftest.py`:
 
 1. **On the host**, no board needed: `tools/host_selftest.py` compiles the framework-free
@@ -172,11 +173,11 @@ Code expired or rejected? **Read a new one and type it again** — no build invo
 | `wifi <ssid> <password>` | Join a network now, persisted to NVS (open network: `wifi <ssid> -`; `wifi` alone prints the state) |
 | `broker <host[:port]>` | Set the MQTT broker; `broker` alone prints the current one (`-` clears) |
 | `mqttuser <name> <password>` | Broker credentials, persisted in NVS (`-` clears both; a password may contain spaces) |
-| `portal` | Start the Wi-Fi provisioning portal (one form: Wi-Fi + heater + code + broker) |
+| `portal` | Start the Wi-Fi provisioning portal by hand (one form: Wi-Fi + heater + code + broker). Not needed for a board that cannot join: that path is automatic after 5 min, see ADR-018 |
 | `ota` | Prints how to flash: the URL goes to the MQTT `ota` topic — the console deliberately refuses to become a second flasher |
 | `status` | Print configuration and runtime state |
 | `mqtt` | Print the payload for the live MQTT state |
-| `selftest` | Run the six C++ suites on the board (386 checks) |
+| `selftest` | Run the seven C++ suites on the board (411 checks) |
 | `raw on` / `raw off` | Show / hide raw A0 bytes |
 | `reboot` / `help` | Reboot / help |
 
@@ -268,7 +269,7 @@ the `\\?\` long-path prefix or it aborts partway; and completeness must be judge
 of `libexec/gcc/xtensa-esp32s3-elf/8.4.0/cc1plus.exe` — a leftover `gcc.exe` makes it look
 finished when it is not.
 
-## 9. Status (2026-11-11)
+## 9. Status (2026-11-12)
 
 | Stage | State |
 |---|---|
@@ -278,10 +279,11 @@ finished when it is not.
 | v2 firmware (runtime code entry, SMP pin, `A2/07`/`A2/08`, A0 parsing) | ✅ |
 | Real-heater BLE session | ✅ **passed**: encrypted link, `A2/07` = `01`, `A2/08` = `01`, steady A0 |
 | Power-cycle recovery | ✅ reconnects unattended using the code stored in NVS, including booting before the AP (30 s join retry) |
+| Wi-Fi fallback | ✅ bench-verified end to end on the real board with the stored SSID removed: 5 min without an IP → AP up, 10 idle minutes → AP closed, retries resumed, no reset, and the cycle repeats while the network stays broken (ADR-018). The page also works over that AP — form, BLE scan, save. Two reboots surfaced on the way (modem sleep, and `/save` deleting its own server); both fixed |
 | Wi-Fi / provisioning portal / broker credentials | ✅ |
 | MQTT + Home Assistant discovery (22 entities) | ✅ bench-verified against a production HAOS Mosquitto |
 | OTA + HA update entity | ✅ end to end: MQTT URL flash, manifest, Install button, 4.5 s reflash, entity settles off |
-| Host-side C++ selftest (`host_selftest.py`, 386 checks) | ✅ in CI |
+| Host-side C++ selftest (`host_selftest.py`, 411 checks) | ✅ in CI |
 | Stability soak | ✅ 25 min: zero heartbeat drift, forced AP outage recovered in 6 s; one-week live soak pending |
 | Hardware facts (16 MB flash, 8 MB Octal PSRAM idle) | ✅ identified; the configuration upgrade is the next step |
 

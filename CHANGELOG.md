@@ -9,6 +9,25 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The setup page comes back by itself when the stored Wi-Fi stops working (ADR-018).** Until
+  now the only way back to the provisioning form was a USB cable and the `portal` console
+  command, which is fine for whoever flashed the board and useless for the person who owns the
+  heater: rename the SSID, change the password, replace the router, and the board retried every
+  30 s forever with no way to be told otherwise. Now, after **5 minutes with no IP**, the bridge
+  brings its own AP up (`BTWH-Bridge-XXXX`, password `bridge123`) and the phone can re-provision
+  it. That AP closes itself after **10 minutes with nobody associated** and the retries resume,
+  so a five-minute outage is not enough to open it and a weekend-long one does not turn into a
+  permanent setup page: the cycle becomes five minutes of retrying and ten of AP, which leaves
+  the page reachable two thirds of every quarter hour for the person who only notices on Sunday.
+  The idle clock is refreshed while a client is on the page, so a slow form fill is never cut
+  off. A portal a human asked for - the console command, or the LAN-mode page - is never closed
+  by the policy.
+  The retry cadence is unchanged at 30 s. The two numbers, the `millis()` wrap rule and every
+  "must not fire" case are pinned by a new pure module (`net/recover.{h,cpp}`, 25 host checks;
+  total 386 -> 411). `wifi` with no argument now reports the fallback state. Known gap, stated
+  in the ADR: this covers "cannot associate", not "associated with the wrong network" - the
+  2026-11-12 laptop-hotspot-with-the-same-SSID incident stays a router-side fix.
+
 - **A getting-started guide for the person who owns the heater, not the repository
   (`docs/GETTING_STARTED.zh-CN.md`).** Every existing document assumes the reader can read a
   build log; the person who ends up holding the board cannot. The guide covers what to buy and
@@ -18,8 +37,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   password `bridge123`, `192.168.4.1`, an English-form-to-Chinese table), and the pairing
   sequence that people get wrong: the six-digit code has to go into the *same* form submission
   as the Wi-Fi password, because saving tears the setup AP down. It also states the limitation
-  plainly instead of hiding it: a board whose Wi-Fi changed has no way back in without a USB
-  cable and the `portal` console command. The whole-image build (bootloader + partitions +
+  plainly instead of hiding it: a board that is online and has to move to a different network
+  still has no phone-only way in - the fallback added below covers the broken case, not the
+  deliberate one - so that still needs a USB cable and the `portal` console command. The whole-image build (bootloader + partitions +
   boot_app0 + app merged, 1,236,944 B) was produced and its magic bytes checked at `0x0`,
   `0x8000` and `0x10000`; flashing it wipes stored configuration, which the guide says out loud.
 
@@ -171,6 +191,29 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and the `Invalid state message` warning would come back.
 
 ### Fixed
+
+- **Two reboots found while building the fallback above, both on the real board, both fixed
+  before it shipped.** Neither is new: the first had been latent since the setup AP was written,
+  the second since `/save` was.
+
+  *The setup AP turned modem sleep off.* With Bluetooth running the ESP32 driver requires modem
+  sleep and asserts on any power-management transition without it
+  (`E wifi: Error! Should enable WiFi modem sleep when both WiFi and Bluetooth are enabled`,
+  then `ppTask -> ieee80211_ioctl_process -> pm_set_sleep_type -> abort` on core 0). That switch
+  had been set on 2026-11-08 to work around flaky association. It was survivable only because
+  nothing had ever torn the AP down with nobody on it - the situation the fallback creates every
+  time - and because nobody had loaded the page while the AP was up on this build, since the
+  heater list is filled by a BLE scan. Both aborted. `setSleep(false)` is gone; the 11-08 symptom
+  was then re-measured rather than assumed, and the same PC associates, takes a lease and loads
+  the page with sleep left alone.
+
+  *`/save` deleted the WebServer from inside its own callback.* The handler answered the POST,
+  called `stopPortal()` - which deletes `gServer` - and returned into the `handleClient()` frame
+  that owned it: `LoadProhibited`, `EXCVADDR 0x3c`, backtrace
+  `portalPoll -> WebServer::handleClient -> WiFiClient::operator=`. A reboot immediately after
+  "Saved" reads exactly like the board applying the new network, which is why it went unnoticed.
+  The handler now parks the request and `portalPoll()` finishes it on the next tick, after
+  `handleClient()` has returned and the response has flushed.
 
 - **The host selftest total was stale in the one test that pins it.** `test_cpp_selftest.py`
   asserted 295 checks (discovery 79) while the discovery suite had grown to 170 - two extra

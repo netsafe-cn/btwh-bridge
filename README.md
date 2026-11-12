@@ -89,7 +89,7 @@ And "this looks generated, and it is wrong" is a perfectly good opening line for
 | Python library `bosch_api` | ✅ Ready | **237** offline tests green; signature-freeze contract + golden vectors |
 | Desktop console / Mi Home bridge | ✅ Ready | tkinter GUI + Bemfa cloud (China region, optional) |
 | ESP32-S3 gateway firmware v2 | ✅ Verified | Real-device link-up: SMP encryption → `A2/07` → `A2/08=01` → steady `A0` stream; auto-recovers after power cycle, including "board boots before the AP" |
-| MQTT / Home Assistant auto-discovery | ✅ Verified end-to-end | 21 entities auto-discovered (water heater + 11 measurements + 8 diagnostics + 1 firmware-update, incl. RSSI and last-disconnect for remote troubleshooting); setpoint commands round-trip verified against a production Mosquitto on HAOS; see [MQTT.md](docs/MQTT.md) |
+| MQTT / Home Assistant auto-discovery | ✅ Verified end-to-end | 22 entities auto-discovered (water heater + 12 live + 8 diagnostics + 1 firmware-update, incl. RSSI, last-disconnect and a fault bit for remote troubleshooting); setpoint commands round-trip verified against a production Mosquitto on HAOS; see [MQTT.md](docs/MQTT.md) |
 | OTA firmware updates | ✅ Verified end-to-end | The bridge reflashes itself over its own MQTT link (HTTP image, checksum-gated; a failed image never touches the running firmware). The Home Assistant update entity's Install button drives the same path; see [CHANGELOG](CHANGELOG.md) |
 | Wi-Fi provisioning (Improv) | 📐 Spec done | Defined by `python/device_fsm.py` + [API.md §9](docs/API.md) |
 
@@ -265,8 +265,8 @@ python firmware/bridge/tools/log_diag.py <logfile>
 ```
 
 Since those three fixes the bridge has grown its network stack: Wi-Fi with a provisioning
-portal, MQTT publishing plus Home Assistant discovery (21 entities), and OTA reflashing
-over its own MQTT link — the bench flow, the serial console and the HA update entity all
+portal that reopens itself when the stored network stops working, MQTT publishing plus Home
+Assistant discovery (22 entities), and OTA reflashing over its own MQTT link — the bench flow, the serial console and the HA update entity all
 drive the same single flasher. [MQTT.md](docs/MQTT.md) documents the contract; the release
 and flash-layout plan is in [OTA.md](docs/OTA.md).
 
@@ -317,7 +317,7 @@ python run_tests.py -v       # per-test output
 | `test_ha_discovery` | 26 | The generated discovery table: every state/diagnostic field has an entity, the water_heater and update adapter views reuse contract topics only, unique_ids do not collide |
 | `test_firmware_contract` | 9 | Firmware serial-log grammar stays in lockstep with `log_diag.py`; attributes carry every contracted key |
 | `test_broker_config_contract` | 8 | The `broker` / `mqttuser` serial grammar mirrors `mqtt_rules.cpp` |
-| `test_cpp_selftest` | 2 | The six C++ selftest suites, compiled and executed on the host (`host_selftest.py`) |
+| `test_cpp_selftest` | 2 | The seven C++ selftest suites, compiled and executed on the host (`host_selftest.py`) |
 
 Three rules:
 

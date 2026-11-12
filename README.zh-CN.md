@@ -238,8 +238,8 @@ python firmware/bridge/tools/log_diag.py            # 自动取最新 logs/*.log
 python firmware/bridge/tools/log_diag.py <日志路径>
 ```
 
-三项修复之后，网关长出了完整的网络栈：Wi-Fi 配网门户、MQTT 发布 + Home Assistant
-自动发现（22 个实体）、以及经自身 MQTT 链路的 OTA 自刷——bench 工具、串口控制台和
+三项修复之后，网关长出了完整的网络栈：Wi-Fi 配网门户（存着的网络连不上时会自己重开）、
+MQTT 发布 + Home Assistant 自动发现（22 个实体）、以及经自身 MQTT 链路的 OTA 自刷——bench 工具、串口控制台和
 HA update 实体共用同一个刷写器。契约见 [MQTT.md](docs/MQTT.md)，发布与分区方案见
 [OTA.md](docs/OTA.md)。
 

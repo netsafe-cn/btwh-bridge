@@ -219,7 +219,7 @@ Two rules carry most of the value:
   The day a host compiler would be available arrived: `tools/host_selftest.py` compiles the
   framework-free layers (`proto/`, `net/`'s rules and wire code, `app/`'s provisioning —
   everything that carries no Arduino include) with the host's g++/clang++ — or `pip install
-  ziglang` when neither exists — and runs the same six suites the board's `selftest` command
+  ziglang` when neither exists — and runs the same seven suites the board's `selftest` command
   runs. The check counts are pinned on both sides (`test_cpp_selftest.py`), so a suite that
   only ever executed nowhere cannot exist — that window once shipped a discovery check
   asserting a 12-byte fit as 10. Compiling still is not linking: when the MQTT path changes,
@@ -664,6 +664,118 @@ the assertion, `AGENTS.md` and `firmware/bridge/README.md` now carry the measure
 **Benefit**: a fault is one boolean away from a trigger and from the UI's problem highlight; a
 Home Assistant restart costs no data instead of a minute of blanks; and a malformed contract
 edit fails one test with a path and a message, before a generator or a firmware build ever runs.
+
+### ADR-018 The setup page comes back by itself, and leaves by itself
+
+**Context**: the setup AP is on-demand only, and that was a deliberate choice — a page that can
+rewrite the Wi-Fi password and the broker address should not be reachable on a bridge that is
+working. The consequence went unexamined until the guide was written: the only other way back to
+that page is a USB cable and the `portal` console command. That is fine for whoever flashed the
+board and useless for the person who owns the heater. Rename the SSID, change the password,
+replace the router, and the board retries every 30 s forever, with no way to be told otherwise.
+
+The retry loop itself had the matching hole. It ran `millis() - lastRetry > 30000` from boot, so
+a board that came up before its router kept retrying indefinitely — measured 2026-11-11, a board
+that booted ahead of the AP stayed offline until a manual reboot. Arduino's auto-reconnect covers
+an AP that disappears and returns while associated; nothing covered "the network is gone for
+good".
+
+**Decision**:
+
+- `net/recover.h` holds the policy as a pure function: `decide(Sample, Policy) -> {None, Retry,
+  OpenPortal, ClosePortal}`. No Arduino include, so the host suite pins every boundary and the
+  board runs the identical code. The four durations are parameters; `kDefaultPolicy` is 5 min /
+  30 s / 10 min and the two documents that quote them quote the file.
+- **5 minutes with no IP** and the AP comes up. Past the worst router reboot, short enough that
+  an owner who just changed something sees it within a coffee. Below the limit the board only
+  retries, at the same 30 s cadence the hand-written loop used — one 15 s join budget each.
+- **10 minutes with nobody associated** and that AP closes itself, and the retries resume. The
+  idle clock is refreshed every tick a client is on the AP, so a slow form fill is never cut
+  off. The cycle then repeats: five minutes of retrying, ten minutes of AP, so an outage that
+  lasts a weekend leaves the page reachable for two thirds of every quarter hour instead of
+  holding a radio open forever. That is deliberate - the person who discovers the problem on
+  Sunday evening should not have to find a USB cable - and the cost is a beaconing AP on a
+  mains-powered board.
+- A portal a human asked for — the console command, and the LAN-mode page a developer uses to
+  re-pair a working board — is never closed by the policy. `startPortal()` takes an `automatic`
+  flag for exactly that distinction and nothing else.
+- Timers go through `reached(now, since, limit)`, which requires the difference to be inside the
+  half range. Plain subtraction reads a reference taken before `millis()` wrapped as 49 days
+  elapsed: one timer would open the AP at random after 49 days of uptime, the other would close
+  it under a user. Both are refusals now.
+- Two transitions the policy cannot see, handled at the call site: a close resets
+  `offlineSinceMs` (or the still-satisfied five minutes reopens the AP on the next tick), and a
+  `/save` whose credentials fail to join starts a fresh five-minute window instead of inheriting
+  the outage that preceded it — otherwise the page reopens on the same tick and the user cannot
+  read the error it printed.
+- `wifi` with no argument now prints the fallback state (how long offline, how long until the
+  page appears, or that a portal is up and whether it is automatic).
+
+**Cost**: one pure module and 25 self-test checks (host total 386 → 411), two accessors on the
+portal (`portalAutomatic`, `portalClients`), one extra parameter, and one more thing the guide
+has to explain. Firmware 1,173,861 B / 58,900 B RAM, unchanged in shape.
+
+**Found while verifying — two reboots, two unrelated bugs.**
+
+*1. The setup AP turned modem sleep off, and Bluetooth will not have that.* The first bench run
+opened the AP at 5 min exactly as designed, then panicked at the 10-minute idle mark:
+`abort() was called at PC 0x420a0767 on core 0`, backtrace
+`ppTask -> ieee80211_ioctl_process -> wifi_get_channel_process -> pm_set_sleep_type`, reset two
+ticks later. Three teardown shapes reproduced it deterministically - `softAPdisconnect(true)`
+(which ends in `esp_wifi_stop()`), adding `WiFi.mode(WIFI_OFF)`, and `softAPdisconnect(false)`
+alone - which is what made the teardown look guilty. It was not: the precondition was
+`WiFi.setSleep(false)` in `startPortal()`, a workaround from 2026-11-08 when modem sleep was
+blamed for flaky association. With Bluetooth enabled the driver *requires* modem sleep and
+asserts on any power-management transition without it:
+`E wifi: Error! Should enable WiFi modem sleep when both WiFi and Bluetooth are enabled`. Nothing
+had ever torn that AP down without a client on it, which is the only state the fallback closes
+from - first-boot provisioning always has a phone attached. Restoring sleep at teardown was not
+enough either: the page itself scans for heaters, and that scan aborted the same way. The fix is
+to never turn it off: `setSleep(false)` is gone, the AP runs with the driver's own default, and
+the 11-08 symptom was re-measured rather than assumed - the same PC associates, gets a lease,
+loads the page (BLE scan included, heater list empty and honest) and submits the form. Recorded
+because the 11-08 note is still in the tree and the next person to hit a flaky association will
+reach for that switch again.
+
+*2. `/save` deleted the WebServer from inside its own callback.* With the driver quiet, a save
+still rebooted the board - and it always had, since `/save` was written; the reboot right after
+"Saved" was easy to mistake for the board applying the new network. Measured 2026-11-12:
+`Guru Meditation Error: Core 1 panic'ed (LoadProhibited)`, `EXCVADDR 0x0000003c`, backtrace
+`portalPoll -> WebServer::handleClient -> WiFiClient::operator=`. `handleSave()` called
+`stopPortal()`, which deletes `gServer`, and then returned into the `handleClient()` frame that
+owned it. The handler now answers the POST and parks the request; `portalPoll()` performs the
+teardown on the next tick, when `handleClient()` has returned and the response has been flushed.
+
+**Known gap, recorded rather than papered over**: this covers "cannot associate". It does not
+cover "associated with the wrong network". The 2026-11-12 incident was that shape — a laptop
+hotspot sharing the SSID `LSBK 3523`, board joined to `192.168.137.20`, broker unreachable —
+and `stationUp` is honestly true there, so the policy stays quiet. The fix belongs on the router
+(reserve the address) or in a separate broker-reachability signal, not in a second way to
+invalidate a working configuration.
+
+**Alternatives considered**:
+
+- *"Three consecutive failures" instead of a duration.* A failed attempt and a slow one cost the
+  same 15 s join budget, so a count is a duration spelled less usefully — and it cannot see the
+  two cases that matter most: booting while the router is off, and an association that succeeds
+  onto an AP with nothing behind it.
+- *Leave the AP up until someone provisions.* A router that is off for a weekend turns a
+  five-minute outage into a permanent setup page — which is the objection that produced the
+  on-demand rule in the first place, arriving through the back door.
+- *AP+STA, so the retries continue underneath the open page.* `WiFi.mode(WIFI_AP)` is deliberate:
+  measured 2026-11-08, modem sleep plus BLE coexistence already made association fragile ("PC
+  associated, three captive probes answered, zero DHCP offers"), and a soft AP on the same radio
+  during a scan-and-join is exactly that interference. It would also force `stopPortal()` to tell
+  tearing down an AP from tearing down a link.
+- *Close on a fixed lifetime from the open, ignoring clients.* Ten minutes is a slow form fill on
+  an old phone. Closing under a user is worse than not opening.
+- *Fall back when the broker is unreachable rather than when Wi-Fi is down.* Wider trigger,
+  much wider blast radius: any broker restart would push the bridge into AP mode with a working
+  network. Rejected for now; see the known gap.
+
+**Benefit**: a board whose network changed is recoverable by its owner with a phone, no cable
+and no computer, and the recovery window is bounded in both directions — it opens on its own and
+it closes on its own.
 
 ---
 

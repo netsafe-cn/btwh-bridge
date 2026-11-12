@@ -23,6 +23,15 @@ void* gCtx = nullptr;
 // station link that the rest of the bridge depends on.
 bool gLanMode = false;
 
+// A /save that has been answered but not yet acted on. The handler cannot stop the portal
+// itself (see the note there), so the request parks here and portalPoll() finishes it.
+ProvisionRequest gSaved;
+bool gSavePending = false;
+
+// True when the Wi-Fi fallback opened this portal rather than a human. Read by net/recover.h
+// to decide whether the policy may close it again; see portal.h.
+bool gAutomatic = false;
+
 // The last validation error, shown on the form after a rejected submit.
 char gError[96] = {0};
 
@@ -181,11 +190,14 @@ void handleSave() {
   Serial.printf("[PORTAL] saved: heater=%s ssid=%s code=%s\n",
                 r.heater, r.ssid, r.pairCode[0] ? "****" : "(keep)");
 
-  stopPortal();
-  if (gOnProvisioned) {
-    const char* outcome = gOnProvisioned(gCtx, r);
-    Serial.printf("[PORTAL] provision outcome: %s\n", outcome ? outcome : "?");
-  }
+  // Hand the work to portalPoll() instead of doing it here. This function runs *inside*
+  // WebServer::handleClient(), and stopping the portal deletes that very object - the return
+  // then walks off the end of a freed stack frame. Measured 2026-11-12 on the bench, and it
+  // explains a reboot that followed every successful save: LoadProhibited, core 1,
+  // `portalPoll -> WebServer::handleClient -> WiFiClient::operator=` (EXCVADDR 0x3c).
+  // Nothing below this line may touch gServer.
+  gSaved      = r;
+  gSavePending = true;
 }
 
 void handleNotFound() {
@@ -201,11 +213,12 @@ bool portalNeeded(const char* storedSsid) {
   return storedSsid == nullptr || storedSsid[0] == 0;
 }
 
-void startPortal(ProvisionedFn onProvisioned, void* ctx) {
+void startPortal(ProvisionedFn onProvisioned, void* ctx, bool automatic) {
   if (gServer) return;                       // already up
 
   gOnProvisioned = onProvisioned;
   gCtx = ctx;
+  gAutomatic = automatic;
 
   // Two shapes, chosen by whether the board already has a network:
   //
@@ -238,12 +251,21 @@ void startPortal(ProvisionedFn onProvisioned, void* ctx) {
   snprintf(apName, sizeof(apName), "BTWH-Bridge-%02X%02X", mac[4], mac[5]);
 
   WiFi.mode(WIFI_AP);
-  // Modem sleep drops beacons and defers broadcast handling exactly when a client is trying
-  // to associate and DHCP itself - with BLE coexistence on top it made every association fall
-  // apart (measured 2026-11-08: PC associated, three captive probes answered, zero DHCP
-  // offers). The portal lives for minutes on a powered board; power is not the constraint,
-  // reliability is.
-  WiFi.setSleep(false);
+  // Modem sleep stays ON, and that is not a preference.
+  //
+  // An earlier bench note (2026-11-08) blamed modem sleep for unreliable association - a PC
+  // associated, three captive probes answered, zero DHCP offers - and turned it off here. That
+  // workaround is not survivable on this board: with Bluetooth enabled the driver requires
+  // modem sleep and asserts on any power-management transition without it. Measured 2026-11-12
+  // two ways, same assert:
+  //   E wifi: Error! Should enable WiFi modem sleep when both WiFi and Bluetooth are enabled
+  //   ppTask -> ieee80211_ioctl_process -> wifi_get_channel_process -> pm_set_sleep_type -> abort
+  // once when the setup AP was torn down (a channel switch) and once when the page asked for a
+  // BLE scan to fill the heater list - which is the fallback AP's whole reason for existing. A
+  // reboot is worse than a slow DHCP: the 11-08 symptom is retryable, this one loses the page
+  // mid-form. Re-checked with sleep left on: the same PC associates, gets a lease, loads the
+  // page and submits it. If association ever misbehaves again, look at the captive-portal probe
+  // and the DNS server here before reaching for that switch.
   // PSRAM is off in this build, so the default max_clients=4 keeps the heap happy; a setup
   // session only ever has one phone on it.
   // WPA2 rather than an open AP: the captive-portal handshake on several older phone/PC
@@ -255,6 +277,11 @@ void startPortal(ProvisionedFn onProvisioned, void* ctx) {
   Serial.printf("[PORTAL] AP up: %s  ->  http://%s/  (softAP=%d ch=%d)\n",
                 apName, WiFi.softAPIP().toString().c_str(), (int)ap,
                 (int)WiFi.channel());
+  if (automatic) {
+    // Say why, and say how long it lasts: the difference between this and the console path is
+    // the only thing that makes the page go away on its own.
+    Serial.println("[PORTAL] opened by the Wi-Fi fallback: it closes itself after 10 idle minutes");
+  }
 
   gDns = new DNSServer();
   gDns->start(53, "*", WiFi.softAPIP());
@@ -267,6 +294,8 @@ void startPortal(ProvisionedFn onProvisioned, void* ctx) {
 }
 
 void stopPortal() {
+  gAutomatic = false;
+  gSavePending = false;
   if (gServer) { gServer->stop(); delete gServer; gServer = nullptr; }
   if (gDns)    { gDns->stop();    delete gDns;    gDns = nullptr; }
   if (gLanMode) {
@@ -274,15 +303,43 @@ void stopPortal() {
     gLanMode = false;
     return;
   }
-  WiFi.softAPdisconnect(true);
-  WiFi.mode(WIFI_OFF);
+  // Drop the AP configuration and leave the radio running.
+  //
+  // softAPdisconnect(true) ends in esp_wifi_stop(); the WiFi.mode(WIFI_OFF) that used to follow
+  // it stopped the driver outright. Both were measured aborting inside the driver's ioctl task
+  // (ppTask -> ieee80211_ioctl_process -> pm_set_sleep_type) on 2026-11-12 - but the cause was
+  // the modem-sleep setting, not the teardown: `startPortal()` used to turn sleep off for AP
+  // mode, and with Bluetooth running the driver asserts on any power-management transition
+  // without it. That call is gone (see the note there), which removes the precondition; this
+  // shape stays anyway because it is the smallest one that works. An empty SSID is no network,
+  // and the next join attempt calls WiFi.mode(WIFI_STA) regardless, so "radio off" was never
+  // load-bearing.
+  WiFi.softAPdisconnect(false);
 }
 
 bool portalActive() { return gServer != nullptr; }
 
+bool portalAutomatic() { return gAutomatic; }
+
+int portalClients() {
+  if (!gServer || gLanMode) return 0;   // LAN mode has no AP, so it has no clients to wait for
+  return (int)WiFi.softAPgetStationNum();
+}
+
 void portalPoll() {
   if (gDns)    gDns->processNextRequest();
   if (gServer) gServer->handleClient();
+
+  // A /save answered on this tick is acted on here, one frame further out: handleClient() has
+  // returned, so deleting the server is safe, and the response it wrote has been flushed.
+  if (gSavePending) {
+    gSavePending = false;
+    stopPortal();
+    if (gOnProvisioned) {
+      const char* outcome = gOnProvisioned(gCtx, gSaved);
+      Serial.printf("[PORTAL] provision outcome: %s\n", outcome ? outcome : "?");
+    }
+  }
 }
 
 }  // namespace net

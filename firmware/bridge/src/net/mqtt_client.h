@@ -60,7 +60,14 @@ namespace net {
 //       ota8: the last_disconnect_at label stops saying "epoch". Since ota6 the entity renders
 //       ISO 8601 through timestamp_custom, so the old label described the wire value and lied
 //       about the display. Label only: no topic, key, template or entity id moves.
-constexpr const char* kFirmwareVersion = "2.9.0-ota8";
+//       ota9: the Wi-Fi fallback (ADR-018). After 5 min with no IP the setup AP comes back on
+//       its own and closes after 10 idle minutes. No topic, payload key or command changed
+//       shape; the contract stays 1. The setup AP also stopped turning modem sleep off, which
+//       was aborting the driver whenever Bluetooth was also running.
+//       ota10: /save stops rebooting the board. The form handler used to delete the WebServer
+//       from inside its own callback and then return into it; the teardown is deferred to the
+//       next poll tick. Behaviour and payloads unchanged.
+constexpr const char* kFirmwareVersion = "2.9.0-ota10";
 
 // Slow-changing metadata, published on every connect and refreshed on the attributes heartbeat.
 // Live-only like state: uptime and RSSI are readings, not configuration.

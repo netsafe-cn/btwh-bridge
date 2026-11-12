@@ -28,11 +28,24 @@ bool portalNeeded(const char* storedSsid);
 // `onProvisioned` runs once, after credentials are validated and stored and the AP is down:
 // the app layer starts Wi-Fi and (if a code was given) the pairing attempt. It receives the
 // saved request and returns an outcome line for the log; the portal is finished either way.
+//
+// `automatic` marks a portal nobody asked for: the Wi-Fi fallback (net/recover.h) opened it
+// because the stored credentials stopped working. The only thing the flag changes is that
+// such a portal may be closed again by that same policy once it has been idle - a page a
+// human asked for stays until a human closes it.
 typedef const char* (*ProvisionedFn)(void* ctx, const ProvisionRequest& r);
 
-void startPortal(ProvisionedFn onProvisioned, void* ctx);
+void startPortal(ProvisionedFn onProvisioned, void* ctx, bool automatic = false);
 void stopPortal();
 bool portalActive();
+
+// Whether this is an automatic portal. False once it stops, and false for the console path.
+bool portalAutomatic();
+
+// Stations associated with the setup AP right now. Always 0 when the page is served on the LAN
+// (there is no AP then), which is what the fallback policy needs to know: a LAN-mode page is
+// never idle-closed anyway.
+int portalClients();
 
 // Serves pending HTTP requests and DNS queries. Call from loop(); cheap when inactive.
 void portalPoll();

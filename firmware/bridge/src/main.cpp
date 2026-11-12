@@ -7,8 +7,9 @@
  *   1) connect to the heater and finish SMP pairing (the panel code is the BLE pin)
  *   2) A2/07 submits the MAC, A2/08 submits the pairing code, authorisation follows
  *   3) A0 broadcasts arrive and every field parses correctly
- * Since then (phase two): Wi-Fi + portal, MQTT + HA discovery (21 entities),
+ * Since then (phase two): Wi-Fi + portal, MQTT + HA discovery (22 entities),
  * broker credentials, and OTA reflashing over this file's own MQTT link.
+ * Latest: the setup page comes back by itself when the stored Wi-Fi stops working (ADR-018).
  *
  * This file is only the board boundary: setup(), loop() and the serial console. The work lives
  * in the layers below it (ADR-008), each of which compiles on its own terms:
@@ -46,6 +47,7 @@
 #include "net/mqtt_client.h"
 #include "net/mqtt_rules.h"
 #include "net/mqtt_wire.h"
+#include "net/recover.h"
 #include "net/station.h"
 #include "net/state_json.h"
 #include "proto/a0.h"
@@ -69,6 +71,13 @@ static uint32_t      gLastFrameMs  = 0;
 // that nobody reads a morning temperature as an evening one. spec/mqtt.json states the same
 // number as link.stale_after_s; if one moves, the other moves with it.
 constexpr uint32_t kLinkStaleMs = 90000;
+
+// ---------------------------------------------------------------- Wi-Fi recovery clocks
+// The four timestamps net/recover.h reads. All millis(); none of them is a duration, and none
+// is interpreted here - the policy owns the arithmetic, including what a wrap means.
+static uint32_t gOfflineSinceMs = 0;   // last tick the station was up, boot, or the last close
+static uint32_t gLastAttemptMs  = 0;   // last stationConnect() attempt, from any path
+static uint32_t gLastClientMs   = 0;   // last tick somebody was associated with the setup AP
 
 static void banner(const char* s) { Serial.printf("\n===== %s =====\n", s); }
 
@@ -108,6 +117,10 @@ static const char* onProvisioned(void* /*ctx*/, const net::ProvisionRequest& r) 
   gCfg.saveNetwork();
 
   bool wifiOk = net::stationConnect(gCfg.ssid, gCfg.wifiPass);
+  // The credentials are new and an attempt was just made: reset both clocks so the fallback
+  // measures this failure and not the outage the form was opened for.
+  gLastAttemptMs  = millis();
+  gOfflineSinceMs = gLastAttemptMs;
   if (!wifiOk) return "saved, but the Wi-Fi would not join - reopen the portal and retype it";
 
   // The portal is the one place where the broker can change without a reboot, and the
@@ -164,19 +177,22 @@ static void doSelfTest() {
   // Each layer keeps its own suite: proto owns the wire format, net owns the published bytes,
   // net::mqtt owns the broker's packet format, net::rules owns the inbound parsing (setpoint
   // text, command verbs, broker addresses, OTA URLs), net::prov owns the provisioning
-  // validation, and discovery owns the entity table. None of them can check another's job.
+  // validation, net::discovery owns the entity table, and net::recover owns the Wi-Fi fallback
+  // policy. None of them can check another's job.
   proto::SelfTestResult     p = proto::runSelfTest(serialLine, nullptr);
   net::SelfTestResult       n = net::runSelfTest(serialLine, nullptr);
   net::SelfTestResult       w = net::mqtt::runSelfTest(serialLine, nullptr);
   net::SelfTestResult       r = net::rules::runSelfTest(serialLine, nullptr);
   net::SelfTestResult       v = net::prov::runSelfTest(serialLine, nullptr);
   net::SelfTestResult       d = net::discovery::runSelfTest(serialLine, nullptr);
+  net::SelfTestResult       c = net::recover::runSelfTest(serialLine, nullptr);
   reportTest("proto", p.total, p.failed);
   reportTest("net", n.total, n.failed);
   reportTest("mqtt", w.total, w.failed);
   reportTest("rules", r.total, r.failed);
   reportTest("provision", v.total, v.failed);
   reportTest("discovery", d.total, d.failed);
+  reportTest("recover", c.total, c.failed);
 }
 
 // Copies the last parsed broadcast into the shape net/ publishes. The only mapping between the
@@ -322,7 +338,7 @@ static void printHelp() {
   Serial.println("  broker HOST[:P]   set the MQTT broker ( - clears it ); restarts the client");
   Serial.println("  mqttuser U PASS   set the broker account ( - clears ); restarts the client");
   Serial.println("  ota               print how to update firmware over MQTT");
-  Serial.println("  portal            start the setup portal (LAN page if already online, else AP)");
+  Serial.println("  portal            start the setup portal by hand (LAN page if online, else AP)");
   Serial.println("  wifi SSID PASS    join a network and save it (open network: wifi SSID -)");
   Serial.println("  raw on / raw off  show / hide raw A0 bytes");
   Serial.println("  reboot            reboot");
@@ -464,6 +480,16 @@ static void handleCommand(String line) {
                     gCfg.ssid[0] ? gCfg.ssid : "(none)",
                     net::stationUp() ? "connected" : "not connected", ip);
       Serial.printf("[WIFI] clock=%s\n", net::nowEpoch() ? "synced" : "not synced");
+      if (net::portalActive()) {
+        Serial.printf("[WIFI] portal=%s  clients=%d  fallback=%s\n",
+                      net::portalAutomatic() ? "automatic" : "manual",
+                      net::portalClients(),
+                      net::portalAutomatic() ? "closes itself when idle" : "stays until stopped");
+      } else if (!net::stationUp() && gCfg.ssid[0]) {
+        Serial.printf("[WIFI] fallback: no IP for %lu s, setup page at %lu s\n",
+                      (unsigned long)((millis() - gOfflineSinceMs) / 1000),
+                      (unsigned long)(net::recover::kDefaultPolicy.fallbackAfterMs / 1000));
+      }
       Serial.println("[WIFI] usage: wifi <ssid> <password>");
       return;
     }
@@ -483,6 +509,12 @@ static void handleCommand(String line) {
     gCfg.saveNetwork();
 
     bool ok = net::stationConnect(gCfg.ssid, gCfg.wifiPass);
+    // Same rule as a /save that fails: the credentials are new, so the fallback window starts
+    // over. Otherwise the AP would pop up seconds later and the log would claim an outage the
+    // user already tried to fix. The attempt clock moves too, or the policy sees a stale one
+    // and spends another 15 s join budget on the network that just refused.
+    gLastAttemptMs  = millis();
+    gOfflineSinceMs = gLastAttemptMs;
     if (ok) {
       char ip[20];
       net::stationIp(ip, sizeof(ip));
@@ -603,6 +635,10 @@ void setup() {
   if (gCfg.ssid[0] && !net::stationUp()) {
     Serial.printf("[BOOT] stored Wi-Fi %s, joining\n", gCfg.ssid);
     net::stationConnect(gCfg.ssid, gCfg.wifiPass);
+    // Counted as an attempt: without this the policy sees "no attempt in 30 s" on its first
+    // tick and immediately spends another 15 s join budget on a network that just refused.
+    gLastAttemptMs  = millis();
+    gOfflineSinceMs = gLastAttemptMs;
   }
 
   // MQTT comes after Wi-Fi, for the same reason: the client needs an IP to do anything at all,
@@ -615,20 +651,71 @@ void loop() {
   net::portalPoll();
   app::poll();
 
-  // Wi-Fi rejoin. stationConnect runs once at boot, and the AP is not guaranteed to be
-  // first: a router recovers from a power cut slower than this board, and a laptop hotspot
-  // starts whenever its owner gets around to it. On the bench (2026-11-11) a board that
-  // booted before the AP stayed offline until a manual reboot. Arduino's auto-reconnect
-  // covers an AP that disappears and returns while we are associated; this retry covers
-  // the never-associated-at-boot case. 30 s cadence, one 15 s join budget each: slow
-  // enough not to fight the scan-and-join cycle, fast enough to come back inside a minute
-  // of the AP appearing.
-  static uint32_t lastWifiRetryMs = 0;
-  if (gCfg.ssid[0] && !net::stationUp() && !net::portalActive()
-      && millis() - lastWifiRetryMs > 30000) {
-    lastWifiRetryMs = millis();
-    Serial.println("[WIFI] rejoining (AP may have come up after boot)");
-    net::stationConnect(gCfg.ssid, gCfg.wifiPass);
+  // Wi-Fi recovery (ADR-018): retry the stored network, and when it stops working altogether,
+  // offer the setup page again. The policy and every boundary in it live in net/recover.h; this
+  // block supplies the clocks and executes the verdict.
+  //
+  // History worth keeping: stationConnect runs once at boot, and the AP is not guaranteed to be
+  // first - a router recovers from a power cut slower than this board, and a laptop hotspot
+  // starts whenever its owner gets around to it. On the bench (2026-11-11) a board that booted
+  // before the AP stayed offline until a manual reboot. Arduino's auto-reconnect covers an AP
+  // that disappears and returns while we are associated; this covers the
+  // never-associated-at-boot case, and the case where the network is gone for good.
+  {
+    const uint32_t nowMs     = millis();
+    const bool     stationUp = net::stationUp();
+    const bool     portalUp  = net::portalActive();
+    const bool     client    = net::portalClients() > 0;
+
+    // Clock maintenance first, so the sample below is the state of the world rather than the
+    // state before this tick's events. Two transitions matter:
+    //   station up   both clocks ride along, so the first outage is measured from the drop and
+    //                a healthy board never looks overdue for an attempt.
+    //   portal gone  /save closed it. The credentials that just arrived get a fresh fallback
+    //                window; without this the outage that preceded them counts against them and
+    //                the AP reopens on the same tick.
+    static bool portalWasUp = false;
+    if (portalWasUp && !portalUp && !stationUp) gOfflineSinceMs = nowMs;
+    portalWasUp = portalUp;
+    if (stationUp) { gOfflineSinceMs = nowMs; gLastAttemptMs = nowMs; }
+    if (client)    { gLastClientMs = nowMs; }
+
+    net::recover::Sample s;
+    s.hasCredentials = gCfg.ssid[0] != 0;
+    s.stationUp      = stationUp;
+    s.portalActive   = portalUp;
+    s.portalAuto     = net::portalAutomatic();
+    s.clientPresent  = client;
+    s.nowMs          = nowMs;
+    s.offlineSinceMs = gOfflineSinceMs;
+    s.lastAttemptMs  = gLastAttemptMs;
+    s.lastClientMs   = gLastClientMs;
+
+    switch (net::recover::decide(s, net::recover::kDefaultPolicy)) {
+      case net::recover::Action::Retry:
+        gLastAttemptMs = nowMs;
+        Serial.println("[WIFI] rejoining (the stored network may have come back)");
+        net::stationConnect(gCfg.ssid, gCfg.wifiPass);
+        break;
+
+      case net::recover::Action::OpenPortal:
+        gLastClientMs = nowMs;   // idle counts from the open, not from the boot that preceded it
+        Serial.printf("[WIFI] no IP for %lu s with stored credentials: offering the setup page\n",
+                      (unsigned long)(net::recover::kDefaultPolicy.fallbackAfterMs / 1000));
+        net::startPortal(onProvisioned, nullptr, true);
+        break;
+
+      case net::recover::Action::ClosePortal:
+        Serial.printf("[PORTAL] nobody used the setup page for %lu minutes: closing it, resuming "
+                      "the Wi-Fi retries\n",
+                      (unsigned long)(net::recover::kDefaultPolicy.idleCloseAfterMs / 60000));
+        net::stopPortal();
+        gOfflineSinceMs = nowMs;   // a fresh window, or the fallback is still satisfied and reopens
+        break;
+
+      case net::recover::Action::None:
+        break;
+    }
   }
 
   // Diagnostics metadata, resampled every 5 s: pairing state and RSSI move while the bridge

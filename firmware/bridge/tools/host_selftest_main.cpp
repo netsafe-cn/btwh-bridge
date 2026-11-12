@@ -13,6 +13,7 @@
 #include "net/mqtt_rules.h"
 #include "net/mqtt_wire.h"
 #include "net/provision.h"
+#include "net/recover.h"
 #include "net/selftest.h"
 #include "net/state_json.h"
 #include "proto/selftest.h"
@@ -54,7 +55,10 @@ int main() {
   const net::SelfTestResult d = net::discovery::runSelfTest(print, nullptr);
   report("discovery", d.total, d.failed, &bad);
 
-  const int total = p.total + n.total + w.total + r.total + v.total + d.total;
+  const net::SelfTestResult c = net::recover::runSelfTest(print, nullptr);
+  report("recover", c.total, c.failed, &bad);
+
+  const int total = p.total + n.total + w.total + r.total + v.total + d.total + c.total;
   if (bad) {
     printf("host selftest FAILED: %d check(s)\n", bad);
     return 1;

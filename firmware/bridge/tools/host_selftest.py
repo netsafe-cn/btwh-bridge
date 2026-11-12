@@ -36,6 +36,7 @@ SOURCES = [
     SRC / "net" / "mqtt_rules.cpp",
     SRC / "net" / "provision.cpp",
     SRC / "net" / "discovery.cpp",
+    SRC / "net" / "recover.cpp",
 ]
 
 # Headers the sources include. A generated header changed by gen_*.py must trigger a rebuild
@@ -53,6 +54,7 @@ HEADERS = [
     SRC / "net" / "provision.h",
     SRC / "net" / "mqtt_contract.h",
     SRC / "net" / "discovery.h",
+    SRC / "net" / "recover.h",
     SRC / "net" / "selftest.h",
 ]
 

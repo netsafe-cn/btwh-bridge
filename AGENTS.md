@@ -47,11 +47,12 @@ python firmware/bridge/tools/gen_vectors.py                # after changing spec
 python firmware/bridge/tools/gen_profiles.py               # after changing spec/profiles.json
 python firmware/bridge/tools/gen_mqtt.py                   # after changing spec/mqtt.json (cross-checks profiles.json)
 python firmware/bridge/tools/gen_ha.py                     # after changing spec/mqtt.json
-python firmware/bridge/tools/host_selftest.py              # the six C++ suites, on the host
-# then flash and type: selftest                            # the same six suites, on the board
+python firmware/bridge/tools/host_selftest.py              # the seven C++ suites, on the host
+# then flash and type: selftest                            # the same seven suites, on the board
 ```
 
-The six C++ suites (proto 64 / net 16 / mqtt 41 / rules 76 / provision 19 / discovery 170 — 386)
+The seven C++ suites (proto 64 / net 16 / mqtt 41 / rules 76 / provision 19 / discovery 170 /
+recover 25 — 411)
 run in two places, and the check counts must stay in lockstep:
 
 - **on the host** — `host_selftest.py` compiles the framework-free layers with g++/clang++
