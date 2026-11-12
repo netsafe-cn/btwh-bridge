@@ -50,6 +50,7 @@
 #include "net/recover.h"
 #include "net/station.h"
 #include "net/state_json.h"
+#include "net/wifistat.h"
 #include "proto/a0.h"
 #include "proto/frame.h"
 #include "proto/selftest.h"
@@ -177,8 +178,9 @@ static void doSelfTest() {
   // Each layer keeps its own suite: proto owns the wire format, net owns the published bytes,
   // net::mqtt owns the broker's packet format, net::rules owns the inbound parsing (setpoint
   // text, command verbs, broker addresses, OTA URLs), net::prov owns the provisioning
-  // validation, net::discovery owns the entity table, and net::recover owns the Wi-Fi fallback
-  // policy. None of them can check another's job.
+  // validation, net::discovery owns the entity table, net::recover owns the Wi-Fi fallback
+  // policy, and net::wifistat owns the wording for the driver's join codes. None of them can
+  // check another's job.
   proto::SelfTestResult     p = proto::runSelfTest(serialLine, nullptr);
   net::SelfTestResult       n = net::runSelfTest(serialLine, nullptr);
   net::SelfTestResult       w = net::mqtt::runSelfTest(serialLine, nullptr);
@@ -186,6 +188,7 @@ static void doSelfTest() {
   net::SelfTestResult       v = net::prov::runSelfTest(serialLine, nullptr);
   net::SelfTestResult       d = net::discovery::runSelfTest(serialLine, nullptr);
   net::SelfTestResult       c = net::recover::runSelfTest(serialLine, nullptr);
+  net::SelfTestResult       f = net::wifistat::runSelfTest(serialLine, nullptr);
   reportTest("proto", p.total, p.failed);
   reportTest("net", n.total, n.failed);
   reportTest("mqtt", w.total, w.failed);
@@ -193,6 +196,7 @@ static void doSelfTest() {
   reportTest("provision", v.total, v.failed);
   reportTest("discovery", d.total, d.failed);
   reportTest("recover", c.total, c.failed);
+  reportTest("wifistat", f.total, f.failed);
 }
 
 // Copies the last parsed broadcast into the shape net/ publishes. The only mapping between the
@@ -375,6 +379,16 @@ static void printStatus() {
   Serial.printf("  last       : %s\n", auth::reasonText(s.lastResult));
   Serial.printf("  wifi       : %s  ssid=%s\n",
                 net::stationUp() ? "up" : "down", gCfg.ssid[0] ? gCfg.ssid : "(none)");
+  {
+    // Two lines instead of one: "down" alone does not distinguish "the network is not there"
+    // from "it is there and refuses us", which is the whole difference between a router problem
+    // and a password problem (2026-11-12).
+    char diag[128];
+    net::stationDiag(diag, sizeof(diag));
+    Serial.printf("  wifi link  : %s\n", diag);
+    const char* failure = net::stationLastFailure();
+    if (failure[0]) Serial.printf("  wifi last  : %s\n", failure);
+  }
   Serial.printf("  clock      : %s\n",
                 net::nowEpoch() ? "synced" : "not synced (ts omitted)");
   Serial.printf("  broker     : %s  user=%s\n",
@@ -480,6 +494,15 @@ static void handleCommand(String line) {
                     gCfg.ssid[0] ? gCfg.ssid : "(none)",
                     net::stationUp() ? "connected" : "not connected", ip);
       Serial.printf("[WIFI] clock=%s\n", net::nowEpoch() ? "synced" : "not synced");
+      if (net::stationUp()) {
+        char diag[128];
+        net::stationDiag(diag, sizeof(diag));
+        Serial.printf("[WIFI] %s\n", diag);
+      } else if (net::stationLastFailure()[0]) {
+        // The stored attempt is the interesting one when the board is down: it names the
+        // network and the driver's reason, and it is the line a bug report needs.
+        Serial.printf("[WIFI] last attempt: %s\n", net::stationLastFailure());
+      }
       if (net::portalActive()) {
         Serial.printf("[WIFI] portal=%s  clients=%d  fallback=%s\n",
                       net::portalAutomatic() ? "automatic" : "manual",
@@ -715,6 +738,38 @@ void loop() {
 
       case net::recover::Action::None:
         break;
+    }
+  }
+
+  // "Wi-Fi is up and the broker is not answering" is a different fault from "no Wi-Fi", and a
+  // bare "retry in 30s" log cannot tell them apart. The Windows mobile hotspot does exactly this
+  // after a few hours: the AP keeps handing out leases while ICS stops forwarding, so the board
+  // holds an address on a network with nothing behind it. One minute of grace covers a normal
+  // connect, then it says so with the addresses that separate the two cases.
+  {
+    static bool     stuckSinceValid = false;
+    static uint32_t stuckSinceMs    = 0;
+    static uint32_t lastNoteMs      = 0;
+    const bool stuck = net::stationUp() && !net::mqttConnected();
+    if (!stuck) {
+      stuckSinceValid = false;
+      lastNoteMs      = 0;
+    } else {
+      if (!stuckSinceValid) {
+        stuckSinceValid = true;
+        stuckSinceMs    = millis();
+      }
+      const bool heldLongEnough = (millis() - stuckSinceMs) > 60u * 1000u;
+      const bool noteDue        = lastNoteMs == 0 || (millis() - lastNoteMs) > 5u * 60u * 1000u;
+      if (heldLongEnough && noteDue) {
+        char diag[128];
+        net::stationDiag(diag, sizeof(diag));
+        Serial.printf("[NET] the Wi-Fi link is up but the broker does not answer: %s\n", diag);
+        Serial.println("[NET]   that is the network behind the AP (gateway, NAT or firewall), "
+                       "not the join - check from a laptop on the same AP before touching the "
+                       "bridge");
+        lastNoteMs = millis();
+      }
     }
   }
 

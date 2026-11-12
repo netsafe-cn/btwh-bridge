@@ -9,6 +9,7 @@
 #include "app/session.h"
 #include "ble/link.h"
 #include "net/portal_html.h"
+#include "net/station.h"
 
 namespace net {
 namespace {
@@ -127,15 +128,40 @@ String wifiOptions(const char* storedSsid) {
   return out;
 }
 
-String renderPage(const char* heaterOptionsHtml, const char* wifiOptionsHtml) {
+String renderPage(const char* statusHtml, const char* heaterOptionsHtml,
+                  const char* wifiOptionsHtml) {
   // The page is a PROGMEM template with @TOKENS@; ~4 KB, well below what String can hold.
   String page = FPSTR(provision_html::PAGE);
   page.replace("@HEATER_OPTIONS@", heaterOptionsHtml);
   page.replace("@WIFI_OPTIONS@", wifiOptionsHtml);
-  page.replace("@STATE@", provStateText(ProvState::kProvisioning));
+  page.replace("@STATE@", statusHtml);
   page.replace("@ERROR@", gError);
   page.replace("@ERROR_DISPLAY@", gError[0] ? "block" : "none");
   return page;
+}
+
+// The status line, with the last join failure appended when there is one.
+//
+// Why it is worth the space: whoever opens this page is standing next to a bridge that is not
+// connecting, and "waiting for the form" does not say whether the saved network is switched
+// off, renamed, 5 GHz only, or just has a new password. The sentence comes from the driver
+// (net/wifistat.h), so the phone and the serial console read the same diagnosis.
+String statusLine() {
+  String out = provStateText(ProvState::kProvisioning);
+  const char* failure = stationLastFailure();
+  if (failure[0]) {
+    out += "<br>Last attempt: ";
+    appendEscaped(out, failure);
+  }
+  return out;
+}
+
+// The stored SSID goes in as the scanned one when we have it: `wifiOptions` then keeps a
+// "(saved)" row for a network the scan cannot see, which is exactly the case of the hotspot
+// that came back under a slightly different name.
+const char* storedSsidOrNull() {
+  const char* ssid = stationLastAttemptSsid();
+  return ssid[0] ? ssid : nullptr;
 }
 
 // ---------------------------------------------------------------- handlers
@@ -143,8 +169,9 @@ String renderPage(const char* heaterOptionsHtml, const char* wifiOptionsHtml) {
 void handleRoot() {
   // Both scans run here, so the page is always fresh; the portal has no other job.
   String heaters = heaterOptions();
-  String wifis = wifiOptions(nullptr);
-  gServer->send(200, "text/html", renderPage(heaters.c_str(), wifis.c_str()));
+  String wifis = wifiOptions(storedSsidOrNull());
+  String status = statusLine();
+  gServer->send(200, "text/html", renderPage(status.c_str(), heaters.c_str(), wifis.c_str()));
 }
 
 void handleSave() {
@@ -172,8 +199,10 @@ void handleSave() {
     Serial.printf("[PORTAL] rejected: %s\n", problem);
     strncpy(gError, problem, sizeof(gError) - 1);
     gError[sizeof(gError) - 1] = 0;
+    String status = statusLine();
     gServer->send(400, "text/html",
-                  renderPage(heaterOptions().c_str(), wifiOptions(nullptr).c_str()));
+                  renderPage(status.c_str(), heaterOptions().c_str(),
+                             wifiOptions(storedSsidOrNull()).c_str()));
     return;
   }
   gError[0] = 0;

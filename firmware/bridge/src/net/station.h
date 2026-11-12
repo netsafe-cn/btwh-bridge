@@ -39,6 +39,19 @@ int64_t nowEpoch();
 // the console lives in main.cpp and should not have to include <WiFi.h> to print an address.
 void stationIp(char* out, size_t cap);
 
+// One line of link detail for the console: "ip= gw= mask= dns= rssi= ch= bssid=", or
+// "not joined (...)". Same plain-C rule as stationIp.
+void stationDiag(char* out, size_t cap);
+
+// The SSID of the last stationConnect() call, "" before the first one. The setup page uses it
+// so the network that just failed is one tap away instead of one of fifteen names in a list.
+const char* stationLastAttemptSsid();
+
+// The sentence for the last failed attempt, "" when the last one worked. stationConnect()
+// writes it; the console prints it and the setup page shows it, so the person holding the phone
+// reads the same diagnosis as the person holding the USB cable.
+const char* stationLastFailure();
+
 }  // namespace net
 
 #endif  // BTWH_NET_STATION_H

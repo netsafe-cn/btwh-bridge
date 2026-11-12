@@ -106,8 +106,8 @@ board still links. Do it as one commit, with the golden vectors as the judge.
 
 ### 2.2 Proving the layers still correct
 
-The seven C++ suites (proto 64 / net 16 / mqtt 41 / rules 76 / provision 19 / discovery 170 /
-recover 25 — 411 checks) run in **two places**, and the counts are pinned in lockstep by
+The eight C++ suites (proto 64 / net 16 / mqtt 41 / rules 76 / provision 19 / discovery 170 /
+recover 25 / wifistat 42 — 453 checks) run in **two places**, and the counts are pinned in lockstep by
 `python/tests/test_cpp_selftest.py`:
 
 1. **On the host**, no board needed: `tools/host_selftest.py` compiles the framework-free
@@ -177,7 +177,7 @@ Code expired or rejected? **Read a new one and type it again** — no build invo
 | `ota` | Prints how to flash: the URL goes to the MQTT `ota` topic — the console deliberately refuses to become a second flasher |
 | `status` | Print configuration and runtime state |
 | `mqtt` | Print the payload for the live MQTT state |
-| `selftest` | Run the seven C++ suites on the board (411 checks) |
+| `selftest` | Run the eight C++ suites on the board (453 checks) |
 | `raw on` / `raw off` | Show / hide raw A0 bytes |
 | `reboot` / `help` | Reboot / help |
 
@@ -283,7 +283,7 @@ finished when it is not.
 | Wi-Fi / provisioning portal / broker credentials | ✅ |
 | MQTT + Home Assistant discovery (22 entities) | ✅ bench-verified against a production HAOS Mosquitto |
 | OTA + HA update entity | ✅ end to end: MQTT URL flash, manifest, Install button, 4.5 s reflash, entity settles off |
-| Host-side C++ selftest (`host_selftest.py`, 411 checks) | ✅ in CI |
+| Host-side C++ selftest (`host_selftest.py`, 453 checks) | ✅ in CI |
 | Stability soak | ✅ 25 min: zero heartbeat drift, forced AP outage recovered in 6 s; one-week live soak pending |
 | Hardware facts (16 MB flash, 8 MB Octal PSRAM idle) | ✅ identified; the configuration upgrade is the next step |
 

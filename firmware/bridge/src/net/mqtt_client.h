@@ -67,7 +67,13 @@ namespace net {
 //       ota10: /save stops rebooting the board. The form handler used to delete the WebServer
 //       from inside its own callback and then return into it; the teardown is deferred to the
 //       next poll tick. Behaviour and payloads unchanged.
-constexpr const char* kFirmwareVersion = "2.9.0-ota10";
+//       ota11: the join failure gets a diagnosis. net/wifistat turns WiFi.status() and
+//       WiFi.disconnectReason() into a sentence ("no network with that name is broadcasting
+//       here", "the password was rejected"), a failed attempt prints the chain of states plus
+//       both codes, a success prints ip/gw/mask/dns/rssi/channel/bssid, and the setup page
+//       shows the same sentence. Diagnostics only: no topic, payload key or command changed
+//       shape.
+constexpr const char* kFirmwareVersion = "2.9.0-ota11";
 
 // Slow-changing metadata, published on every connect and refreshed on the attributes heartbeat.
 // Live-only like state: uptime and RSSI are readings, not configuration.

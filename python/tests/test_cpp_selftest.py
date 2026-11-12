@@ -42,7 +42,7 @@ class HostSelftest(unittest.TestCase):
         # packet) and nobody noticed, because this file skips when no host compiler is present -
         # which is exactly the machine a contributor runs `run_tests.py` on. Measured with
         # ziglang on 2026-11-12.
-        self.assertIn("host selftest passed: 411 checks", self.proc.stdout)
+        self.assertIn("host selftest passed: 453 checks", self.proc.stdout)
 
 
 if __name__ == "__main__":

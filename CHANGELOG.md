@@ -9,6 +9,27 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A failed Wi-Fi join now says why, in words that point at a fix.** Diagnosing an offline
+  bridge used to mean guessing from one line - `x not associated after 15000 ms (wrong password /
+  5 GHz only / out of range)` - printed in every case, including the ones that were none of the
+  three. On 2026-11-12 the stored SSID turned out to be a laptop hotspot that was simply switched
+  off, and the sentence had been right there as a guess the whole time. The radio knew better:
+  `WiFi.status()` says "no SSID in range" versus "association refused", and
+  `WiFi.disconnectReason()` carries the driver's own code. A new pure module
+  (`net/wifistat.{h,cpp}`, 42 host checks; total 411 -> 453) maps both to sentences - 201
+  `NO_AP_FOUND` reads "the access point was never heard: wrong name, switched off, out of range,
+  or 5 GHz only", 15 reads "the password was rejected" - and keeps unknown codes as numbers
+  instead of swallowing them. On failure the console prints the chain of states the driver went
+  through plus `reason <n> <NAME>: <sentence>`; a success prints `ip / gw / mask / dns / rssi /
+  channel / bssid`, which is what tells "no Wi-Fi" apart from "an address on a network with
+  nothing behind it". The chain is only printed when the attempt fails, because the first build
+  of this log printed "wrong password" 100 ms before the same attempt associated: the status is
+  a sample, not a verdict. A link that is up while the broker
+  stays unreachable now says so once every five minutes with those addresses, because the Windows
+  mobile hotspot does exactly that after a few hours. The setup page carries the same sentence
+  under its status line and marks the network that just failed as `(saved)`, so the person
+  holding a phone reads the same diagnosis as the person holding a USB cable.
+
 - **The setup page comes back by itself when the stored Wi-Fi stops working (ADR-018).** Until
   now the only way back to the provisioning form was a USB cable and the `portal` console
   command, which is fine for whoever flashed the board and useless for the person who owns the

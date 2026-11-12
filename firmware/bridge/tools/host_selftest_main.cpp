@@ -16,6 +16,7 @@
 #include "net/recover.h"
 #include "net/selftest.h"
 #include "net/state_json.h"
+#include "net/wifistat.h"
 #include "proto/selftest.h"
 
 namespace {
@@ -58,7 +59,10 @@ int main() {
   const net::SelfTestResult c = net::recover::runSelfTest(print, nullptr);
   report("recover", c.total, c.failed, &bad);
 
-  const int total = p.total + n.total + w.total + r.total + v.total + d.total + c.total;
+  const net::SelfTestResult f = net::wifistat::runSelfTest(print, nullptr);
+  report("wifistat", f.total, f.failed, &bad);
+
+  const int total = p.total + n.total + w.total + r.total + v.total + d.total + c.total + f.total;
   if (bad) {
     printf("host selftest FAILED: %d check(s)\n", bad);
     return 1;
