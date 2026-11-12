@@ -11,6 +11,7 @@
   "retain": {
     "state": true,
     "availability": true,
+    "link": true,
     "attributes": true
   },
   "topics": {
@@ -28,7 +29,18 @@
         "online",
         "offline"
       ],
-      "purpose": "Last will is 'offline'. A consumer must treat a missing state plus 'offline' as unknown, not as zero."
+      "purpose": "Liveness of the bridge itself, not of the data: 'online' means this process is running and talking to the broker. Last will is 'offline'. A consumer must treat a missing state plus 'offline' as unknown, not as zero. Freshness of the readings is a separate signal - see the link topic."
+    },
+    "link": {
+      "topic": "btwh/{device_id}/link",
+      "direction": "bridge -> consumer",
+      "payload": "text",
+      "values": [
+        "online",
+        "offline"
+      ],
+      "stale_after_s": 90,
+      "purpose": "Freshness of the heater data, separate from the bridge being alive. 'online' while A0 frames keep arriving; the bridge publishes 'offline' after 90 s without one (22 missed frames at the 4 s cadence), and again on every reconnect until a new frame lands. Retained, so a consumer that restarts learns the current freshness instead of guessing. A consumer must combine it with availability, not substitute it: availability alone says the bridge is up, which is exactly the state in which it used to republish a two-day-old snapshot with a fresh heartbeat."
     },
     "set_temperature": {
       "topic": "btwh/{device_id}/set/temperature",
@@ -295,6 +307,22 @@
       "name": "Water heater"
     },
     "entity_note": "One entity per state field. Sensors use state_class measurement; setpoint is a number entity; flame is a binary_sensor; mode is an enum sensor; fault is a sensor with an icon template. Every attributes field is also an entity, but entity_category diagnostic, so Home Assistant files it under diagnostics instead of cluttering the device page - a remote user can read firmware, RSSI and the last disconnect without shell access to the board.",
+    "origin": {
+      "name": "btwh-bridge",
+      "support_url": "https://github.com/netsafe-cn/btwh-bridge",
+      "note": "Discovery provenance. Home Assistant recommends it for single-component discovery and requires it for device discovery; it is what the core log prints when an entity is discovered. sw_version is left out on purpose: the firmware version already travels in attributes.fw and in the update entity, and a second copy baked into a generated payload would be one more thing that can drift."
+    },
+    "availability_rule": {
+      "state_entities": [
+        "availability",
+        "link"
+      ],
+      "bridge_entities": [
+        "availability"
+      ],
+      "mode": "all",
+      "note": "A state-derived entity (measurements and the water_heater view) is only as good as the freshest frame: it binds both topics with availability_mode all, so losing the heater greys it out instead of showing a number nobody measured. A bridge-derived entity (the attributes diagnostics and the update entity) binds availability only - pairing state, RSSI and 'install firmware' are facts about the bridge and must stay readable precisely when the heater is unreachable. Single-topic entities keep using availability_topic; the list form appears only where a second topic is added, because the two forms are mutually exclusive."
+    },
     "update_entity": {
       "component": "update",
       "state": "topics.update_state",

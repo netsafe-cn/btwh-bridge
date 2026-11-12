@@ -58,11 +58,32 @@ class TestEntityConfig(unittest.TestCase):
         for key, e in self.entities.items():
             self.assertEqual(e["config"]["state_topic"], want, key)
 
-    def test_availability_is_wired_the_same_way_everywhere(self):
-        want = "%s/%s/availability" % (self.doc["base_topic"], gen_ha.DEV)
+    def test_state_entities_require_a_fresh_link(self):
+        # Neither signal is enough on its own. availability says the bridge process is running,
+        # and on 2026-11-12 it was running while it replayed a two-day-old snapshot; link says
+        # the heater answered within the contract window. mode all means either one failing
+        # greys the entity out, which is the honest rendering of "no measurement".
+        rule = self.doc["home_assistant"]["availability_rule"]
+        want = ["%s/%s/%s" % (self.doc["base_topic"], gen_ha.DEV, key)
+                for key in rule["state_entities"]]
         for key, e in self.entities.items():
-            self.assertEqual(e["config"]["availability_topic"], want, key)
-            self.assertEqual(e["config"]["payload_not_available"], "offline", key)
+            cfg = e["config"]
+            # The scalar and list forms are mutually exclusive in Home Assistant.
+            self.assertNotIn("availability_topic", cfg, key)
+            self.assertEqual([a["topic"] for a in cfg["availability"]], want, key)
+            self.assertEqual(cfg["availability_mode"], "all", key)
+            for entry in cfg["availability"]:
+                self.assertEqual((entry["payload_available"], entry["payload_not_available"]),
+                                 ("online", "offline"), key)
+
+    def test_every_payload_names_its_origin(self):
+        # Recommended for single-component discovery; it is what the core log prints when the
+        # entity is discovered, so a user with three MQTT integrations can tell them apart.
+        want = self.doc["home_assistant"]["origin"]["name"]
+        for key, e in self.entities.items():
+            self.assertEqual(e["config"]["origin"]["name"], want, key)
+            self.assertNotIn("sw_version", e["config"]["origin"],
+                             "the version already travels in attributes.fw and update/state")
 
     def test_setpoint_is_a_number_bound_to_the_command_topic(self):
         e = self.entities["setpoint"]
@@ -121,6 +142,15 @@ class TestDiagnosticEntities(unittest.TestCase):
             self.assertEqual(e["component"], "sensor", key)
             self.assertEqual(cfg["state_topic"], want, key)
             self.assertEqual(cfg["entity_category"], "diagnostic", key)
+
+    def test_diagnostics_survive_a_dead_heater_link(self):
+        # These are the entities a remote user needs *while* the heater is unreachable:
+        # pair_state and rssi explain why, and merging in the link topic would hide exactly the
+        # evidence. They describe the bridge, so the bridge's availability is the right gate.
+        for key, e in self.entities.items():
+            cfg = e["config"]
+            self.assertEqual(cfg["availability_topic"], "btwh/@DEV@/availability", key)
+            self.assertNotIn("availability", cfg, key)
 
     def test_rssi_and_uptime_are_graphable(self):
         rssi = self.entities["rssi"]["config"]
@@ -196,10 +226,14 @@ class TestWaterHeaterEntity(unittest.TestCase):
                          "{{ 'gas' if value_json.flame else 'off' }}")
         self.assertNotIn("mode_command_topic", self.cfg)
 
-    def test_not_optimistic_and_same_availability(self):
+    def test_not_optimistic_and_depends_on_a_fresh_link(self):
         self.assertFalse(self.cfg["optimistic"])
-        self.assertEqual(self.cfg["availability_topic"], "btwh/@DEV@/availability")
-        self.assertEqual(self.cfg["payload_not_available"], "offline")
+        # The heater card is the most damaging place to show a stale number: it is the thing a
+        # household reads before stepping into the shower.
+        self.assertEqual([a["topic"] for a in self.cfg["availability"]],
+                         ["btwh/@DEV@/availability", "btwh/@DEV@/link"])
+        self.assertEqual(self.cfg["availability_mode"], "all")
+        self.assertNotIn("availability_topic", self.cfg)
 
     def test_the_generated_header_carries_the_entity(self):
         header = HEADER.read_text(encoding="utf-8")
@@ -247,12 +281,13 @@ class TestUpdateEntity(unittest.TestCase):
         self.assertEqual(self.cfg["device_class"], "firmware")
         self.assertEqual(self.cfg["entity_category"], "config")
 
-    def test_same_availability_wiring_as_every_other_entity(self):
-        # An offline bridge must grey out the update card too, not offer an install that
-        # cannot reach the board.
+    def test_update_stays_available_when_the_heater_is_unreachable(self):
+        # Installing firmware has nothing to do with the BLE link. Gating this card on a fresh
+        # heater frame would hide the one recovery action available when the bridge is deaf.
         self.assertEqual(self.cfg["availability_topic"], "btwh/@DEV@/availability")
         self.assertEqual(self.cfg["payload_available"], "online")
         self.assertEqual(self.cfg["payload_not_available"], "offline")
+        self.assertNotIn("availability", self.cfg)
 
     def test_the_generated_header_carries_the_entity(self):
         header = HEADER.read_text(encoding="utf-8")

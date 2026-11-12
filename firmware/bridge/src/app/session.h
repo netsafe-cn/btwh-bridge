@@ -32,6 +32,10 @@ struct Status {
   int      reply07;
   int      reply08;
   uint32_t a0Count;
+  // millis() of the most recent A0 frame, 0 until one arrives. Reset at every session start,
+  // so it answers "is there data, and how old is it" where a0Count only answers "how many
+  // frames this session" - the freshness question the MQTT contract's link topic asks.
+  uint32_t lastA0Ms;
   uint32_t sessionMs;
   bool     raw;
   auth::Result lastResult;

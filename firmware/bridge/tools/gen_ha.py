@@ -19,6 +19,13 @@ Entities: one per state field except `ts`, which is bridge metadata rather than 
 `setpoint` becomes a number entity bound to the command topic, `flame` a binary sensor.
 Every attributes field becomes a diagnostic sensor on the attributes topic - the remote
 troubleshooting surface: firmware, uptime, RSSI, pairing state, last disconnect.
+
+Availability is two signals, not one, and the split follows the data: an entity fed by state
+frames is available only while those frames are fresh (availability + link, mode all), while
+an entity fed by attributes or by the firmware itself stays readable when the heater is
+unreachable - that is exactly when a remote user needs the pairing state and the Install
+button. spec home_assistant.availability_rule is the single place that decides.
+
 On top of those, one `water_heater` domain entity: current outlet temperature, the setpoint
 bound to the existing command topic, and a read-only mode ('gas' while the burner fires,
 'off' while idle). It reuses the v1 contract topics; the heater becomes a first-class
@@ -65,6 +72,40 @@ ICONS = {
 # How an attributes field maps onto a Home Assistant sensor. The default is the plain
 # `{{ value_json.<key> }}` template; the cases below carry device classes or need their
 # template shaped (an epoch 0 must read as unknown, not as 1970).
+def availability(doc: dict, keys: list[str]) -> dict:
+    """Availability wiring for one entity, straight from home_assistant.availability_rule.
+
+    Home Assistant allows either a single `availability_topic` or a list of topics with
+    `availability_mode`, never both. One key therefore keeps the scalar form; two keys switch
+    to the list, where the entity is available only when every signal is - which is how a
+    stale reading stops looking live without muting the diagnostics.
+    """
+    def one(key: str) -> dict:
+        return {
+            "topic": doc["topics"][key]["topic"].replace("{device_id}", DEV),
+            "payload_available": "online",
+            "payload_not_available": "offline",
+        }
+
+    if len(keys) == 1:
+        only = one(keys[0])
+        return {"availability_topic": only["topic"],
+                "payload_available": only["payload_available"],
+                "payload_not_available": only["payload_not_available"]}
+    return {"availability": [one(k) for k in keys],
+            "availability_mode": doc["home_assistant"]["availability_rule"].get("mode") or "all"}
+
+
+def origin(doc: dict) -> dict:
+    """Discovery provenance: recommended for single-component discovery, required for device
+    discovery. sw_version is deliberately absent - see spec home_assistant.origin.note."""
+    spec = doc["home_assistant"]["origin"]
+    out = {"name": spec["name"]}
+    if spec.get("support_url"):
+        out["support_url"] = spec["support_url"]
+    return out
+
+
 def ha_diag_entity(field: dict, doc: dict) -> dict:
     key = field["key"]
     base = doc["base_topic"]
@@ -74,11 +115,10 @@ def ha_diag_entity(field: dict, doc: dict) -> dict:
         "name": field.get("label") or key,
         "unique_id": "%s_%s" % (DEV, key),
         "state_topic": "%s/%s/attributes" % (base, DEV),
-        "availability_topic": "%s/%s/availability" % (base, DEV),
-        "payload_available": "online",
-        "payload_not_available": "offline",
+        **availability(doc, ha["availability_rule"]["bridge_entities"]),
         "entity_category": "diagnostic",
         "value_template": "{{ value_json.%s }}" % key,
+        "origin": origin(doc),
         "device": {
             "identifiers": [DEV],
             "manufacturer": ha["device"]["manufacturer"],
@@ -129,9 +169,8 @@ def ha_entity(field: dict, doc: dict) -> dict | None:
         "name": field.get("label") or key,
         "unique_id": "%s_%s" % (DEV, key),
         "state_topic": "%s/%s/state" % (base, DEV),
-        "availability_topic": "%s/%s/availability" % (base, DEV),
-        "payload_available": "online",
-        "payload_not_available": "offline",
+        **availability(doc, ha["availability_rule"]["state_entities"]),
+        "origin": origin(doc),
         "device": {
             "identifiers": [DEV],
             "manufacturer": ha["device"]["manufacturer"],
@@ -201,7 +240,6 @@ def ha_update_entity(doc: dict) -> dict:
     update button and the bench tool drive the same flasher. state is bridge-mediated JSON:
     installed_version from the firmware, latest_version from the retained manifest topics.
     """
-    base = doc["base_topic"]
     ha = doc["home_assistant"]
     ue = ha["update_entity"]
     state_topic = doc["topics"]["update_state"]["topic"].replace("{device_id}", DEV)
@@ -216,9 +254,8 @@ def ha_update_entity(doc: dict) -> dict:
         "title": ue["title"],
         "device_class": ue["device_class"],
         "entity_category": ue["entity_category"],
-        "availability_topic": "%s/%s/availability" % (base, DEV),
-        "payload_available": "online",
-        "payload_not_available": "offline",
+        **availability(doc, ha["availability_rule"]["bridge_entities"]),
+        "origin": origin(doc),
         "device": {
             "identifiers": [DEV],
             "manufacturer": ha["device"]["manufacturer"],
@@ -262,9 +299,8 @@ def ha_water_heater_entity(doc: dict) -> dict:
         "mode_state_template": wh["mode_template"],
         # Target temperature is echoed from the heater, never assumed from the command.
         "optimistic": False,
-        "availability_topic": "%s/%s/availability" % (base, DEV),
-        "payload_available": "online",
-        "payload_not_available": "offline",
+        **availability(doc, ha["availability_rule"]["state_entities"]),
+        "origin": origin(doc),
         "device": {
             "identifiers": [DEV],
             "manufacturer": ha["device"]["manufacturer"],

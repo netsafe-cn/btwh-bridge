@@ -58,10 +58,17 @@ static app::Config gCfg;
 static String      gSerialLine;
 
 // Last snapshot rendered for MQTT, kept so a heartbeat can be published between A0 frames
-// without rebuilding it from a stale struct.
+// without rebuilding it from a stale struct. It is only ever published while the frame behind
+// it is fresh: see kLinkStaleMs.
 static net::Snapshot gSnap;
-static bool          gHaveSnap = false;
-static uint32_t      gLastA0   = 0;
+static bool          gHaveSnap     = false;
+static uint32_t      gLastFrameMs  = 0;
+
+// How long a reading stays current. A0 arrives every ~4 s, so 90 s is 22 missed frames - long
+// enough to ride out a BLE reconnect (5 s wait plus a 15 s connect budget) and short enough
+// that nobody reads a morning temperature as an evening one. spec/mqtt.json states the same
+// number as link.stale_after_s; if one moves, the other moves with it.
+constexpr uint32_t kLinkStaleMs = 90000;
 
 static void banner(const char* s) { Serial.printf("\n===== %s =====\n", s); }
 
@@ -342,6 +349,13 @@ static void printStatus() {
                 s.linkUp ? "up" : "down", s.encrypted ? "yes" : "no");
   Serial.printf("  A2/07=%d  A2/08=%d  A0 frames=%u  raw=%s\n",
                 s.reply07, s.reply08, (unsigned)s.a0Count, s.raw ? "on" : "off");
+  if (s.lastA0Ms) {
+    Serial.printf("  data age   : %lus (link goes stale at %lus)\n",
+                  (unsigned long)((millis() - s.lastA0Ms) / 1000),
+                  (unsigned long)(kLinkStaleMs / 1000));
+  } else {
+    Serial.println("  data age   : no A0 this session (link stays offline)");
+  }
   Serial.printf("  last       : %s\n", auth::reasonText(s.lastResult));
   Serial.printf("  wifi       : %s  ssid=%s\n",
                 net::stationUp() ? "up" : "down", gCfg.ssid[0] ? gCfg.ssid : "(none)");
@@ -625,15 +639,31 @@ void loop() {
     refreshMqttInfo();
   }
 
-  // One A0 frame per publish, plus a 60 s heartbeat inside the client. Publishing every frame
-  // keeps `ts` fresh, which is how a consumer notices a bridge that is up but no longer hearing
-  // the heater; the alternative (diffing fields) would need a second copy of the snapshot.
-  const uint32_t frames  = app::status().a0Count;
-  const bool     newFrame = frames != gLastA0;
+  // Publish once per A0 frame, plus the client's own 60 s heartbeat. Two decisions are made
+  // here and nowhere else: what counts as a new frame, and when the data stops being current.
+  //
+  // The frame counter cannot answer the first: app::start() resets it to 0 at every reconnect,
+  // so the first loop of a new session read "0 != 40" and rebuilt a snapshot - with a brand-new
+  // `ts` - out of the previous session's last A0. The parser's timestamp is monotonic within a
+  // boot, so it is the one that can honestly say a frame arrived.
+  const app::Status st = app::status();
+  const bool newFrame = st.lastA0Ms != 0 && st.lastA0Ms != gLastFrameMs;
   if (newFrame) {
-    gLastA0   = frames;
-    gHaveSnap = makeSnapshot(gSnap);
+    gLastFrameMs = st.lastA0Ms;
+    gHaveSnap    = makeSnapshot(gSnap);
   }
+
+  // Freshness, not liveness. The will and the connect already tell the broker this process is
+  // up, and that is exactly what it kept saying while the bridge replayed a two-day-old
+  // snapshot: on 2026-11-12 Home Assistant showed a 42.3 degree outlet and a burning flame
+  // from 11-10, with rssi 0 and pair_state "reconnecting" beside it. The link topic answers the
+  // question availability never could, and dropping the cached snapshot is what stops the
+  // heartbeat from re-ageing it.
+  const bool fresh = st.linkUp && st.lastA0Ms != 0
+                     && (millis() - st.lastA0Ms) < kLinkStaleMs;
+  if (!fresh) gHaveSnap = false;
+  net::setLinkAvailable(fresh);
+
   net::mqttPoll(gHaveSnap ? &gSnap : nullptr, newFrame && gHaveSnap);
 
   delay(10);

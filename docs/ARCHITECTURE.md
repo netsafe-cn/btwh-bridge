@@ -388,6 +388,107 @@ are hardware tools; importing one without bleak should fail loudly.
 
 ---
 
+### ADR-013 Flash layout and releases are one decision, TLS is another
+
+**Context**: three records disagreed. `esptool` reports **16 MB** flash; `platformio.ini` says
+8 MB; the target FQBN says 16 MB with `default_8MB`. The app partition is reported at ~88 %,
+a figure only consistent with the 1.31 MB slot of the *default* scheme — i.e. a build that
+lost its partition table somewhere. Separately, "release builds must use plain semver" existed
+only as a sentence in `spec/mqtt.json` with nothing enforcing it, and the flasher refuses
+`https://` outright.
+
+**Decision**: split by risk, not by topic.
+
+1. **Make the layout explicit.** A committed 16 MB CSV with two 4 MB app slots, and a
+   `platformio.ini` that states `16MB`. The current 1.16 MB image sits at 29 % of a 4 MB slot,
+   so TLS and the next two features cannot repartition us again.
+2. **Enforce plain semver at the release boundary** — tag regex plus a CI check that
+   `kFirmwareVersion` equals the tag — while `parseManifestVersion` stays lenient on the
+   board, because the bench still flashes `-rc` builds.
+3. **Treat `manifest.json` as a release artefact** and keep the last hop (publishing it to the
+   household broker) manual: CI holds no broker credential and cannot reach the LAN.
+4. **Defer https.** When it is needed it will use `WiFiClientSecure` + `setInsecure()` plus a
+   SHA-256 carried in a new retained `update/sha256`. The board has no trustworthy clock, so
+   certificate validity windows cannot be checked without SNTP; the hash inherits the broker's
+   trust, which is already the trust root for commands.
+
+**Cost**: the partition change is a one-way door — it cannot be delivered over the air, so the
+first board needs one USB reflash. https, when it lands, costs 35–50 KB of internal heap per
+install and may stretch the 120 s budget.
+
+**Benefit**: releases become reproducible, and the two assumptions behind this decision are
+recorded as assumptions — the 88 % figure and the spec's "Home Assistant compares versions as
+strings" claim are both marked unverified instead of being believed.
+
+**Full design, options and acceptance criteria**: `docs/OTA.md`.
+
+---
+
+### ADR-014 Liveness and freshness are two signals, not one
+
+**Context**: on 2026-11-12 the bench board was healthy — Wi-Fi up, broker up, heartbeats on
+time — while its heater was out of range. Home Assistant nevertheless showed an outlet
+temperature of 42.3 °C, a flow of 11.5 L/min and a **burning flame**, with `rssi: 0` and
+`pair_state: "reconnecting"` beside it. The readings were from 11-10. Three things combined:
+
+1. `gHaveSnap` was set once and never cleared, so the 60 s heartbeat republished a cached
+   snapshot indefinitely;
+2. `app::start()` resets `a0Count` to 0 on every reconnect, so the loop's `frames != gLastA0`
+   test read a session restart as a new frame and rebuilt a snapshot — **with a fresh `ts`** —
+   out of the previous session's last A0;
+3. discovery bound a single `availability` topic, which only ever meant "the bridge process is
+   running".
+
+**Decision**: the contract carries two independent retained signals.
+
+- `availability` — this process is alive and talking to the broker. Unchanged; the will sets it.
+- `link` — the heater answered inside the last 90 s. Published on change and once after every
+  connect; `offline` until the first frame of a session. 90 s is 22 missed frames at the 4 s
+  cadence: long enough to ride out a reconnect (5 s wait + 15 s connect budget), short enough
+  that a reading is never mistaken for the current one.
+- The firmware drops the cached snapshot instead of republishing it, and a frame is recognised
+  by the parser's timestamp (`lastA0Ms`, reset per session) rather than by the per-session
+  counter.
+- Discovery wires state-fed entities (measurements, the `water_heater` view) to **both** topics
+  with `availability_mode: all`, and bridge-fed entities (the attributes diagnostics, the update
+  entity) to `availability` alone. `spec/mqtt.json` `home_assistant.availability_rule` is the
+  single place that decides; `gen_ha.py` reads it and the discovery self test 5d enforces it.
+
+**Cost**: one more topic that can lie if it is not driven carefully, ~110 extra bytes per
+discovery payload (the largest, `water_heater`, is 984 B as generated and 1032 B once an
+11-character device id replaces the token — the publish and self-test buffers were raised to
+1152 to match), and a visible `unavailable` state that did not exist before. That last one is
+the point: the old behaviour was not "always available", it was "available and wrong".
+
+**Benefit**: the failure that motivated this ADR is now self-describing in any consumer, not
+only in one that reads `ts` and knows what it means. The diagnostics stay readable while the
+heater is unreachable, which is exactly when a remote user needs `pair_state` and the Install
+button.
+
+**Alternatives considered** (2026-11-12, against the official MQTT discovery pages). Three
+places are valid but not the recommended form. All three are kept on purpose:
+
+- **Device-level discovery** (`homeassistant/device/<id>/config`, one message for the whole
+  device) — recommended for a multi-component device; single-component discovery is not
+  deprecated. Rejected on cost: the 21 payloads total 13,012 B, and collapsing them only
+  removes the repeated `device`/`origin` blocks, so one message still needs ~9 KB — the
+  publish buffer would go from 1152 B to ~10 KB — and the switch has to publish
+  `migrate_discovery` to all 21 old topics first, or their retained entries survive as
+  duplicate entities. Zero functional gain. Revisit if the entity count grows substantially.
+- **`expire_after` instead of the `link` topic** — the option does not exist on
+  `water_heater.mqtt` or `update.mqtt`, which are exactly the entities that were lying. The
+  second availability topic is not a workaround here; it is the only mechanism the schema
+  offers.
+- **`suggested_display_precision`** — a `sensor` option that `water_heater` does not have. Its
+  `precision` already governs the card, and the temperature sensors publish 0.5 °C steps,
+  which one decimal place renders exactly.
+- **Birth-message discovery instead of retained** — the documentation calls this "a better
+  approach", but it depends on Home Assistant publishing its birth topic. Retained plus a
+  republish on every connect survives either side restarting; the ghost-entity downside of
+  retained is what the `link` topic and the dropped stale snapshot remove.
+
+---
+
 ## 3. Repository layout
 
 Landed in 0.2.0. The repository is a monorepo split by **role**, not by file type: an
@@ -398,7 +499,7 @@ share.
 python/                     Reference implementation
   python/bosch_api.py              codec / session / resident service
   python/device_fsm.py             provisioning + pairing state machine
-  tests/                    209 offline tests
+  tests/                    214 offline tests
   tools/                    console, headless bridge, capture
 
 firmware/                   One directory per application
@@ -488,3 +589,5 @@ breaking change.
 | 2026-11-10 | Inbound grammar layer (`mqtt_rules`) and broker-credential commands, host-tested; the six C++ suites run on the host via `host_selftest.py` (ADR-008 caveat retired); 157 -> 195 checks pinned on both sides |
 | 2026-11-11 | OTA and the HA update entity (ADR-011): live-only `ota` topic, retained manifest pair, one flasher; Wi-Fi join retried at boot; 195 -> 204 tests; bench soak recorded (25 min, zero heartbeat drift, 6 s AP-outage recovery) |
 | 2026-11-12 | BLE moved from import-time to connection-time (ADR-012): the offline suite runs on a bare CPython and a CI job installs nothing; 204 -> 209 tests |
+| 2026-11-12 | Release and flash-layout design (ADR-013): explicit 16 MB partitions with two 4 MB app slots, plain semver enforced at the tag, a manual manifest hop, and https deferred to a hash-authenticated phase 2; `docs/OTA.md` |
+| 2026-11-12 | Freshness split from liveness (ADR-014): retained `link` topic, stale snapshot no longer republished, a frame recognised by the parser's timestamp instead of the per-session counter; discovery binds state-fed entities to both signals; origin block added; 209 -> 214 tests |

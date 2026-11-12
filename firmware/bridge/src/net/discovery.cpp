@@ -79,7 +79,7 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
   // Sized to the largest generated payload plus the device-id substitution. Check 7 ties this
   // number to the publish path: an entity that outgrows the buffers fails here, on the board,
   // instead of publishing a truncated packet a consumer would silently choke on.
-  char buf[1024];
+  char buf[1152];
 
   // 1. The substitution itself, including a token that appears more than once.
   size_t n = expand("btwh/@DEV@/state", "btwh_eb6f5f", buf, sizeof(buf));
@@ -150,6 +150,29 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
           "update says the install word the firmware dispatches", entityTopic(i));
     check(c, strstr(payload, "\"state_topic\":\"btwh/@DEV@/update/state\"") != nullptr,
           "update reads the bridge-mediated state", entityTopic(i));
+  }
+
+  // 5d. Freshness and liveness are different signals, and the generated wiring has to say so.
+  //     Anything fed by state frames - measurements and the water_heater view - is available
+  //     only while frames arrive; anything fed by attributes or by the firmware itself stays
+  //     readable precisely when the heater is unreachable, which is when a remote user needs
+  //     the pairing state and the Install button. Wiring these the wrong way round is silent
+  //     in Home Assistant: the entity simply lies, which is the failure the link topic exists
+  //     to prevent.
+  for (size_t i = 0; i < entityCount(); i++) {
+    const char* payload = entityPayload(i);
+    if (!payload) continue;
+    const bool fromState = strstr(payload, "\"state_topic\":\"btwh/@DEV@/state\"")
+                           || strstr(payload, "\"water_heater\"");
+    const bool hasLink   = strstr(payload, "\"topic\":\"btwh/@DEV@/link\"") != nullptr;
+    if (fromState) {
+      check(c, hasLink && strstr(payload, "\"availability_mode\":\"all\"") != nullptr,
+            "state fed entity binds link with mode all", entityTopic(i));
+    } else {
+      check(c, !hasLink, "bridge fed entity ignores the link topic", entityTopic(i));
+    }
+    check(c, strstr(payload, "\"origin\":{\"name\":\"btwh-bridge\"") != nullptr,
+          "payload names its origin", entityTopic(i));
   }
 
   // 6. Exactly the entities on the attributes topic must be entity_category diagnostic -

@@ -216,17 +216,17 @@ Code expired or rejected? **Read a new one and type it again** — no build invo
 | Item | Value |
 |---|---|
 | Board | Waveshare ESP32-S3-DEV-KIT-N8R8; **esptool reports 16 MB flash** (manufacturer 0x46 / device 0x4018), which contradicts the "N8" in the part number — trust the measurement |
-| PSRAM | 8 MB **Octal** (the R8 suffix). Only enabled with `PSRAM=opi`; left at the default (Disabled) `ESP.getPsramSize()` reports 0 |
-| FQBN, currently on the board | `esp32:esp32:esp32s3:FlashSize=8M` — built, flashed and boot-verified |
-| FQBN, target | `esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=default_8MB,PSRAM=opi` — matches the 16 MB flash and unlocks the 8 MB PSRAM |
-| Partitions | `FlashSize=8M` implies `default_8MB` (3 MB app × OTA + 1.5 MB SPIFFS). Switching to 16M **requires the explicit `PartitionScheme`**, otherwise it falls back to `default` and the app partition shrinks to 1.2 MB |
+| PSRAM | 8 MB **Octal**, and now **measured**: with `PSRAM=opi` the banner reads `PSRAM=8386279 bytes`. With the option left at its default the same banner reads `0`, which looks like missing hardware but is only a missing build flag |
+| FQBN, on the board | `esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=default_8MB,PSRAM=opi` — built, flashed and boot-verified 2026-11-12: 16 MB flash, 8 MB PSRAM, app slot 3.19 MB at 34 % |
+| FQBN, do **not** use | `esp32:esp32:esp32s3:FlashSize=8M` on its own. It selects the 4 MB `default` scheme: a 1.31 MB app slot (which is where the old "88 % full" came from) and an upload that lands in app0 while `otadata` still boots app1 — a flash that succeeds and changes nothing |
+| Partitions | `FlashSize=8M` does **not** imply `default_8MB`; it falls back to `default`. The scheme must always be named explicitly. `default_8MB` = 3 MB app × OTA + 1.5 MB SPIFFS, which is what the board actually runs |
 | BLE stack | **NimBLE-Arduino 1.4.3** (2.x changed the callback signatures — pinned) |
-| Log / flash port | COM3 (CH343 → UART0), 115200; upload at 460800 |
+| Log / flash port | **COM8** today (CH343 → UART0), 115200; upload at 460800. The number is not stable across machines or replugs — `gateway_cli.py` finds the port by VID/PID (`1A86:55D3`), so trust that over this line |
 | Heater address | Found with `scan`, then persisted with `addr <MAC>` (placeholder `AA:BB:CC:DD:EE:FF`) |
 | Login MAC | This host's Bluetooth address, set with `mac <MAC>` (placeholder `11:22:33:44:55:66`) |
 
 Protocol references: `docs/BLE_PROTOCOL.md` in the repository root (field calibration in §6, B0/D7 in
-§16), `docs/API.md`, and `python/bosch_api.py` (209 tests). The SMP pin behaviour is corroborated by captures
+§16), `docs/API.md`, and `python/bosch_api.py` (214 tests). The SMP pin behaviour is corroborated by captures
 on real hardware — see `docs/API.md §10`.
 
 ## 8. Build environment (new machine / reinstall)
@@ -239,7 +239,7 @@ build + flash + log.
 | arduino-cli | ≥ 1.0, on `PATH` or at `firmware/bridge/toolchain/arduino-cli.exe` (the local toolchain is not committed) |
 | arduino-esp32 core | **2.0.17** (3.x ships no bundled NimBLE and changed the callbacks) |
 | NimBLE-Arduino | **1.4.3** (2.x is incompatible — pinned) |
-| Board FQBN | `esp32:esp32:esp32s3:FlashSize=8M` |
+| Board FQBN | `esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=default_8MB,PSRAM=opi` |
 
 Standard installation, given a working network:
 

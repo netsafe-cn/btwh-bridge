@@ -9,6 +9,26 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A `link` topic, so "the bridge is up" and "the reading is current" stop being one message
+  (ADR-014).** `btwh/<device>/link` is retained, published on change and once per connect, and
+  says `offline` after 90 s without an A0 frame (22 missed frames at the 4 s cadence) and until
+  the first frame of a session. Home Assistant binds it beside `availability` with
+  `availability_mode: all` for the measurements and the water-heater card, and leaves the
+  diagnostics and the update card on `availability` alone - pairing state, RSSI and Install must
+  stay readable while the heater is unreachable. Discovery payloads also carry an `origin`
+  block now: recommended for single-component discovery, `name` only, no `sw_version`, because
+  the version already travels in `attributes.fw` and a second copy is one more thing that drifts.
+
+- **A release design, and the flash layout it depends on (ADR-013).** `docs/OTA.md` separates
+  two problems that were tangled together: the build's flash size disagrees with the hardware
+  (`esptool` reports 16 MB; `platformio.ini` still says 8 MB), and the flasher has no TLS. It
+  proposes a committed 16 MB partition table with two 4 MB app slots (the current image would
+  sit at 29 %, not the reported ~88 %), plain semver enforced at the tag rather than on the
+  board, a `manifest.json` release artefact, and https as a second phase using `setInsecure()`
+  plus a retained `update/sha256` — because the board has no clock and cannot check a
+  certificate's validity window. Design only: no firmware source changed, and every unverified
+  number is marked as such.
+
 - **The README now says who wrote this.** Most of the code was written by an AI assistant under
   human direction, and both READMEs say so above the fold, with a section covering the split
   between human and AI work, the failure mode that arrangement creates (generated code reads as
@@ -81,6 +101,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   banner and published attributes both moved to 2.7.1-ota2).
 
 ### Fixed
+
+- **A bridge that was up but deaf reported two-day-old readings as live.** Found on the bench
+  2026-11-12: Home Assistant showed 42.3 °C outlet, 11.5 L/min and a burning flame that had been
+  true on 11-10, with `rssi: 0` and `pair_state: "reconnecting"` printed beside them. Two causes.
+  `gHaveSnap` was set once and never cleared, so the 60 s heartbeat republished the cached
+  snapshot indefinitely. And because `app::start()` resets `a0Count` on every reconnect, the
+  loop's `frames != gLastA0` test read a session restart as a new frame and rebuilt a snapshot -
+  with a fresh `ts` - out of the previous session's last A0, which is worse than being stale
+  because it looked current. The loop now recognises a frame by the parser's `lastA0Ms` stamp,
+  drops the cached snapshot as soon as the link goes stale, and publishes `link` so the state is
+  described rather than inferred. Discovery buffers moved 1024 -> 1152 bytes for the larger
+  payloads; the old size would have made the board skip the water-heater entity silently.
 
 - **Wi-Fi join is retried, not only attempted.** `stationConnect` ran once at boot; a board
   that boots before its AP (router recovering from a power cut, laptop hotspot started by

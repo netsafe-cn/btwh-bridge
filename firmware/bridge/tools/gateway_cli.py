@@ -23,10 +23,13 @@ SKETCH = WORK / "arduino_sketch"         # generated shell for arduino-cli
 SKETCH_NAME = SKETCH.name
 BUILD = WORK / "build"
 LIBS = WORK / "user" / "libraries"
-# Matches the firmware already verified on the board. esptool reports 16 MB flash plus
-# 8 MB Octal PSRAM, but enabling them needs FlashSize=16M,PartitionScheme=default_8MB,
-# PSRAM=opi and triggers a full rebuild - not needed for the BLE proof, so it waits.
-FQBN = "esp32:esp32:esp32s3:FlashSize=8M"
+# All three options are explicit on purpose. A bare FlashSize=8M selects the 4 MB `default`
+# scheme, whose app slot is 1.31 MB at 0x10000 - but this board runs `default_8MB` (app0 and
+# app1 at 0x10000/0x340000, 3.19 MB each, otadata booting app1). With the bare FQBN the image
+# compiles for the wrong slot and uploads to app0 while otadata still boots app1, so a flash
+# succeeds without changing what runs. Measured 2026-11-12 off the board: 16 MB flash
+# (esptool 0x46/0x4018), 8 MB Octal PSRAM claimed by the part number, 1.107 MB image.
+FQBN = "esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=default_8MB,PSRAM=opi"
 
 
 def find_port():

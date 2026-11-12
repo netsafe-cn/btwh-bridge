@@ -14,7 +14,8 @@ The topics and the field list are **not** documented here by hand: they live in
 | Topic | Direction | Retained | Payload |
 |---|---|---|---|
 | `btwh/<device>/state` | bridge → consumer | yes | JSON, one message per A0 frame (~4 s) |
-| `btwh/<device>/availability` | bridge → consumer | yes | `online` / `offline` (will) |
+| `btwh/<device>/availability` | bridge → consumer | yes | `online` / `offline` — **liveness of the bridge**, will-set |
+| `btwh/<device>/link` | bridge → consumer | yes | `online` / `offline` — **freshness of the readings**: `offline` after 90 s with no A0 frame, and until the first one arrives |
 | `btwh/<device>/attributes` | bridge → consumer | yes | JSON: firmware, board, heater address, pair state, uptime, RSSI, last disconnect (reason + epoch); refreshed every 60 s |
 | `btwh/<device>/set/temperature` | consumer → bridge | no | integer `35`..`60`; anything else is ignored |
 | `btwh/<device>/cmd` | consumer → bridge | no | JSON or text containing `refresh`, `reboot` or `unpair` |
@@ -48,10 +49,15 @@ Rules a consumer must honour (they are in `consumer_rules` in the contract):
 - **A missing field means "not reported yet".** Printing it as 0 makes an unreachable bridge look
   like a cold heater.
 - **`fault` is `"none"` or two upper-case hex digits.** Never an empty string.
-- **`availability == "offline"` overrides state.** Show `unavailable`; do not keep drawing the
-  last value as if it were current.
-- **`ts` is the bridge's clock**, not the heater's. A `ts` that stops advancing means the bridge
-  is alive but no longer hearing the heater — a different failure from an offline bridge.
+- **Liveness and freshness are two claims, and a reading needs both.** `availability` says the
+  bridge process is running; `link` says the heater answered inside the 90 s window. Either one
+  `offline` means the numbers are not measurements of now: show `unavailable`, do not keep
+  drawing the last value. This is not a theoretical distinction — on 2026-11-12 Home Assistant
+  displayed a 42.3 °C outlet and a burning flame that were **two days old**, because
+  `availability` was `online` the whole time the bridge was up and deaf.
+- **`ts` is the bridge's clock**, not the heater's, and it is the timestamp of the frame the
+  payload was built from - it does not advance on a heartbeat. If the bridge dies the will covers
+  it; if it merely stops hearing the heater, `link` goes `offline` within 90 s.
 
 `ts` is omitted entirely until SNTP answers, which is why it is absent on a freshly booted board.
 
@@ -67,12 +73,16 @@ debugging it:
 | Reconnect backoff | 2 s, doubling to 60 s | a wrong password must not hammer the broker; the schedule resets after any successful CONNACK |
 | Keepalive | 60 s, PINGREQ at 25 s | a lost PINGRESP is forgiven once; a dead broker is noticed well inside the broker's own timeout |
 | CONNACK timeout | 4 s | a TCP connection that never answers is worse than a retry |
-| Publish cadence | every A0 frame, plus a 60 s heartbeat | `ts` stays fresh, so "bridge up, heater silent" is visible |
+| Publish cadence | every A0 frame, plus a 60 s heartbeat | a changed value reaches the broker within one frame; the heartbeat keeps `uptime`/RSSI and the update entity current |
+| Freshness window | 90 s without an A0 frame → `link` = `offline` | 22 missed frames at the 4 s cadence: rides out a reconnect, short enough that a reading is never mistaken for the current one |
 | QoS | 0 everywhere | the contract fixes it; state is a snapshot, a lost one is replaced 4 s later |
 | Session | clean | nothing to persist: the retained state is rewritten on connect |
 
 The will is `offline` on the retained availability topic. A board that loses power therefore
-turns itself grey in Home Assistant without anyone publishing anything.
+turns itself grey in Home Assistant without anyone publishing anything. The retained `link`
+topic is the second, independent signal: it goes `offline` when the heater stops answering and
+comes back with the first frame of the new session, so a bridge that is up but deaf is
+described accurately instead of looking healthy.
 
 Commands:
 
@@ -86,7 +96,12 @@ Commands:
 ## 3. Home Assistant
 
 Twenty-one entities, all grouped under one device — one water heater, eleven measurements,
-eight diagnostics, and one firmware-update entity:
+eight diagnostics, and one firmware-update entity. Measurements and the heater card bind
+**both** availability topics with `availability_mode: all`, so a stale frame greys them out;
+the eight diagnostics and the update card bind `availability` alone, because pairing state,
+RSSI and "install firmware" are facts about the bridge and must stay readable exactly when the
+heater is unreachable. Every discovery payload carries an `origin` block naming `btwh-bridge`.
+The entities:
 
 | Entity | Component | Notes |
 |---|---|---|

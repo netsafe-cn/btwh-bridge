@@ -17,9 +17,11 @@ namespace {
 
 namespace wire = mqtt;
 
-// Transaction buffer. The largest thing ever built is a discovery payload (~470 bytes) plus a
-// topic and the fixed header. The water_heater discovery payload is the largest publish at
-// ~940 bytes, so 1152 leaves room without a heap allocation per publish.
+// Transaction buffer. The largest thing ever built is a discovery payload plus its topic and
+// the fixed header: the water_heater entry, after the second availability topic and the origin
+// block, measures 1032 bytes for an 11-character device id. 1152 keeps that publish inside one
+// buffer without a heap allocation, and check 7 of the discovery self test fails the build's
+// own regression if a future entity outgrows it.
 constexpr size_t kTxCap = 1152;
 
 enum Link : uint8_t {
@@ -64,6 +66,15 @@ int64_t  gLastDropAt = 0;
 char     gLatestVersion[32] = "";
 char     gManifestUrl[128]  = "";
 
+// Freshness of the heater data, kept separate from the broker link for the same reason the
+// contract keeps two topics: "this process is running" and "these numbers are current" are
+// different claims, and the interesting failure is the one where the first is true and the
+// second is not. `fresh` is what loop() currently believes (it can change while MQTT is
+// down); `reported` is what the broker already has, so a reconnect republishes instead of
+// trusting the retained value.
+bool   gLinkFresh    = false;
+int8_t gLinkReported = -1;   // -1 = not published on this connection, 0 = offline, 1 = online
+
 uint8_t gTx[kTxCap];
 uint8_t gRx[wire::kMaxPacket];
 size_t  gRxLen = 0;
@@ -88,6 +99,15 @@ bool publish(const char* suffix, const void* payload, size_t len, bool retain) {
 void publishText(const char* suffix, const char* text, bool retain) {
   publish(suffix, text, strlen(text), retain);
 }
+
+// Force the retained freshness marker out. Called on every connect: a consumer that restarts
+// while the bridge is up but deaf must not have to wait 90 s to find out.
+void publishLink() {
+  const char* text = gLinkFresh ? "online" : "offline";
+  if (!publish("link", text, strlen(text), true)) return;
+  gLinkReported = gLinkFresh ? 1 : 0;
+}
+
 
 void publishAttributes() {
   // The reasons are this file's own literals (no quotes or backslashes), so the JSON needs
@@ -125,7 +145,7 @@ void publishUpdateState() {
 // repairs an entity deleted from Home Assistant without touching the bridge.
 void publishDiscovery() {
   static char topic[96];
-  static char payload[1024];
+  static char payload[1152];
   size_t sent = 0;
   for (size_t i = 0; i < discovery::entityCount(); i++) {
     if (!discovery::expand(discovery::entityTopic(i), gDeviceId, topic, sizeof(topic))) continue;
@@ -154,6 +174,7 @@ void onConnected() {
   gWantPublish = true;
 
   publishText("availability", "online", true);
+  publishLink();
   publishAttributes();
   publishUpdateState();
   publishDiscovery();
@@ -180,6 +201,11 @@ void drop(const char* why) {
   gSock.stop();
   gRxLen       = 0;
   gState       = kIdle;
+  // The freshness marker stays retained at the broker while we are away - availability goes
+  // offline, and the entities that combine both signals are already unavailable. Forgetting
+  // that we published it makes onConnected republish, so a consumer never acts on a value
+  // from a previous connection.
+  gLinkReported = -1;
   gLastAttempt = millis();
   gBackoffMs   = rules::nextBackoffMs(gBackoffMs);
   Serial.printf("[MQTT] x %s (retry in %lus)\n", why, (unsigned long)(gBackoffMs / 1000));
@@ -446,6 +472,18 @@ void drainSocket() {
 }  // namespace
 
 // ---------------------------------------------------------------- public
+
+// Defined outside the anonymous namespace above because loop() calls it: everything up there is
+// internal linkage by design (one translation unit, no name to collide with), and a public
+// entry point cannot live inside it. The state it touches is still file-private.
+void setLinkAvailable(bool fresh) {
+  gLinkFresh = fresh;
+  if (gState != kUp) return;               // publishLink() covers the next connect
+  if (gLinkReported == (fresh ? 1 : 0)) return;
+  const char* text = fresh ? "online" : "offline";
+  if (!publish("link", text, strlen(text), true)) return;
+  gLinkReported = fresh ? 1 : 0;
+}
 
 void mqttBegin(const char* broker, const char* deviceId) {
   uint16_t port = 1883;

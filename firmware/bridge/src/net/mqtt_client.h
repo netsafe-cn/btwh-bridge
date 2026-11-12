@@ -11,7 +11,10 @@
 //     mqttPoll(), which is worth more than concurrency on a single-core-ish workload
 //
 // Availability is a retained will: if the board dies the broker publishes "offline" for it, so
-// a consumer can tell "no data" from "heater is cold".
+// a consumer can tell "no data" from "heater is cold". That is liveness of *this process*.
+// Freshness of the readings is the separate retained `link` topic, driven by setLinkAvailable()
+// - a bridge that is up but no longer hearing the heater is online and stale at the same time,
+// and the contract says both.
 #pragma once
 // Macro guard as well as #pragma once: arduino-cli compiles a copy of src/ under
 // <build>/sketch/, so a header can be reached through two paths.
@@ -40,7 +43,11 @@ namespace net {
 //       update/url cache on arrival (rules::parseManifestVersion for the version), update/state
 //       publishes the entity's JSON, and payload_install "install" on the ota topic flashes the
 //       cached URL - the same flasher, the same grammar, one path from bench and UI alike.
-constexpr const char* kFirmwareVersion = "2.8.1-ota3";
+// 2.9.0: freshness split from liveness. The retained link topic goes offline after 90 s without
+//       an A0 frame, the cached snapshot is dropped instead of republished by the heartbeat, and
+//       discovery binds state-fed entities to both availability signals. Same topics, one added;
+//       the contract stays version 1 because nothing old changed shape.
+constexpr const char* kFirmwareVersion = "2.9.0-ota4";
 
 // Slow-changing metadata, published retained on every connect and refreshed on the
 // attributes heartbeat. Kept out of the state payload so the 4-second message stays small.
@@ -76,6 +83,12 @@ bool mqttConnected();      // CONNACK accepted and the socket is up
 // inbound commands, and publishes `snap` when newFrame is set or a heartbeat is due.
 // `snap` may be null before the first A0 frame; nothing is published then.
 void mqttPoll(const Snapshot* snap, bool newFrame);
+
+// Reports whether the heater data is fresh (a frame arrived inside the contract's stale_after
+// window). Publishes the retained `link` topic on change, and once more after every connect so
+// a consumer that restarts learns the current freshness instead of guessing. Cheap to call
+// every loop iteration: it returns immediately when nothing changed.
+void setLinkAvailable(bool fresh);
 
 // Forces the next poll to publish (the `refresh` command; also the console).
 void mqttRequestPublish();

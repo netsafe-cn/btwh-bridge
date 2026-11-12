@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import unittest
 from dataclasses import fields as dataclass_fields
 
@@ -108,6 +109,45 @@ class TestMqttContract(unittest.TestCase):
         self.assertEqual(spec["direction"], "bridge -> consumer")
         self.assertFalse(spec.get("retain"))
         self.assertIn("installed_version", spec.get("purpose", ""))
+
+    # ---- liveness vs freshness --------------------------------------------------
+    def test_link_topic_is_retained_and_bounded(self):
+        # Bench finding 2026-11-12: Home Assistant showed a 42.3 degree outlet and a burning
+        # flame that were two days old, because availability only ever said "the bridge is
+        # running". The freshness signal therefore has to be its own retained topic with a
+        # stated window - not an inference from the heartbeat.
+        spec = self.doc["topics"]["link"]
+        self.assertEqual(spec["direction"], "bridge -> consumer")
+        self.assertEqual(spec["values"], ["online", "offline"])
+        self.assertTrue(self.doc["retain"]["link"],
+                        "the link value must survive a consumer restart: it is state")
+        self.assertEqual(spec["stale_after_s"], 90)
+        self.assertTrue(self.doc["retain"]["availability"],
+                        "availability stays retained as well; the two are separate claims")
+
+    def test_firmware_stale_window_matches_the_contract(self):
+        # The firmware owns the clock, the contract owns the promise. Two copies of "90 s"
+        # that can drift silently is how an entity ends up quoting a freshness it cannot
+        # deliver, so the number is read out of the source that enforces it.
+        src = (ROOT / "firmware" / "bridge" / "src" / "main.cpp").read_text(encoding="utf-8")
+        match = re.search(r"kLinkStaleMs\s*=\s*(\d+)", src)
+        self.assertIsNotNone(match, "kLinkStaleMs is gone from main.cpp")
+        self.assertEqual(int(match.group(1)),
+                         self.doc["topics"]["link"]["stale_after_s"] * 1000)
+
+    def test_availability_rule_separates_state_from_bridge(self):
+        # The split is the whole design: a state-fed entity may only be available while the
+        # heater answers, while a bridge-fed one must stay readable exactly then. Naming a
+        # topic that does not exist would produce an entity that never comes back.
+        rule = self.doc["home_assistant"]["availability_rule"]
+        self.assertEqual(rule["mode"], "all")
+        for key in rule["state_entities"] + rule["bridge_entities"]:
+            self.assertIn(key, self.doc["topics"], key)
+        self.assertIn("link", rule["state_entities"])
+        self.assertNotIn("link", rule["bridge_entities"])
+        self.assertIn("link", self.doc["topics"]["availability"]["purpose"],
+                      "availability must point at the link topic, or the next reader "
+                      "will wire freshness to the will again")
 
     # ---- coupling to the library ------------------------------------------------
     def test_every_source_attribute_exists_on_device_state(self):

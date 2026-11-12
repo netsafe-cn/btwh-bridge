@@ -25,6 +25,10 @@ auth::Result gLast       = auth::kOk;
 volatile int      gReply07 = -1;
 volatile int      gReply08 = -1;
 volatile uint32_t gA0Count = 0;
+// When the last A0 arrived, on the millis() clock. The counter above is per session and
+// restarts at 0, so it cannot answer "is this data current?" - a session that reconnects
+// would look like it just delivered a frame when it has delivered none. This stamp can.
+volatile uint32_t gLastA0Ms = 0;
 
 uint32_t gSessionStart = 0;
 
@@ -157,6 +161,10 @@ bool start(bool forceRebond) {
   gReply07      = -1;
   gReply08      = -1;
   gA0Count      = 0;
+  // A new session has delivered no frames yet. Keeping the previous session's snapshot here
+  // is what let a reconnect republish old heater readings as if they had just been measured.
+  gLastA0Ms     = 0;
+  gHaveState    = false;
   gEncrypted    = false;
   gLast         = auth::kOk;
 
@@ -230,6 +238,7 @@ Status status() {
   s.reply07   = gReply07;
   s.reply08   = gReply08;
   s.a0Count   = gA0Count;
+  s.lastA0Ms  = gLastA0Ms;
   s.sessionMs = gSessionStart ? (millis() - gSessionStart) : 0;
   s.raw       = gRaw;
   s.lastResult = gLast;
@@ -271,6 +280,7 @@ bool setSetpoint(int celsius) {
 
 void onState(const uint8_t* payload, size_t len) {
   gA0Count++;
+  gLastA0Ms = millis();
   gLastState = proto::parseA0(payload, len);
   gHaveState = true;
   printA0(gLastState);
