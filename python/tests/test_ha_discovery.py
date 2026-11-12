@@ -163,22 +163,36 @@ class TestDiagnosticEntities(unittest.TestCase):
         # Not total_increasing: uptime resets on every reboot.
         self.assertEqual(up["state_class"], "measurement")
 
-    def test_last_disconnect_epoch_zero_reads_as_unknown(self):
+    def test_last_disconnect_epoch_is_formatted_not_passed_through(self):
         cfg = self.entities["last_disconnect_at"]["config"]
         self.assertEqual(cfg["device_class"], "timestamp")
-        # 0 = "never dropped". Without the guard HA renders 1970-01-01 and a healthy
-        # bridge looks like it dropped during the epoch. The else branch must say "None"
-        # (HA's PAYLOAD_NONE), not render nothing: an empty string is not a timestamp and
-        # HA logs "Invalid state message" for every attributes heartbeat.
+        # Two traps, both measured in the log. `device_class: timestamp` parses ISO 8601, so a
+        # bare epoch integer produces "Invalid state message '1794460577'" - the template has to
+        # format. And 0 means "never dropped", where the entity should read unknown rather than
+        # 1970-01-01; the else branch says "None" (HA's PAYLOAD_NONE), not an empty string,
+        # which is unparseable too and logged a warning per heartbeat before 2026-11-12.
         self.assertEqual(cfg["value_template"],
                          "{% if value_json.last_disconnect_at %}"
-                         "{{ value_json.last_disconnect_at }}"
+                         "{{ value_json.last_disconnect_at | "
+                         "timestamp_custom('%Y-%m-%dT%H:%M:%S%z', true) }}"
                          "{% else %}None{% endif %}")
 
     def test_pair_state_is_an_enum(self):
         cfg = self.entities["pair_state"]["config"]
         self.assertEqual(cfg["device_class"], "enum")
         self.assertEqual(cfg["options"], ["unpaired", "paired", "reconnecting"])
+
+    def test_unknown_values_are_null_in_the_contract(self):
+        # rssi 0 and last_disconnect_at 0 were numbers nobody measured: a real RSSI is negative
+        # and 0 only means "never dropped". The payload now sends JSON null for both, and the
+        # contract says so, so a consumer cannot read the sentinel as a value. Their templates
+        # need no guard: Home Assistant renders null (or the string "None") as unknown.
+        for key in ("rssi", "last_disconnect_at"):
+            field = next(f for f in self.doc["attributes_fields"] if f["key"] == key)
+            self.assertTrue(field.get("nullable"),
+                            "%s must be marked nullable; 0 is not a reading" % key)
+            self.assertNotIn("0 means", field.get("note", ""),
+                             "%s still documents 0 as a sentinel" % key)
 
     def test_the_generated_header_contains_the_diagnostics(self):
         header = HEADER.read_text(encoding="utf-8")
@@ -282,7 +296,11 @@ class TestUpdateEntity(unittest.TestCase):
         self.assertEqual(self.cfg["title"],
                          self.spec["home_assistant"]["update_entity"]["title"])
         self.assertEqual(self.cfg["device_class"], "firmware")
-        self.assertEqual(self.cfg["entity_category"], "config")
+        # No entity_category: an update is a primary control. 'config' would file the Install
+        # button under the section of the device page users do not open, which is where it was
+        # until 2026-11-12.
+        self.assertNotIn("entity_category", self.cfg)
+        self.assertNotIn("entity_category", self.spec["home_assistant"]["update_entity"])
 
     def test_update_stays_available_when_the_heater_is_unreachable(self):
         # Installing firmware has nothing to do with the BLE link. Gating this card on a fresh
@@ -296,6 +314,81 @@ class TestUpdateEntity(unittest.TestCase):
         header = HEADER.read_text(encoding="utf-8")
         self.assertIn('"update", "update"', header)
         self.assertIn(r'"payload_install\":\"install', header)
+
+
+class TestDeviceMap(unittest.TestCase):
+    """The `device` map is identity, and Home Assistant merges entities by it.
+
+    Two entities that disagree about `identifiers` split into two devices on the device page;
+    one that omits `sw_version` leaves the page showing an empty firmware field forever. Both
+    failures are invisible until someone looks at the UI, so they are pinned here.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.doc = json.loads(gen_ha.SPEC.read_text(encoding="utf-8"))
+        cls.entities = gen_ha.entities(cls.doc)
+
+    def test_every_entity_carries_one_device_map(self):
+        maps = {json.dumps(e["config"]["device"], sort_keys=True) for e in self.entities}
+        self.assertEqual(len(maps), 1,
+                         "entities disagree about the device: %s" % sorted(maps))
+
+    def test_sw_version_is_the_firmware_constant(self):
+        # gen_ha reads kFirmwareVersion out of the C++ header rather than taking a copy in the
+        # contract; the test holds the other end of that decision.
+        version = gen_ha.firmware_version()
+        self.assertRegex(version, r"^\d+\.\d+\.\d+",
+                         "not a version the update entity can compare: %r" % version)
+        for e in self.entities:
+            self.assertEqual(e["config"]["device"]["sw_version"], version, e["key"])
+
+    def test_hw_version_names_the_build_target(self):
+        # Fixed for this firmware: the bridge is an ESP32-S3 and there is no second target.
+        for e in self.entities:
+            self.assertEqual(e["config"]["device"]["hw_version"], "ESP32-S3", e["key"])
+
+    def test_the_header_ships_the_same_version(self):
+        # --check catches a stale header, but only when someone runs it. This catches the same
+        # drift inside the regression suite, which CI runs on every push.
+        self.assertIn(gen_ha.firmware_version(), HEADER.read_text(encoding="utf-8"))
+
+
+class TestDiscoveryFitsTheWire(unittest.TestCase):
+    """A discovery payload that does not fit the transaction buffer is skipped in silence.
+
+    On 2026-11-12 that is exactly what happened: the table grew to 1082 bytes and the
+    water_heater packet needed 1143 in a 1152-byte buffer, so the entity was simply never
+    published - the connect log said "20 of 21". The on-board self test now builds the real
+    packet; this is the same check without hardware, so the failure surfaces in CI.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import re
+        cls.doc = json.loads(gen_ha.SPEC.read_text(encoding="utf-8"))
+        src = (ROOT / "firmware" / "bridge" / "src" / "net" / "mqtt_client.cpp").read_text(
+            encoding="utf-8")
+        match = re.search(r"kTxCap\s*=\s*(\d+)", src)
+        assert match, "kTxCap is gone from mqtt_client.cpp"
+        cls.cap = int(match.group(1))
+        cls.entities = gen_ha.entities(cls.doc)
+
+    def test_the_largest_packet_fits_with_room(self):
+        dev = "btwh_eb6f5f"                     # 11 characters, always
+        worst = ("", 0)
+        for e in self.entities:
+            payload = gen_ha.render_payload(e["config"]).replace(gen_ha.DEV, dev)
+            topic = gen_ha.discovery_topic(e["component"], e["key"], self.doc).replace(
+                gen_ha.DEV, dev)
+            total = len(payload) + len(topic) + 3   # 0x30 + 2-byte remaining length
+            worst = max(worst, (e["key"], total))
+        self.assertLess(worst[1], self.cap,
+                        "%s needs %d bytes in a %d-byte buffer" % (worst[0], worst[1], self.cap))
+        # Headroom, not just a pass: the next field someone adds should not silently overflow.
+        self.assertLess(worst[1], self.cap - 64,
+                        "%s leaves under 64 bytes of headroom (%d of %d)"
+                        % (worst[0], worst[1], self.cap))
 
 
 class TestEntityIdentity(unittest.TestCase):

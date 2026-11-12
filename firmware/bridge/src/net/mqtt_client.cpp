@@ -18,11 +18,12 @@ namespace {
 namespace wire = mqtt;
 
 // Transaction buffer. The largest thing ever built is a discovery payload plus its topic and
-// the fixed header: the water_heater entry, after the second availability topic and the origin
-// block, measures 1032 bytes for an 11-character device id. 1152 keeps that publish inside one
-// buffer without a heap allocation, and check 7 of the discovery self test fails the build's
-// own regression if a future entity outgrows it.
-constexpr size_t kTxCap = 1152;
+// the fixed header: the water_heater entry, after the second availability topic, the origin
+// block and the device versions, measures 1082 bytes of payload for an 11-character device id,
+// and its topic adds 58 more - 1143 in total, which is why this is 1280 and not 1152. A
+// payload that does not fit is skipped in silence (see publishDiscovery), so check 7 of the
+// discovery self test builds the real packet rather than only expanding the payload.
+constexpr size_t kTxCap = 1280;
 
 enum Link : uint8_t {
   kOff = 0,        // no broker configured
@@ -115,14 +116,25 @@ void publishAttributes() {
   // on the 60 s heartbeat, so a consumer that restarts is at most a minute behind.
   // The reasons are this file's own literals (no quotes or backslashes), so the JSON needs
   // no escaping; if a reason ever grows punctuation, quote it at the drop() call site.
+  //
+  // rssi and last_disconnect_at are null when unknown, never 0. A real RSSI is negative and
+  // 0 means "never dropped", so both zeros would be numbers nobody measured - the same lie
+  // ADR-014/015 removed from the readings. Home Assistant renders JSON null as unknown, and
+  // the contract (spec attributes_fields, nullable) says so.
+  char rssi[8];
+  if (gInfo.rssi) snprintf(rssi, sizeof(rssi), "%d", gInfo.rssi);
+  else snprintf(rssi, sizeof(rssi), "null");
+  char dropAt[24];
+  if (gLastDropAt) snprintf(dropAt, sizeof(dropAt), "%lld", (long long)gLastDropAt);
+  else snprintf(dropAt, sizeof(dropAt), "null");
+
   char json[340];
   snprintf(json, sizeof(json),
            "{\"fw\":\"%s\",\"hw\":\"%s\",\"heater\":\"%s\",\"pair_state\":\"%s\","
-           "\"uptime\":%lu,\"rssi\":%d,\"last_disconnect\":\"%s\",\"last_disconnect_at\":%lld}",
+           "\"uptime\":%lu,\"rssi\":%s,\"last_disconnect\":\"%s\",\"last_disconnect_at\":%s}",
            kFirmwareVersion, gInfo.hardware ? gInfo.hardware : "esp32s3",
            gInfo.heater ? gInfo.heater : "-", gInfo.pairState ? gInfo.pairState : "unpaired",
-           (unsigned long)(millis() / 1000), gInfo.rssi, gWhy,
-           (long long)gLastDropAt);
+           (unsigned long)(millis() / 1000), rssi, gWhy, dropAt);
   publishText("attributes", json, false);
 }
 
@@ -148,13 +160,18 @@ void publishUpdateState() {
 // repairs an entity deleted from Home Assistant without touching the bridge.
 void publishDiscovery() {
   static char topic[96];
-  static char payload[1152];
+  static char payload[1280];
   size_t sent = 0;
   for (size_t i = 0; i < discovery::entityCount(); i++) {
     if (!discovery::expand(discovery::entityTopic(i), gDeviceId, topic, sizeof(topic))) continue;
     if (!discovery::expand(discovery::entityPayload(i), gDeviceId, payload, sizeof(payload))) continue;
     const size_t n = wire::buildPublish(gTx, sizeof(gTx), topic, payload, strlen(payload), true);
     if (n && gSock.write(gTx, n) == n) sent++;
+  }
+  if (sent != discovery::entityCount()) {
+    Serial.printf("[MQTT] x discovery: only %u of %u published (entity outgrew the packet)\n",
+                  (unsigned)sent, (unsigned)discovery::entityCount());
+    return;
   }
   Serial.printf("[MQTT] discovery: %u of %u entities published\n",
                 (unsigned)sent, (unsigned)discovery::entityCount());

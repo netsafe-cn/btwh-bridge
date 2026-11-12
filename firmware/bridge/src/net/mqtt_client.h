@@ -51,7 +51,10 @@ namespace net {
 //       bridge that loses power leaves no reading behind on the broker; only status is retained
 //       (availability, link, the update entities, discovery). Wire-compatible: same topics, same
 //       payloads, one fewer flag.
-constexpr const char* kFirmwareVersion = "2.9.0-ota5";
+//       ota6: the discovery payloads conform to the platform schema (ADR-016). device.sw_version
+//       is generated from this very constant, rssi/last_disconnect_at publish null when unknown
+//       instead of 0, and the transaction buffer grew to 1280 for the larger payload.
+constexpr const char* kFirmwareVersion = "2.9.0-ota6";
 
 // Slow-changing metadata, published on every connect and refreshed on the attributes heartbeat.
 // Live-only like state: uptime and RSSI are readings, not configuration.

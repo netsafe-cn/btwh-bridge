@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent            # firmware/bridge/tools
@@ -47,8 +48,10 @@ BRIDGE = HERE.parent                                      # firmware/bridge
 REPO = BRIDGE.parents[1]                                  # repository root
 SPEC = REPO / "spec" / "mqtt.json"
 OUT = BRIDGE / "src" / "net" / "ha_discovery_gen.h"
+VERSION_SRC = BRIDGE / "src" / "net" / "mqtt_client.h"
 
 DEV = "@DEV@"                       # runtime substitution, replaced by the device id
+FW_TOKEN = "@FW@"                   # build substitution, replaced by kFirmwareVersion
 SKIP = {"ts"}                       # bridge metadata, not an entity
 
 # Extra presentation hints that the contract does not need to know about. Kept here rather
@@ -106,6 +109,43 @@ def origin(doc: dict) -> dict:
     return out
 
 
+def firmware_version() -> str:
+    """The version the compiler sees, read from the one place that defines it.
+
+    The device page's sw_version must not be a second copy of a number that is bumped by hand
+    in a different file: it is read from the C++ constant, and --check fails when the header
+    was generated before a bump. Same rule as the stale window in test_mqtt_contract.py.
+    """
+    text = VERSION_SRC.read_text(encoding="utf-8")
+    match = re.search(r'kFirmwareVersion\s*=\s*"([^"]+)"', text)
+    if not match:
+        raise SystemExit("gen_ha: kFirmwareVersion not found in %s" % VERSION_SRC)
+    return match.group(1)
+
+
+def device_block(doc: dict) -> dict:
+    """The `device` map every entity carries, built in one place.
+
+    Four entities used to spell this map out separately; one helper is the difference between
+    "they happen to agree today" and "they cannot disagree". sw_version/hw_version live here
+    rather than on diagnostic sensors because that is where Home Assistant shows them on the
+    device page, and they are properties of the hardware, not measurements.
+    """
+    spec = doc["home_assistant"]["device"]
+    out = {
+        "identifiers": [DEV],
+        "manufacturer": spec["manufacturer"],
+        "model": spec["model"],
+        "name": spec["name"],
+    }
+    sw = spec.get("sw_version")
+    if sw:
+        out["sw_version"] = firmware_version() if sw == FW_TOKEN else sw
+    if spec.get("hw_version"):
+        out["hw_version"] = spec["hw_version"]
+    return out
+
+
 def ha_diag_entity(field: dict, doc: dict) -> dict:
     key = field["key"]
     base = doc["base_topic"]
@@ -119,12 +159,7 @@ def ha_diag_entity(field: dict, doc: dict) -> dict:
         "entity_category": "diagnostic",
         "value_template": "{{ value_json.%s }}" % key,
         "origin": origin(doc),
-        "device": {
-            "identifiers": [DEV],
-            "manufacturer": ha["device"]["manufacturer"],
-            "model": ha["device"]["model"],
-            "name": ha["device"]["name"],
-        },
+        "device": device_block(doc),
     }
 
     if key == "pair_state":
@@ -138,13 +173,15 @@ def ha_diag_entity(field: dict, doc: dict) -> dict:
                     "state_class": "measurement"})
     elif key == "last_disconnect_at":
         cfg["device_class"] = "timestamp"
-        # 0 = never dropped. The else branch must render Home Assistant's PAYLOAD_NONE
-        # ("None"), not an empty string: an empty string is not a parseable timestamp, so
-        # every attributes heartbeat logged "Invalid state message ''" - one warning per
-        # diagnostic sensor per minute, 366 of them on the bench before this was found -
-        # while the entity still ended up unknown. "None" becomes native_value None directly.
-        cfg["value_template"] = ("{%% if value_json.%s %%}{{ value_json.%s }}"
-                                 "{%% else %%}None{%% endif %%}" % (key, key))
+        # The sensor side of device_class: timestamp parses an ISO 8601 string, not an epoch
+        # integer - raw seconds produced "Invalid state message '1794460577'" in the log even
+        # though the entity looked plausible. So the template formats, it does not pass through.
+        # The else branch must render Home Assistant's PAYLOAD_NONE ("None") rather than an
+        # empty string, which is also unparseable: 0 means "never dropped", and the entity
+        # should read unknown instead of 1970-01-01 or a warning per heartbeat.
+        iso = "timestamp_custom('%Y-%m-%dT%H:%M:%S%z', true)"
+        cfg["value_template"] = ("{% if value_json." + key + " %}{{ value_json." + key
+                                 + " | " + iso + " }}{% else %}None{% endif %}")
 
     if key in ICONS:
         cfg["icon"] = ICONS[key]
@@ -174,12 +211,7 @@ def ha_entity(field: dict, doc: dict) -> dict | None:
         "state_topic": "%s/%s/state" % (base, DEV),
         **availability(doc, ha["availability_rule"]["state_entities"]),
         "origin": origin(doc),
-        "device": {
-            "identifiers": [DEV],
-            "manufacturer": ha["device"]["manufacturer"],
-            "model": ha["device"]["model"],
-            "name": ha["device"]["name"],
-        },
+        "device": device_block(doc),
     }
 
     if key == "setpoint":
@@ -256,15 +288,12 @@ def ha_update_entity(doc: dict) -> dict:
         "payload_install": ue["payload_install"],
         "title": ue["title"],
         "device_class": ue["device_class"],
-        "entity_category": ue["entity_category"],
+        # No entity_category: an update is a first-class control, not configuration. Filing it
+        # under "Configuration" hides the Install button in the section users do not open.
+        **({"entity_category": ue["entity_category"]} if ue.get("entity_category") else {}),
         **availability(doc, ha["availability_rule"]["bridge_entities"]),
         "origin": origin(doc),
-        "device": {
-            "identifiers": [DEV],
-            "manufacturer": ha["device"]["manufacturer"],
-            "model": ha["device"]["model"],
-            "name": ha["device"]["name"],
-        },
+        "device": device_block(doc),
     }
     return {"component": "update", "key": "update", "config": cfg}
 
@@ -304,12 +333,7 @@ def ha_water_heater_entity(doc: dict) -> dict:
         "optimistic": False,
         **availability(doc, ha["availability_rule"]["state_entities"]),
         "origin": origin(doc),
-        "device": {
-            "identifiers": [DEV],
-            "manufacturer": ha["device"]["manufacturer"],
-            "model": ha["device"]["model"],
-            "name": ha["device"]["name"],
-        },
+        "device": device_block(doc),
     }
     return {"component": "water_heater", "key": "water_heater", "config": cfg}
 
@@ -328,14 +352,20 @@ def render_payload(cfg: dict) -> str:
     return json.dumps(cfg, separators=(",", ":"), ensure_ascii=False)
 
 
+def entities(doc: dict) -> list:
+    """The whole table, in publish order. Shared with the tests so they check what ships."""
+    out = [e for e in (ha_entity(f, doc) for f in doc["state_fields"]) if e]
+    out += [ha_diag_entity(f, doc) for f in doc["attributes_fields"]]
+    if "water_heater_entity" in doc.get("home_assistant", {}):
+        out.append(ha_water_heater_entity(doc))
+    if "update_entity" in doc.get("home_assistant", {}):
+        out.append(ha_update_entity(doc))
+    return out
+
+
 def build() -> str:
     doc = json.loads(SPEC.read_text(encoding="utf-8"))
-    entities = [e for e in (ha_entity(f, doc) for f in doc["state_fields"]) if e]
-    entities += [ha_diag_entity(f, doc) for f in doc["attributes_fields"]]
-    if "water_heater_entity" in doc.get("home_assistant", {}):
-        entities.append(ha_water_heater_entity(doc))
-    if "update_entity" in doc.get("home_assistant", {}):
-        entities.append(ha_update_entity(doc))
+    table = entities(doc)
 
     out = []
     out.append("""\
@@ -369,16 +399,16 @@ struct EntityDesc {
 static const EntityDesc kEntities[] = {
 """)
 
-    for e in entities:
+    for e in table:
         topic = discovery_topic(e["component"], e["key"], doc)
         payload = render_payload(e["config"])
         out.append('  {"%s", "%s", "%s",\n   "%s"},\n'
                    % (e["component"], c_str(e["key"]), c_str(topic), c_str(payload)))
-    out.append("};\nstatic const size_t kEntityCount = %d;\n\n" % len(entities))
+    out.append("};\nstatic const size_t kEntityCount = %d;\n\n" % len(table))
 
     # One fully rendered pair, so the on-board self test can check the substitution without
     # re-implementing JSON.
-    sample = entities[0]
+    sample = table[0]
     sample_dev = "btwh_eb6f5f"
     out.append("// Golden pair for selftest: the first entity with a known device id substituted.\n")
     out.append('constexpr const char* kGoldenTopic =\n    "%s";\n'

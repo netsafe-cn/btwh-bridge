@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "net/ha_discovery_gen.h"
+#include "net/mqtt_wire.h"
 
 namespace net {
 namespace discovery {
@@ -79,7 +80,7 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
   // Sized to the largest generated payload plus the device-id substitution. Check 7 ties this
   // number to the publish path: an entity that outgrows the buffers fails here, on the board,
   // instead of publishing a truncated packet a consumer would silently choke on.
-  char buf[1152];
+  char buf[1280];
 
   // 1. The substitution itself, including a token that appears more than once.
   size_t n = expand("btwh/@DEV@/state", "btwh_eb6f5f", buf, sizeof(buf));
@@ -185,12 +186,22 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
     check(c, attrs == diag, "diagnostics are exactly the attributes readers", entityTopic(i));
   }
 
-  // 7. Every payload must expand fully into the publish buffer. A generated table that has
-  //    outgrown the publish path would send truncated JSON - the kind of fault a broker
-  //    swallows and only the consumer notices.
+  // 7. Every payload must survive the real publish path, not just the payload buffer: expand
+  //    it, then build the complete PUBLISH - topic, fixed header and payload - into a buffer of
+  //    the size the client actually transmits from. Checking the expansion alone is what let
+  //    the table grow from 1032 to 1082 bytes and leave the water_heater packet nine bytes
+  //    short of the wire buffer; the only symptom was "20 of 21 entities" in the connect log.
+  char topic[96];
+  uint8_t packet[1280];
   for (size_t i = 0; i < entityCount(); i++) {
+    n = expand(entityTopic(i), "btwh_eb6f5f", topic, sizeof(topic));
+    check(c, n > 0, "discovery topic fits", entityTopic(i));
     n = expand(entityPayload(i), "btwh_eb6f5f", buf, sizeof(buf));
     check(c, n > 0, "payload fits the publish buffer", entityTopic(i));
+    if (n > 0) {
+      check(c, mqtt::buildPublish(packet, sizeof(packet), topic, buf, n, true) > 0,
+            "publish fits the transaction buffer", entityTopic(i));
+    }
   }
 
   return SelfTestResult{c.total, c.failed};

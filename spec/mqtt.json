@@ -284,8 +284,9 @@
       "key": "rssi",
       "type": "int",
       "unit": "dBm",
+      "nullable": true,
       "label": "BLE signal strength",
-      "note": "0 means the link is down or the radio refused a read; a real reading is always negative."
+      "note": "null while the link is down or the radio refused a read - a real reading is always negative, so 0 would be a number nobody measured. Home Assistant renders null as unknown; do not substitute 0."
     },
     {
       "key": "last_disconnect",
@@ -297,8 +298,9 @@
       "key": "last_disconnect_at",
       "type": "int",
       "unit": "s",
+      "nullable": true,
       "label": "Last MQTT disconnect (epoch)",
-      "note": "0 = the link has never dropped since boot. This is the broker link, not the BLE link."
+      "note": "null = the broker link has not dropped since boot. This is the broker link, not the BLE link. Epoch seconds, so the Home Assistant entity formats it with timestamp_custom: device_class timestamp parses ISO 8601 and rejects a bare integer."
     }
   ],
   "home_assistant": {
@@ -310,13 +312,16 @@
       "identifiers_note": "device_id already starts with 'btwh_', so prefixing it again would yield btwh_btwh_<last6>. The identifier is the device_id itself.",
       "manufacturer": "Bosch",
       "model": "Therm 4800i",
-      "name": "Water heater"
+      "name": "Water heater",
+      "sw_version": "@FW@",
+      "hw_version": "ESP32-S3",
+      "version_note": "sw_version is the @FW@ token, replaced by gen_ha.py with kFirmwareVersion read out of firmware/bridge/src/net/mqtt_client.h - so the device page cannot claim a version the board is not running, and --check fails when the header is older than a bump. hw_version is the build target, which is fixed for this firmware. Both belong here rather than on diagnostic sensors: Home Assistant shows them on the device page, and they describe the hardware, not a measurement."
     },
     "entity_note": "One entity per state field. Sensors use state_class measurement; setpoint is a number entity; flame is a binary_sensor; mode is an enum sensor; fault is a sensor with an icon template. Every attributes field is also an entity, but entity_category diagnostic, so Home Assistant files it under diagnostics instead of cluttering the device page - a remote user can read firmware, RSSI and the last disconnect without shell access to the board.",
     "origin": {
       "name": "btwh-bridge",
       "support_url": "https://github.com/netsafe-cn/btwh-bridge",
-      "note": "Discovery provenance. Home Assistant recommends it for single-component discovery and requires it for device discovery; it is what the core log prints when an entity is discovered. sw_version is left out on purpose: the firmware version already travels in attributes.fw and in the update entity, and a second copy baked into a generated payload would be one more thing that can drift."
+      "note": "Discovery provenance. Home Assistant recommends it for single-component discovery and requires it for device discovery; it is what the core log prints when an entity is discovered. sw_version is left out here on purpose - the version belongs to the device map (device.sw_version), which Home Assistant renders on the device page; repeating it in origin would be a third copy of the same number. support_url points at the repository; keep it only while that URL resolves, a dead support link is worse than none."
     },
     "availability_rule": {
       "state_entities": [
@@ -336,8 +341,7 @@
       "payload_install": "install",
       "title": "BTWH Bridge",
       "device_class": "firmware",
-      "entity_category": "config",
-      "note": "The HA update entity: installed_version comes from the firmware itself, latest_version from the retained manifest topics (update/latest + update/url). Clicking Install in HA publishes 'install' to the existing ota topic - the same live-only path the bench tool uses, so there is exactly one flasher and one grammar. The bridge mediates the state (rather than HA reading the manifest topics directly) because the install command needs the URL cached on the board anyway. Version strings are compared as strings by HA; dev suffixes like '-ota2' are bench-only - release builds must use plain semver."
+      "note": "The HA update entity: installed_version comes from the firmware itself, latest_version from the retained manifest topics (update/latest + update/url). Clicking Install in HA publishes 'install' to the existing ota topic - the same live-only path the bench tool uses, so there is exactly one flasher and one grammar. The bridge mediates the state (rather than HA reading the manifest topics directly) because the install command needs the URL cached on the board anyway. Version strings are compared as strings by HA; dev suffixes like '-ota2' are bench-only - release builds must use plain semver. No entity_category: an update is a primary control, and 'config' would bury the Install button in the section nobody opens."
     },
     "water_heater_entity": {
       "component": "water_heater",
@@ -357,7 +361,7 @@
     }
   },
   "consumer_rules": [
-    "A missing field means 'not reported yet'. Do not print it as 0 - an unheated heater and an unreachable bridge must look different.",
+    "A missing field means 'not reported yet'; a null field means 'reported, but unknown right now' (rssi with the link down, last_disconnect_at before the first drop). Do not print either as 0 - an unheated heater and an unreachable bridge must look different.",
     "fault == 'none' is healthy; any other value is a fault code, not text.",
     "availability == 'offline' overrides state: show 'unavailable' and stop drawing the last value as current.",
     "state and attributes are live-only. A consumer that starts while the bridge is down receives nothing, and that is the correct answer - do not fill the gap with a local cache and present it as current. Hold the last value only as long as you also hold the fact that it is old.",

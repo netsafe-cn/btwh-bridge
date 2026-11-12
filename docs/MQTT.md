@@ -16,7 +16,7 @@ The topics and the field list are **not** documented here by hand: they live in
 | `btwh/<device>/state` | bridge → consumer | **no — live-only, enforced by tests** | JSON, one message per A0 frame (~4 s) |
 | `btwh/<device>/availability` | bridge → consumer | yes | `online` / `offline` — **liveness of the bridge**, will-set |
 | `btwh/<device>/link` | bridge → consumer | yes | `online` / `offline` — **freshness of the readings**: `offline` after 90 s with no A0 frame, and until the first one arrives |
-| `btwh/<device>/attributes` | bridge → consumer | **no — live-only** | JSON: firmware, board, heater address, pair state, uptime, RSSI, last disconnect (reason + epoch); refreshed every 60 s |
+| `btwh/<device>/attributes` | bridge → consumer | **no — live-only** | JSON: firmware, board, heater address, pair state, uptime, RSSI, last disconnect (reason + epoch); refreshed every 60 s. `rssi` and `last_disconnect_at` are `null` when unknown, never `0` |
 | `btwh/<device>/set/temperature` | consumer → bridge | no | integer `35`..`60`; anything else is ignored |
 | `btwh/<device>/cmd` | consumer → bridge | no | JSON or text containing `refresh`, `reboot` or `unpair` |
 | `btwh/<device>/ota` | consumer → bridge | **no — live-only, enforced by tests** | `http://host[:port]/path`, or the literal `install` to flash the URL last seen on `update/url` |
@@ -119,8 +119,9 @@ eight diagnostics, and one firmware-update entity. Measurements and the heater c
 **both** availability topics with `availability_mode: all`, so a stale frame greys them out;
 the eight diagnostics and the update card bind `availability` alone, because pairing state,
 RSSI and "install firmware" are facts about the bridge and must stay readable exactly when the
-heater is unreachable. Every discovery payload carries an `origin` block naming `btwh-bridge`.
-The entities:
+heater is unreachable. Every discovery payload carries an `origin` block naming `btwh-bridge` and
+the same `device` map, whose `sw_version` is generated from `kFirmwareVersion` — the number the
+compiler sees — so the device page cannot claim a version the board is not running. The entities:
 
 | Entity | Component | Notes |
 |---|---|---|
@@ -135,10 +136,10 @@ The entities:
 | Fault | sensor | icon template: `mdi:check-circle` for `none`, `mdi:alert` otherwise |
 | Firmware / board / heater address | sensor | diagnostics, from the attributes topic |
 | Uptime | sensor | `device_class: duration`, refreshes once a minute |
-| BLE RSSI | sensor | `device_class: signal_strength`, `dBm`; `0` = link down |
+| BLE RSSI | sensor | `device_class: signal_strength`, `dBm`; `null` (→ unknown) while the link is down, because a real reading is always negative |
 | Pairing state | sensor | `device_class: enum` |
-| Last disconnect reason / time | sensor | diagnostics; survives the reconnect, so a flapping link is visible while it happens to be up. Time is `unknown` while the link has never dropped |
-| **Firmware update** | **update** | `device_class: firmware`, entity category `config`; state from `update/state`, Install publishes `install` to the live-only `ota` topic — the same single flasher the bench tool drives. Version comparison in HA is string-based, so only plain semver builds should be offered to it |
+| Last disconnect reason / time | sensor | diagnostics; survives the reconnect, so a flapping link is visible while it happens to be up. Time is `unknown` while the link has never dropped, and is formatted as ISO 8601 because `device_class: timestamp` cannot parse an epoch integer |
+| **Firmware update** | **update** | `device_class: firmware`, no entity category (an update is a primary control, not configuration); state from `update/state`, Install publishes `install` to the live-only `ota` topic — the same single flasher the bench tool drives. Version comparison in HA is string-based, so only plain semver builds should be offered to it |
 
 ### The water_heater domain entity
 

@@ -72,7 +72,7 @@ AI 生成的、而且写错了"完全可以作为一条 issue 的第一句话。
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
-| Python 协议库 `bosch_api` | ✅ 可用 | **215 项**离线测试全绿，含签名冻结契约与黄金向量 |
+| Python 协议库 `bosch_api` | ✅ 可用 | **221 项**离线测试全绿，含签名冻结契约与黄金向量 |
 | 桌面控制台 / 米家桥接 | ✅ 可用 | tkinter GUI + 巴法云（中国区可选，非主线） |
 | ESP32-S3 网关固件 v2 | ✅ 已验证 | 实机连通通过：SMP 加密 → `A2/07` → `A2/08=01` → `A0` 稳定刷帧；断电重启自动恢复，含「板子比 AP 先启动」场景 |
 | MQTT / Home Assistant 自动发现 | ✅ 端到端验证 | 21 个实体自动发现（热水器 + 11 测量 + 8 诊断 + 1 固件更新，含 RSSI 与最近断连原因，远程排障用）；调温命令往返闭环，已在 HAOS 生产级 Mosquitto 上验证，见 [MQTT.md](docs/MQTT.md) |
@@ -316,7 +316,7 @@ CI 覆盖 Linux + Windows × Python 3.11/3.12，另有一个 job 检查 `config.
 │   ├── bemfa.py                巴法云客户端（米家通道）
 │   ├── boschlog.py             日志：轮转文件 + 内存环形缓冲
 │   ├── singlelock.py           后台桥接的单实例锁
-│   ├── tests/                  ★ 215 项离线测试，自动发现
+│   ├── tests/                  ★ 221 项离线测试，自动发现
 │   └── tools/                  控制台、无界面桥接、采集、启动器
 │
 ├── firmware/                   一个应用一个目录，互不共享源码
@@ -333,7 +333,7 @@ CI 覆盖 Linux + Windows × Python 3.11/3.12，另有一个 job 检查 `config.
 ├── docs/                       API.md、BLE_PROTOCOL.md、ARCHITECTURE.md、hardware/
 │   └── diagrams/               架构图（明/暗两版，由脚本生成）
 ├── integrations/               预留：Home Assistant、Node-RED、ESPHome
-├── run_tests.py                一条命令跑 215 项，全离线
+├── run_tests.py                一条命令跑 221 项，全离线
 ├── pyproject.toml              打包元数据（`pip install .`）
 ├── config.example.json         配置模板（不含任何真实信息）
 ├── CHANGELOG.md  CONTRIBUTING.md  SECURITY.md  CODE_OF_CONDUCT.md  LICENSE

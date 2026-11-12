@@ -86,7 +86,7 @@ And "this looks generated, and it is wrong" is a perfectly good opening line for
 
 | Component | State | Notes |
 |---|---|---|
-| Python library `bosch_api` | ✅ Ready | **215** offline tests green; signature-freeze contract + golden vectors |
+| Python library `bosch_api` | ✅ Ready | **221** offline tests green; signature-freeze contract + golden vectors |
 | Desktop console / Mi Home bridge | ✅ Ready | tkinter GUI + Bemfa cloud (China region, optional) |
 | ESP32-S3 gateway firmware v2 | ✅ Verified | Real-device link-up: SMP encryption → `A2/07` → `A2/08=01` → steady `A0` stream; auto-recovers after power cycle, including "board boots before the AP" |
 | MQTT / Home Assistant auto-discovery | ✅ Verified end-to-end | 21 entities auto-discovered (water heater + 11 measurements + 8 diagnostics + 1 firmware-update, incl. RSSI and last-disconnect for remote troubleshooting); setpoint commands round-trip verified against a production Mosquitto on HAOS; see [MQTT.md](docs/MQTT.md) |
@@ -350,7 +350,7 @@ change is a patch, minor or major bump live in
 │   ├── bemfa.py                Bemfa cloud client (Mi Home channel)
 │   ├── boschlog.py             Logging: rotating file + in-memory ring buffer
 │   ├── singlelock.py           Single-instance guard for the background bridge
-│   ├── tests/                  ★ 215 offline tests, auto-discovered
+│   ├── tests/                  ★ 221 offline tests, auto-discovered
 │   └── tools/                  Console, headless bridge, capture, launchers
 │
 ├── firmware/                   One directory per application, no shared source
@@ -367,7 +367,7 @@ change is a patch, minor or major bump live in
 ├── docs/                       API.md, BLE_PROTOCOL.md, ARCHITECTURE.md, hardware/
 │   └── diagrams/               architecture-{light,dark}.svg, generated from a script
 ├── integrations/               Reserved: Home Assistant, Node-RED, ESPHome
-├── run_tests.py                One command, 215 tests, fully offline
+├── run_tests.py                One command, 221 tests, fully offline
 ├── pyproject.toml              Packaging metadata (`pip install .`)
 ├── config.example.json         Config template (contains no real data)
 ├── CHANGELOG.md  CONTRIBUTING.md  SECURITY.md  CODE_OF_CONDUCT.md  LICENSE
