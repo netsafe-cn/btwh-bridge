@@ -114,8 +114,9 @@ Commands:
 
 ## 3. Home Assistant
 
-Twenty-one entities, all grouped under one device — one water heater, eleven measurements,
-eight diagnostics, and one firmware-update entity. Measurements and the heater card bind
+Twenty-two entities, all grouped under one device — one water heater, eleven measurements,
+a problem binary sensor, eight diagnostics, and one firmware-update entity. Measurements and the
+heater card bind
 **both** availability topics with `availability_mode: all`, so a stale frame greys them out;
 the eight diagnostics and the update card bind `availability` alone, because pairing state,
 RSSI and "install firmware" are facts about the bridge and must stay readable exactly when the
@@ -133,13 +134,25 @@ compiler sees — so the device page cannot claim a version the board is not run
 | Fan speed | sensor | `rpm` |
 | Flame | binary_sensor | `device_class: running`, JSON `true`/`false` |
 | Mode | sensor | `device_class: enum` with the four contract values |
-| Fault | sensor | icon template: `mdi:check-circle` for `none`, `mdi:alert` otherwise |
+| Fault | sensor | the code itself: icon template `mdi:check-circle` for `none`, `mdi:alert` otherwise |
+| Fault active | binary_sensor | `device_class: problem`, `true` whenever the code is not `none`. The same field twice on purpose: a sensor cannot carry `problem`, and an automation that asks "is something wrong" should not template a string comparison |
 | Firmware / board / heater address | sensor | diagnostics, from the attributes topic |
 | Uptime | sensor | `device_class: duration`, refreshes once a minute |
 | BLE RSSI | sensor | `device_class: signal_strength`, `dBm`; `null` (→ unknown) while the link is down, because a real reading is always negative |
 | Pairing state | sensor | `device_class: enum` |
 | Last disconnect reason / time | sensor | diagnostics; survives the reconnect, so a flapping link is visible while it happens to be up. Time is `unknown` while the link has never dropped, and is formatted as ISO 8601 because `device_class: timestamp` cannot parse an epoch integer |
 | **Firmware update** | **update** | `device_class: firmware`, no entity category (an update is a primary control, not configuration); state from `update/state`, Install publishes `install` to the live-only `ota` topic — the same single flasher the bench tool drives. Version comparison in HA is string-based, so only plain semver builds should be offered to it |
+
+### Surviving a Home Assistant restart
+
+Discovery is retained, so a restarted Home Assistant rebuilds the entity list from the broker
+on its own. What it cannot rebuild is the live-only half: `state` and `attributes` are never
+retained, so a fresh consumer has no readings and no diagnostics until the next A0 frame and the
+next heartbeat. The bridge therefore subscribes to `homeassistant/status` — Home Assistant's own
+birth topic, and the only subscription it makes outside its own tree — and on `online`
+republishes discovery, `availability`, `link`, `attributes` and `update/state`, and queues
+`state` for the next poll. `offline` (Home Assistant's will) is ignored: the bridge keeps
+publishing either way, and a retained discovery document is what gets the next start up.
 
 ### The water_heater domain entity
 

@@ -177,12 +177,16 @@ void publishDiscovery() {
                 (unsigned)sent, (unsigned)discovery::entityCount());
 }
 
-bool subscribe(const char* suffix) {
-  char filter[80];
-  makeTopic(filter, sizeof(filter), suffix);
+bool subscribeFilter(const char* filter) {
   const size_t n = wire::buildSubscribe(gTx, sizeof(gTx), gPacketId++, filter, 0);
   if (!n) return false;
   return gSock.write(gTx, n) == n;
+}
+
+bool subscribe(const char* suffix) {
+  char filter[80];
+  makeTopic(filter, sizeof(filter), suffix);
+  return subscribeFilter(filter);
 }
 
 void onConnected() {
@@ -203,6 +207,10 @@ void onConnected() {
   subscribe("ota");
   subscribe("update/latest");
   subscribe("update/url");
+  // The only subscription outside this device's own tree: Home Assistant announces itself
+  // there when it starts, and that announcement is what repairs a restarted consumer. See
+  // handleHaStatus.
+  subscribeFilter(contract::kHaStatusTopic);
 
   Serial.printf("[MQTT] + connected to %s:%u as %s\n", gHost, (unsigned)gPort, gDeviceId);
 }
@@ -393,6 +401,34 @@ void handleManifestUrl(const wire::PublishInfo& in) {
   Serial.printf("[MQTT] manifest: url %s\n", text[0] ? text : "(cleared)");
 }
 
+// Home Assistant restarted. The retained discovery documents come back from the broker by
+// themselves - what does not come back is the live-only half: attributes and state were never
+// retained, so a restarted consumer would show blank diagnostics until the next 60 s heartbeat
+// and no measurements until the next A0 frame. Republishing here is the only reason this client
+// subscribes outside its own tree. 'offline' (Home Assistant's will) needs nothing: the bridge
+// keeps publishing either way, and the next start prints the birth message again.
+void handleHaStatus(const wire::PublishInfo& in) {
+  char text[16];
+  const size_t n = in.payloadLen < sizeof(text) - 1 ? in.payloadLen : sizeof(text) - 1;
+  memcpy(text, in.payload, n);
+  text[n] = 0;
+
+  if (strcmp(text, contract::kHaStatusOnline) != 0) {
+    if (strcmp(text, contract::kHaStatusOffline) != 0) {
+      Serial.printf("[MQTT] %s: [%s] ignored\n", contract::kHaStatusTopic, text);
+    }
+    return;
+  }
+
+  Serial.println("[MQTT] home assistant is up; republishing discovery and status");
+  publishLink();          // retained, but republishing settles it against the new subscriber
+  publishAttributes();    // live-only: a restarted consumer holds no copy at all
+  publishUpdateState();
+  publishDiscovery();
+  gLastAttrs   = millis();   // the heartbeat above just ran; do not repeat it in 60 s
+  gWantPublish = true;       // state goes out on the next poll, once a snapshot exists
+}
+
 void handle(const wire::Packet& p) {
   switch (p.type) {
     case wire::kTypeConnack: {
@@ -420,6 +456,9 @@ void handle(const wire::Packet& p) {
       char topic[80];
       makeTopic(topic, sizeof(topic), "set/temperature");
       if (wire::topicIs(in, topic)) { handleSetpoint(in); return; }
+      // The one topic from outside this device's tree, checked before the makeTopic chain
+      // below because it is an absolute topic, not a suffix of ours.
+      if (wire::topicIs(in, contract::kHaStatusTopic)) { handleHaStatus(in); return; }
       makeTopic(topic, sizeof(topic), "cmd");
       if (wire::topicIs(in, topic)) {
         // Commands are live-only (rules::commandDeliveryAllowed): a retained "reboot" would

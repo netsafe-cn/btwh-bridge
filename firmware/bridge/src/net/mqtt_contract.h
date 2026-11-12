@@ -24,6 +24,15 @@ constexpr const char* kDeviceManufacturer = "Bosch";
 constexpr const char* kDeviceName       = "Water heater";
 constexpr uint8_t     kQos              = 0;
 
+// Home Assistant's own birth/will topic and the word it publishes on start. Fixed by Home
+// Assistant (its default birth_message), not derived from kDiscoveryPrefix - and the one topic
+// this bridge subscribes to outside its own tree. It exists because attributes and state are
+// live-only (see retain_policy): a Home Assistant that restarts has no cached copy, so without
+// this nudge the diagnostics stay blank until the next 60 s heartbeat.
+constexpr const char* kHaStatusTopic    = "homeassistant/status";
+constexpr const char* kHaStatusOnline   = "online";
+constexpr const char* kHaStatusOffline  = "offline";
+
 // Setpoint bounds for the model this image is built for. Single source: spec/profiles.json
 // (cross-checked against every range stated in this file's source before generation). The
 // full profile table lives in proto/profiles_gen.h, which this layer must not see - it would

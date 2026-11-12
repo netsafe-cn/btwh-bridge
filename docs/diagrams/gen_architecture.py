@@ -180,7 +180,7 @@ def build(theme: str) -> str:
     ax, aw = 1124, 440
     s.card(ax, y1, aw, h1, t["ha"], "Home Assistant", "auto-discovery, no YAML")
     s.bullets(ax + 22, 172, [
-        "21 entities on one device",
+        "22 entities on one device",
         "water heater + number 35-60 C",
         "update entity: Install button",
         "LWT to unavailable in ~1 s",
@@ -209,7 +209,7 @@ def build(theme: str) -> str:
         "shares spec/protocol_vectors.json",
         "desktop console + Bemfa bridge",
         "capture, log_diag: bench tools",
-        "221 offline tests",
+        "237 offline tests",
     ])
 
     # update loop

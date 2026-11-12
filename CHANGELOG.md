@@ -9,6 +9,37 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A `problem` binary sensor over `fault`, so a fault is one boolean away from a trigger
+  (ADR-017).** `binary_sensor.fault_active` is `true` whenever the code is not `none`. The string
+  sensor stays beside it: the code is what a human troubleshooting needs, and a `sensor` cannot
+  carry `device_class: problem`, which is the class Home Assistant highlights and automations
+  trigger on without a template. Both read the state payload and bind state + link with
+  `availability_mode: all`, because a stale "no fault" is worse than no answer. The template
+  defaults a missing field to `none` rather than branching: `binary_sensor.mqtt` matches
+  `payload_on`/`payload_off` only, and anything else is logged as `Invalid state message` on
+  every frame - the warning ADR-016 chased. 21 -> 22 entities.
+
+- **Home Assistant's birth message, so an HA restart costs no data (ADR-017).** Retained
+  discovery rebuilds the entity list by itself; `state` and `attributes` are live-only (ADR-015)
+  and do not, so a restarted Home Assistant showed blank diagnostics for up to a minute and no
+  measurement until the next A0 frame. The bridge now subscribes to `homeassistant/status` - the
+  topic comes from `spec.home_assistant.birth` into `contract::kHaStatusTopic`, not retyped in
+  the .cpp - and on `online` republishes discovery, `availability`, `link`, `attributes` and
+  `update/state`, and queues `state` for the next poll. `offline` (Home Assistant's will) is
+  ignored: the bridge keeps publishing either way. It is the only subscription this client makes
+  outside its own device tree.
+
+- **`spec/mqtt.schema.json`, and a test that makes it bite (ADR-017).** The contract's *shape*
+  had no validator: a topic that lost its `{device_id}` token, or a numeric field that lost its
+  `unit`, was caught only if someone had written an assertion for that key. The draft 2020-12
+  schema pins the machine-read parts - topic templates namespaced `btwh/{device_id}/…`, unit
+  required for numeric fields, `values` required for enums, `retain` as a closed boolean block,
+  the Home Assistant block's required members - and `python/tests/test_spec_schema.py` validates
+  the contract on every run. Five of its six tests break a copy of the contract on purpose (no
+  `{device_id}`, no unit, a misspelled `retain` key, several at once, and the schema's own
+  validity), because a schema that only ever passes proves nothing. `jsonschema` joins
+  requirements-dev.txt; without it the module skips instead of failing.
+
 - **A `link` topic, so "the bridge is up" and "the reading is current" stop being one message
   (ADR-014).** `btwh/<device>/link` is retained, published on change and once per connect, and
   says `offline` after 90 s without an A0 frame (22 missed frames at the 4 s cadence) and until
@@ -119,6 +150,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and the `Invalid state message` warning would come back.
 
 ### Fixed
+
+- **The host selftest total was stale in the one test that pins it.** `test_cpp_selftest.py`
+  asserted 295 checks (discovery 79) while the discovery suite had grown to 170 - two extra
+  per-entity checks had been added by ADR-014 and ADR-016 without updating the number, and the
+  test skips when no host C++ compiler is present, which is why it never noticed. Measured with
+  `ziglang` on 2026-11-12: proto 64 / net 16 / mqtt 41 / rules 76 / provision 19 / discovery 170
+  = **386**. The assertion, `AGENTS.md` and `firmware/bridge/README.md` now carry the measured
+  values; on a runner with g++ the assertion had been failing since the discovery suite grew.
 
 - **Discovery audited against the platform schema, and five conformance defects fixed (ADR-016).**
   The largest was latent: `device_class: timestamp` was fed a raw epoch integer, which the sensor

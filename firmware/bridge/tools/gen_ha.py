@@ -17,6 +17,8 @@ address is not known until the heater is paired. Topic and payload both carry it
 
 Entities: one per state field except `ts`, which is bridge metadata rather than a measurement.
 `setpoint` becomes a number entity bound to the command topic, `flame` a binary sensor.
+`fault` gets two views - the code as a sensor and a `problem` binary sensor, because a sensor
+cannot also be one and an automation should not have to template a string comparison.
 Every attributes field becomes a diagnostic sensor on the attributes topic - the remote
 troubleshooting surface: firmware, uptime, RSSI, pairing state, last disconnect.
 
@@ -267,6 +269,36 @@ def ha_entity(field: dict, doc: dict) -> dict | None:
     return {"component": component, "key": key, "config": cfg}
 
 
+def ha_fault_binary_sensor(doc: dict) -> dict:
+    """The `problem` binary_sensor over `fault`, from home_assistant.fault_binary_sensor.
+
+    The string sensor keeps the code for a human; this answers the only question an automation
+    asks. device_class problem is the community convention for it, and a sensor cannot carry
+    that class, so the field needs two entities rather than one clever one.
+
+    The template defaults a missing field to the healthy value instead of rendering None or an
+    empty string: both would make Home Assistant log "Invalid state message" on every frame,
+    which is the failure this file fixed once already for last_disconnect_at.
+    """
+    spec = doc["home_assistant"]["fault_binary_sensor"]
+    field = spec["state_field"]
+    healthy = spec["healthy_value"]
+    cfg: dict = {
+        "name": spec["name"],
+        "unique_id": "%s_%s" % (DEV, spec["object_id"]),
+        "state_topic": "%s/%s/state" % (doc["base_topic"], DEV),
+        **availability(doc, doc["home_assistant"]["availability_rule"]["state_entities"]),
+        "value_template": ("{{ 'true' if value_json.%s | default('%s') != '%s' else 'false' }}"
+                           % (field, healthy, healthy)),
+        "payload_on": "true",
+        "payload_off": "false",
+        "device_class": spec["device_class"],
+        "origin": origin(doc),
+        "device": device_block(doc),
+    }
+    return {"component": spec["component"], "key": spec["object_id"], "config": cfg}
+
+
 def ha_update_entity(doc: dict) -> dict:
     """The update entity: HA's 'there is newer firmware' card over the existing OTA path.
 
@@ -354,7 +386,16 @@ def render_payload(cfg: dict) -> str:
 
 def entities(doc: dict) -> list:
     """The whole table, in publish order. Shared with the tests so they check what ships."""
-    out = [e for e in (ha_entity(f, doc) for f in doc["state_fields"]) if e]
+    fault = doc.get("home_assistant", {}).get("fault_binary_sensor")
+    out = []
+    for field in doc["state_fields"]:
+        e = ha_entity(field, doc)
+        if e:
+            out.append(e)
+        # A derived entity is emitted next to the field it reads, so the table keeps reading
+        # as "everything about fault" instead of as two lists that can drift apart.
+        if fault and field["key"] == fault["state_field"]:
+            out.append(ha_fault_binary_sensor(doc))
     out += [ha_diag_entity(f, doc) for f in doc["attributes_fields"]]
     if "water_heater_entity" in doc.get("home_assistant", {}):
         out.append(ha_water_heater_entity(doc))

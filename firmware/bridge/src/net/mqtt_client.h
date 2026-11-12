@@ -54,7 +54,10 @@ namespace net {
 //       ota6: the discovery payloads conform to the platform schema (ADR-016). device.sw_version
 //       is generated from this very constant, rssi/last_disconnect_at publish null when unknown
 //       instead of 0, and the transaction buffer grew to 1280 for the larger payload.
-constexpr const char* kFirmwareVersion = "2.9.0-ota6";
+//       ota7: a 22nd entity (binary_sensor fault_active, device_class problem) and a subscription
+//       to Home Assistant's birth topic, which republishes discovery and the live-only topics
+//       when HA restarts. No topic, payload key or command changed shape; contract stays 1.
+constexpr const char* kFirmwareVersion = "2.9.0-ota7";
 
 // Slow-changing metadata, published on every connect and refreshed on the attributes heartbeat.
 // Live-only like state: uptime and RSSI are readings, not configuration.

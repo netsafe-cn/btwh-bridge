@@ -316,6 +316,60 @@ class TestUpdateEntity(unittest.TestCase):
         self.assertIn(r'"payload_install\":\"install', header)
 
 
+class TestFaultBinarySensor(unittest.TestCase):
+    """One field, two views: the code for a human, a problem bit for the UI and for triggers.
+
+    A sensor cannot also carry device_class problem, and an automation that asks "is something
+    wrong" should not have to template a string comparison against 'none'.
+    """
+
+    def setUp(self):
+        self.spec = json.loads(gen_ha.SPEC.read_text(encoding="utf-8"))
+        self.entity = gen_ha.ha_fault_binary_sensor(self.spec)
+        self.cfg = self.entity["config"]
+
+    def test_is_a_problem_binary_sensor_over_a_real_field(self):
+        ha = self.spec["home_assistant"]["fault_binary_sensor"]
+        self.assertEqual(self.entity["component"], "binary_sensor")
+        self.assertEqual(self.cfg["device_class"], "problem")
+        self.assertEqual(self.cfg["state_topic"],
+                         "%s/%s/state" % (self.spec["base_topic"], gen_ha.DEV))
+        self.assertIn(ha["state_field"], [f["key"] for f in self.spec["state_fields"]])
+
+    def test_healthy_code_reads_as_off(self):
+        # 'none' is healthy; any other value is a fault code. The template renders the literals
+        # itself, like flame, because a Python bool renders as "True" and never matches
+        # payload_on "true".
+        self.assertEqual(self.cfg["value_template"],
+                         "{{ 'true' if value_json.fault | default('none') != 'none' "
+                         "else 'false' }}")
+        self.assertEqual((self.cfg["payload_on"], self.cfg["payload_off"]), ("true", "false"))
+
+    def test_no_branch_can_render_an_unmatchable_value(self):
+        # binary_sensor.mqtt matches payload_on/payload_off only; anything else - None, an
+        # empty string - is logged as "Invalid state message" on every frame, which is the
+        # class of bug the last_disconnect_at template had. Hence default() rather than a
+        # second branch.
+        self.assertNotIn("{% else %}", self.cfg["value_template"])
+        self.assertNotIn("None", self.cfg["value_template"])
+
+    def test_is_gated_on_a_fresh_link_and_not_filed_as_diagnostic(self):
+        # A fault bit is a measurement of the heater, not of the bridge: it must grey out with
+        # the rest when frames stop, because a stale "no fault" is worse than no answer.
+        self.assertEqual([a["topic"] for a in self.cfg["availability"]],
+                         ["btwh/@DEV@/availability", "btwh/@DEV@/link"])
+        self.assertEqual(self.cfg["availability_mode"], "all")
+        self.assertNotIn("entity_category", self.cfg)
+
+    def test_rides_next_to_the_field_it_reads(self):
+        # Publish order is the table order; keeping the pair adjacent keeps the generated
+        # header readable and makes the two views impossible to miss when editing one.
+        keys = [e["key"] for e in gen_ha.entities(self.spec)]
+        self.assertEqual(keys[keys.index("fault") + 1], "fault_active")
+        self.assertIn('"fault_active"',
+                      HEADER.read_text(encoding="utf-8"))
+
+
 class TestDeviceMap(unittest.TestCase):
     """The `device` map is identity, and Home Assistant merges entities by it.
 
@@ -408,6 +462,47 @@ class TestEntityIdentity(unittest.TestCase):
         self.assertEqual(len(ids), len(set(ids)),
                          "duplicate unique_id in the discovery table: %s"
                          % sorted(i for i in ids if ids.count(i) > 1))
+
+
+class TestReferencePublisher(unittest.TestCase):
+    """python/tools/mqtt_watch.py --demo must advertise the same device the bridge does.
+
+    The demo is what a panel or a Node-RED flow is developed against. Its discovery list used to
+    be rebuilt by hand and had fallen two entities behind the firmware (the update entity and the
+    fault binary sensor) - a demo whose device differs from the real one teaches the wrong thing,
+    and nothing in the suite compared them.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.spec = json.loads(gen_ha.SPEC.read_text(encoding="utf-8"))
+        tools = ROOT / "python" / "tools"
+        sys.path.insert(0, str(tools))
+        try:
+            import mqtt_watch                                   # noqa: F401 - needs paho
+        except ImportError as exc:                              # pragma: no cover
+            raise unittest.SkipTest("paho-mqtt is a tool dependency: %s" % exc)
+
+    def test_it_emits_exactly_the_generated_entity_set(self):
+        import mqtt_watch
+
+        class Recorder:
+            def __init__(self):
+                self.sent = []
+
+            def publish(self, topic, payload, qos=0, retain=False):
+                self.sent.append((topic, payload, retain))
+
+        device = "btwh_demo01"
+        rec = Recorder()
+        count = mqtt_watch.publish_discovery(rec, self.spec, device)
+        want = {gen_ha.discovery_topic(e["component"], e["key"], self.spec).replace(
+                    gen_ha.DEV, device)
+                for e in gen_ha.entities(self.spec)}
+        self.assertEqual({t for t, _, _ in rec.sent}, want)
+        self.assertEqual(count, len(want))
+        # Discovery is retained on both sides: it is idempotent state, not an action.
+        self.assertTrue(all(retain for _, _, retain in rec.sent))
 
 
 if __name__ == "__main__":

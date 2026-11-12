@@ -156,6 +156,32 @@ class TestMqttContract(unittest.TestCase):
                 self.assertEqual(spec["retain"], self.doc["retain"][name],
                                  "retain[%s] and topics.%s.retain disagree" % (name, name))
 
+    def test_birth_topic_belongs_to_home_assistant(self):
+        # The bridge subscribes to Home Assistant's own status topic, so it must not appear
+        # among the topics we publish, and it must not be namespaced by device id - that
+        # topic is Home Assistant's, one per broker, not one per heater.
+        birth = self.doc["home_assistant"]["birth"]
+        self.assertEqual(birth["topic"], "homeassistant/status")
+        self.assertNotIn("{device_id}", birth["topic"])
+        self.assertEqual((birth["payload_online"], birth["payload_offline"]),
+                         ("online", "offline"))
+        published = [t["topic"] for t in self.doc["topics"].values()]
+        self.assertNotIn(birth["topic"], published)
+
+    def test_firmware_subscribes_to_the_birth_topic(self):
+        # Retained discovery already covers a Home Assistant restart; what it does not cover
+        # is the live-only half (state, attributes), which a restarted consumer has no copy
+        # of. The subscription is therefore load-bearing and stays pinned to the contract
+        # constant rather than to a literal in the .cpp.
+        src = (ROOT / "firmware" / "bridge" / "src" / "net" / "mqtt_client.cpp").read_text(
+            encoding="utf-8")
+        self.assertIn("subscribeFilter(contract::kHaStatusTopic)", src)
+        self.assertIn("handleHaStatus", src)
+        header = (ROOT / "firmware" / "bridge" / "src" / "net" / "mqtt_contract.h").read_text(
+            encoding="utf-8")
+        self.assertIn('kHaStatusTopic    = "%s"' % self.doc["home_assistant"]["birth"]["topic"],
+                      header, "the generated header does not carry the birth topic")
+
     def test_firmware_stale_window_matches_the_contract(self):
         # The firmware owns the clock, the contract owns the promise. Two copies of "90 s"
         # that can drift silently is how an entity ends up quoting a freshness it cannot

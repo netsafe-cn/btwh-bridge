@@ -38,7 +38,7 @@ firmware/bridge/
 │       ├── mqtt_wire.cpp/h    hand-written MQTT 3.1.1 packets (pure C++)
 │       ├── mqtt_rules.cpp/h   inbound grammar: broker, setpoint, commands, OTA URL
 │       ├── mqtt_client.cpp/h  the session: connect, backoff, publish, subscribe
-│       ├── discovery.cpp/h + ha_discovery_gen.h  21 entities, GENERATED from spec
+│       ├── discovery.cpp/h + ha_discovery_gen.h  22 entities, GENERATED from spec
 │       ├── state_json.cpp/h   snapshot -> contract JSON bytes
 │       ├── ota.cpp/h          HTTP flasher: 2 KB chunks, 120 s budget, checksum-gated
 │       └── selftest.h         shared selftest plumbing
@@ -48,7 +48,7 @@ firmware/bridge/
 │   ├── gen_vectors.py         spec/protocol_vectors.json -> src/proto/vectors_gen.h
 │   ├── gen_profiles.py        spec/profiles.json -> src/proto/profiles_gen.h
 │   ├── gen_mqtt.py            spec/mqtt.json -> src/net/mqtt_contract.h
-│   ├── gen_ha.py              spec/mqtt.json -> src/net/ha_discovery_gen.h (21 entities)
+│   ├── gen_ha.py              spec/mqtt.json -> src/net/ha_discovery_gen.h (22 entities)
 │   ├── host_selftest.py       the six C++ suites on the host (g++/clang++/zig)
 │   ├── esp32_panel.py         always-on-top control panel (enter the six-digit code)
 │   ├── pair_once.py           pair in one command and report a verdict
@@ -105,7 +105,7 @@ board still links. Do it as one commit, with the golden vectors as the judge.
 
 ### 2.2 Proving the layers still correct
 
-The six C++ suites (proto 64 / net 16 / mqtt 41 / rules 76 / provision 19 / discovery 79 — 295
+The six C++ suites (proto 64 / net 16 / mqtt 41 / rules 76 / provision 19 / discovery 170 — 386
 checks) run in **two places**, and the counts are pinned in lockstep by
 `python/tests/test_cpp_selftest.py`:
 
@@ -176,7 +176,7 @@ Code expired or rejected? **Read a new one and type it again** — no build invo
 | `ota` | Prints how to flash: the URL goes to the MQTT `ota` topic — the console deliberately refuses to become a second flasher |
 | `status` | Print configuration and runtime state |
 | `mqtt` | Print the payload for the live MQTT state |
-| `selftest` | Run the six C++ suites on the board (295 checks) |
+| `selftest` | Run the six C++ suites on the board (386 checks) |
 | `raw on` / `raw off` | Show / hide raw A0 bytes |
 | `reboot` / `help` | Reboot / help |
 
@@ -202,7 +202,7 @@ Code expired or rejected? **Read a new one and type it again** — no build invo
 
 ```
 1. Wi-Fi connection (first provisioning without touching code)          done
-2. MQTT reporting + Home Assistant discovery (21 entities)              done, bench-verified
+2. MQTT reporting + Home Assistant discovery (22 entities)              done, bench-verified
 3. Setpoint commands downstream (D3 write, sendFrame is already usable) bench round-trip done
 4. OTA updates (no more unplugging to reach USB)                        done, incl. HA update entity
 5. Reconnect hardening + watchdog (soak for two days)                   partially: 25-min soak green,
@@ -226,7 +226,7 @@ Code expired or rejected? **Read a new one and type it again** — no build invo
 | Login MAC | This host's Bluetooth address, set with `mac <MAC>` (placeholder `11:22:33:44:55:66`) |
 
 Protocol references: `docs/BLE_PROTOCOL.md` in the repository root (field calibration in §6, B0/D7 in
-§16), `docs/API.md`, and `python/bosch_api.py` (221 tests). The SMP pin behaviour is corroborated by captures
+§16), `docs/API.md`, and `python/bosch_api.py` (237 tests). The SMP pin behaviour is corroborated by captures
 on real hardware — see `docs/API.md §10`.
 
 ## 8. Build environment (new machine / reinstall)
@@ -279,9 +279,9 @@ finished when it is not.
 | Real-heater BLE session | ✅ **passed**: encrypted link, `A2/07` = `01`, `A2/08` = `01`, steady A0 |
 | Power-cycle recovery | ✅ reconnects unattended using the code stored in NVS, including booting before the AP (30 s join retry) |
 | Wi-Fi / provisioning portal / broker credentials | ✅ |
-| MQTT + Home Assistant discovery (21 entities) | ✅ bench-verified against a production HAOS Mosquitto |
+| MQTT + Home Assistant discovery (22 entities) | ✅ bench-verified against a production HAOS Mosquitto |
 | OTA + HA update entity | ✅ end to end: MQTT URL flash, manifest, Install button, 4.5 s reflash, entity settles off |
-| Host-side C++ selftest (`host_selftest.py`, 295 checks) | ✅ in CI |
+| Host-side C++ selftest (`host_selftest.py`, 386 checks) | ✅ in CI |
 | Stability soak | ✅ 25 min: zero heartbeat drift, forced AP outage recovered in 6 s; one-week live soak pending |
 | Hardware facts (16 MB flash, 8 MB Octal PSRAM idle) | ✅ identified; the configuration upgrade is the next step |
 

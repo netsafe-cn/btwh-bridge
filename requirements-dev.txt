@@ -8,5 +8,11 @@
 # ESP32 串口工具（esp32/gateway/gateway_cli.py、esp32_panel.py）需要
 pyserial>=3.5
 
+# spec/mqtt.schema.json 的校验（python/tests/test_spec_schema.py）。
+# 契约文件的**形状**要靠它来卡：topic 忘了 {device_id}、数值字段丢了 unit、
+# retain 块里拼错一个 flag，这些都不该靠某个具体 key 的断言偶然发现。
+# 缺这个包时该模块的用例 skip 而不是 fail，所以只有运行时依赖的机器仍能跑其余套件。
+jsonschema>=4.20
+
 # 说明：单元测试只用标准库 unittest / unittest.mock，**不引入第三方 mock 包**。
 # WinRT 系统级配对是 Windows 可选能力，Linux/macOS CI 不安装，相关用例自动 skip。

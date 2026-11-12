@@ -1,0 +1,337 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/netsafe-cn/btwh-bridge/spec/mqtt.schema.json",
+  "title": "btwh-bridge MQTT contract",
+  "description": "Structural schema for spec/mqtt.json. It checks the machine-read parts - topic templates, field metadata, retain flags, the Home Assistant block - and leaves the prose keys (*_note, note, purpose, description) free. Validated by python/tests/test_spec_schema.py on every run, so a contract edit that breaks the shape fails the same suite that checks the generators.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "status",
+    "contract_version",
+    "contract_rules",
+    "base_topic",
+    "device_id",
+    "qos",
+    "retain",
+    "retain_policy",
+    "topics",
+    "state_fields",
+    "attributes_fields",
+    "home_assistant",
+    "consumer_rules",
+    "source_of_truth"
+  ],
+  "properties": {
+    "schema_version": {
+      "description": "Schema of this file. Bumped when a validator-visible rule changes.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "description": "'draft' until the first public release; 'released' freezes contract_version.",
+      "enum": ["draft", "released"]
+    },
+    "contract_version": {
+      "description": "The promise to consumers: minor for additions, major for renames or moved topics.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "contract_rules": {"type": "string", "minLength": 1},
+    "base_topic": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "device_id": {"type": "string", "minLength": 1},
+    "device_id_note": {"type": "string"},
+    "qos": {"type": "integer", "minimum": 0, "maximum": 2},
+    "retain": {
+      "description": "One flag per topic, plus 'discovery'. Readings are false, statuses are true; retain_policy explains why. Closed on purpose - a typo here is a flag that silently does nothing.",
+      "type": "object",
+      "required": [
+        "state",
+        "attributes",
+        "availability",
+        "link",
+        "update_state",
+        "discovery"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "state": {"type": "boolean"},
+        "attributes": {"type": "boolean"},
+        "availability": {"type": "boolean"},
+        "link": {"type": "boolean"},
+        "update_state": {"type": "boolean"},
+        "discovery": {"type": "boolean"}
+      }
+    },
+    "retain_policy": {"type": "string", "minLength": 1},
+    "topics": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/topic"}
+    },
+    "state_fields": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/stateField"}
+    },
+    "attributes_fields": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/attributeField"}
+    },
+    "home_assistant": {"$ref": "#/$defs/homeAssistant"},
+    "consumer_rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "producers": {"type": "object"},
+    "consumers": {"type": "object"},
+    "source_of_truth": {"type": "string", "minLength": 1},
+    "note": {"type": "string"}
+  },
+
+  "$defs": {
+    "topic": {
+      "type": "object",
+      "required": ["topic", "direction", "payload", "purpose"],
+      "properties": {
+        "topic": {
+          "description": "Every topic is namespaced by device id: two heaters on one broker must never collide, and the validator is the only thing that notices a template that forgot the token.",
+          "type": "string",
+          "pattern": "^btwh/\\{device_id\\}/[a-z0-9/_-]+$"
+        },
+        "direction": {"enum": ["bridge -> consumer", "consumer -> bridge"]},
+        "payload": {"enum": ["json", "text"]},
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "retain": {"type": "boolean"},
+        "range": {"$ref": "#/$defs/range"},
+        "unit": {"type": "string", "minLength": 1},
+        "grammar": {"type": "string", "minLength": 1},
+        "stale_after_s": {"type": "number", "exclusiveMinimum": 0},
+        "purpose": {"type": "string", "minLength": 1}
+      }
+    },
+
+    "range": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {"type": "number"}
+    },
+
+    "key": {
+      "description": "JSON key in the payload, and the discovery object id. Lower snake case, because consumers generate variable names from it.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+
+    "stateField": {
+      "type": "object",
+      "required": ["key", "type", "label"],
+      "properties": {
+        "key": {"$ref": "#/$defs/key"},
+        "type": {"enum": ["float", "int", "bool", "string", "enum"]},
+        "label": {"type": "string", "minLength": 1},
+        "unit": {"type": "string", "minLength": 1},
+        "precision": {"type": "integer", "minimum": 0, "maximum": 3},
+        "range": {"$ref": "#/$defs/range"},
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "device_class": {"type": "string", "minLength": 1},
+        "state_class": {"enum": ["measurement", "setpoint", "total", "total_increasing"]},
+        "source": {
+          "description": "Name on DeviceState, cross-checked by test_mqtt_contract.py; null for a field the bridge sets itself.",
+          "type": ["string", "null"]
+        },
+        "nullable": {"type": "boolean"},
+        "note": {"type": "string"}
+      },
+      "allOf": [
+        {
+          "description": "A numeric field is meaningless without its unit - a consumer cannot render 42.3.",
+          "if": {"properties": {"type": {"enum": ["float", "int"]}}},
+          "then": {"required": ["unit"]}
+        },
+        {
+          "description": "An enum without values cannot be rendered or matched.",
+          "if": {"properties": {"type": {"const": "enum"}}},
+          "then": {"required": ["values"]}
+        }
+      ]
+    },
+
+    "attributeField": {
+      "type": "object",
+      "required": ["key", "type", "label"],
+      "properties": {
+        "key": {"$ref": "#/$defs/key"},
+        "type": {"enum": ["float", "int", "bool", "string", "enum"]},
+        "label": {"type": "string", "minLength": 1},
+        "unit": {"type": "string", "minLength": 1},
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "nullable": {
+          "description": "True when the field may be JSON null: reported, but unknown right now. A sentinel 0 would be a number nobody measured.",
+          "type": "boolean"
+        },
+        "note": {"type": "string"}
+      }
+    },
+
+    "homeAssistant": {
+      "type": "object",
+      "required": [
+        "discovery_prefix",
+        "device",
+        "origin",
+        "availability_rule",
+        "birth",
+        "fault_binary_sensor",
+        "update_entity",
+        "water_heater_entity"
+      ],
+      "properties": {
+        "discovery_prefix": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "device": {
+          "type": "object",
+          "required": [
+            "identifiers",
+            "manufacturer",
+            "model",
+            "name",
+            "sw_version",
+            "hw_version"
+          ],
+          "properties": {
+            "identifiers": {
+              "type": "array",
+              "minItems": 1,
+              "items": {"type": "string", "minLength": 1}
+            },
+            "manufacturer": {"type": "string", "minLength": 1},
+            "model": {"type": "string", "minLength": 1},
+            "name": {"type": "string", "minLength": 1},
+            "sw_version": {
+              "description": "@FW@ is the token gen_ha.py replaces with kFirmwareVersion; a literal here would be a second copy of the version.",
+              "type": "string",
+              "minLength": 1
+            },
+            "hw_version": {"type": "string", "minLength": 1}
+          }
+        },
+        "origin": {
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "name": {"type": "string", "minLength": 1},
+            "support_url": {"type": "string", "minLength": 1},
+            "note": {"type": "string"}
+          }
+        },
+        "availability_rule": {
+          "type": "object",
+          "required": ["state_entities", "bridge_entities", "mode"],
+          "properties": {
+            "state_entities": {
+              "type": "array",
+              "minItems": 1,
+              "items": {"type": "string", "minLength": 1}
+            },
+            "bridge_entities": {
+              "type": "array",
+              "minItems": 1,
+              "items": {"type": "string", "minLength": 1}
+            },
+            "mode": {"enum": ["all", "any", "latest"]},
+            "note": {"type": "string"}
+          }
+        },
+        "birth": {
+          "description": "Home Assistant's own status topic. The bridge subscribes, never publishes.",
+          "type": "object",
+          "required": ["topic", "payload_online", "payload_offline"],
+          "properties": {
+            "topic": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*/[a-z0-9/_-]+$"
+            },
+            "payload_online": {"type": "string", "minLength": 1},
+            "payload_offline": {"type": "string", "minLength": 1},
+            "note": {"type": "string"}
+          }
+        },
+        "fault_binary_sensor": {
+          "type": "object",
+          "required": ["component", "object_id", "name", "device_class", "state_field", "healthy_value"],
+          "properties": {
+            "component": {"const": "binary_sensor"},
+            "object_id": {"$ref": "#/$defs/key"},
+            "name": {"type": "string", "minLength": 1},
+            "device_class": {"const": "problem"},
+            "state_field": {"$ref": "#/$defs/key"},
+            "healthy_value": {"type": "string", "minLength": 1},
+            "note": {"type": "string"}
+          }
+        },
+        "update_entity": {
+          "type": "object",
+          "required": ["component", "payload_install", "title", "device_class"],
+          "properties": {
+            "component": {"const": "update"},
+            "state": {"type": "string"},
+            "command": {"type": "string"},
+            "payload_install": {"type": "string", "minLength": 1},
+            "title": {"type": "string", "minLength": 1},
+            "device_class": {"const": "firmware"},
+            "entity_category": {"enum": ["config", "diagnostic"]},
+            "note": {"type": "string"}
+          }
+        },
+        "water_heater_entity": {
+          "type": "object",
+          "required": [
+            "component",
+            "current_temperature",
+            "target_temperature",
+            "modes",
+            "mode_template",
+            "temperature_unit",
+            "min_temp",
+            "max_temp"
+          ],
+          "properties": {
+            "component": {"const": "water_heater"},
+            "current_temperature": {"$ref": "#/$defs/key"},
+            "target_temperature": {"$ref": "#/$defs/key"},
+            "command_topic": {"type": "string"},
+            "modes": {
+              "type": "array",
+              "minItems": 1,
+              "items": {"type": "string", "minLength": 1}
+            },
+            "mode_template": {"type": "string", "minLength": 1},
+            "temperature_unit": {"enum": ["C", "F"]},
+            "min_temp": {"type": "number"},
+            "max_temp": {"type": "number"},
+            "precision": {"type": "number", "exclusiveMinimum": 0},
+            "note": {"type": "string"}
+          }
+        },
+        "entity_note": {"type": "string"}
+      }
+    }
+  }
+}

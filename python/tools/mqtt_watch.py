@@ -91,19 +91,16 @@ def fmt_state(payload: str) -> str:
 def publish_discovery(c, spec: dict, device: str) -> int:
     """Publish the HA discovery topics, exactly as the firmware does on connect.
 
-    Same source as the firmware (gen_ha), so the demo bridge cannot advertise entities the
-    real bridge would not: without this, `--demo` builds a state feed HA ignores - the touch
-    panel and Node-RED can watch it, but Home Assistant needs the config messages.
+    Same source as the firmware: the list comes from gen_ha.entities(), which is what
+    publishDiscovery() iterates on the board. This function used to walk state_fields and
+    attributes_fields itself and had quietly fallen two entities behind - the update entity and
+    the fault binary sensor - which is exactly the drift a reference publisher must not have: a
+    demo advertising a different device than the bridge is worse than no demo.
     """
     sys.path.insert(0, str(REPO / "firmware" / "bridge" / "tools"))
-    from gen_ha import (DEV, discovery_topic, ha_diag_entity,   # noqa: E402
-                        ha_entity, ha_water_heater_entity, render_payload)
+    from gen_ha import DEV, discovery_topic, entities, render_payload   # noqa: E402
     sent = 0
-    entities = [e for e in (ha_entity(f, spec) for f in spec["state_fields"]) if e]
-    entities += [ha_diag_entity(f, spec) for f in spec["attributes_fields"]]
-    if "water_heater_entity" in spec.get("home_assistant", {}):
-        entities.append(ha_water_heater_entity(spec))
-    for entity in entities:
+    for entity in entities(spec):
         topic = discovery_topic(entity["component"], entity["key"], spec).replace(DEV, device)
         payload = render_payload(entity["config"]).replace(DEV, device)
         c.publish(topic, payload, retain=True)
@@ -186,6 +183,11 @@ def main() -> int:
                                 "last_disconnect_at": 0},
                                separators=(",", ":"))
             c.publish("%s/availability" % dev_root, "online", retain=True)
+            # Freshness is the second signal, and omitted it is not neutral: the measurements
+            # bind availability + link with availability_mode all (ADR-014), so a demo that
+            # never publishes link advertises a device whose numbers Home Assistant refuses to
+            # show. Retained, like the firmware's.
+            c.publish("%s/link" % dev_root, "online", retain=True)
             # Readings are live-only (spec retain_policy, ADR-015): a retained demo state
             # would outlive the process and keep answering after Ctrl-C.
             c.publish("%s/attributes" % dev_root, attrs, retain=False)
@@ -305,8 +307,10 @@ def main() -> int:
         pass
     finally:
         if args.demo:
-            # Leave the retained availability honest: a stale "online" outlives this process.
+            # Leave the retained status honest: a stale "online" outlives this process, and
+            # both signals have to go or the measurements stay available on the broker's word.
             client.publish("%s/%s/availability" % (base, device), "offline", retain=True)
+            client.publish("%s/%s/link" % (base, device), "offline", retain=True)
         client.loop_stop()
         client.disconnect()
     return 0

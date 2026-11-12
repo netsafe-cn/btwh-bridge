@@ -14,7 +14,7 @@ project look more polished, this paragraph is where you stop and ask.
 ## Build and flash
 
 ```bash
-python run_tests.py                                    # 221 offline tests, no hardware
+python run_tests.py                                    # 237 offline tests, no hardware
 python firmware/bridge/tools/gateway_cli.py --build    # compile only (~15 min cold)
 python firmware/bridge/tools/gateway_cli.py --flash    # compile, flash COM3, open console
 python firmware/bridge/tools/gateway_cli.py            # console only, no rebuild
@@ -51,7 +51,7 @@ python firmware/bridge/tools/host_selftest.py              # the six C++ suites,
 # then flash and type: selftest                            # the same six suites, on the board
 ```
 
-The six C++ suites (proto 64 / net 16 / mqtt 41 / rules 76 / provision 19 / discovery 79)
+The six C++ suites (proto 64 / net 16 / mqtt 41 / rules 76 / provision 19 / discovery 170 — 386)
 run in two places, and the check counts must stay in lockstep:
 
 - **on the host** — `host_selftest.py` compiles the framework-free layers with g++/clang++

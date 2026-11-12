@@ -317,7 +317,16 @@
       "hw_version": "ESP32-S3",
       "version_note": "sw_version is the @FW@ token, replaced by gen_ha.py with kFirmwareVersion read out of firmware/bridge/src/net/mqtt_client.h - so the device page cannot claim a version the board is not running, and --check fails when the header is older than a bump. hw_version is the build target, which is fixed for this firmware. Both belong here rather than on diagnostic sensors: Home Assistant shows them on the device page, and they describe the hardware, not a measurement."
     },
-    "entity_note": "One entity per state field. Sensors use state_class measurement; setpoint is a number entity; flame is a binary_sensor; mode is an enum sensor; fault is a sensor with an icon template. Every attributes field is also an entity, but entity_category diagnostic, so Home Assistant files it under diagnostics instead of cluttering the device page - a remote user can read firmware, RSSI and the last disconnect without shell access to the board.",
+    "entity_note": "One entity per state field. Sensors use state_class measurement; setpoint is a number entity; flame is a binary_sensor; mode is an enum sensor; fault is a sensor with an icon template plus a problem binary_sensor (see fault_binary_sensor). Every attributes field is also an entity, but entity_category diagnostic, so Home Assistant files it under diagnostics instead of cluttering the device page - a remote user can read firmware, RSSI and the last disconnect without shell access to the board.",
+    "fault_binary_sensor": {
+      "component": "binary_sensor",
+      "object_id": "fault_active",
+      "name": "Fault active",
+      "device_class": "problem",
+      "state_field": "fault",
+      "healthy_value": "none",
+      "note": "The string sensor keeps the code ('E9', 'none'); this second entity answers the only question an automation asks: is something wrong right now. device_class problem is the community convention for that - it is what Home Assistant's UI highlights and what a trigger reads without a template. Two entities over one field rather than one entity doing both, because a sensor cannot also be a problem binary_sensor. The template defaults a missing field to 'none': the state payload always carries fault, and a binary_sensor that rendered None (or an empty string) would log 'Invalid state message' instead of showing anything."
+    },
     "origin": {
       "name": "btwh-bridge",
       "support_url": "https://github.com/netsafe-cn/btwh-bridge",
@@ -333,6 +342,12 @@
       ],
       "mode": "all",
       "note": "A state-derived entity (measurements and the water_heater view) is only as good as the freshest frame: it binds both topics with availability_mode all, so losing the heater greys it out instead of showing a number nobody measured. A bridge-derived entity (the attributes diagnostics and the update entity) binds availability only - pairing state, RSSI and 'install firmware' are facts about the bridge and must stay readable precisely when the heater is unreachable. Single-topic entities keep using availability_topic; the list form appears only where a second topic is added, because the two forms are mutually exclusive."
+    },
+    "birth": {
+      "topic": "homeassistant/status",
+      "payload_online": "online",
+      "payload_offline": "offline",
+      "note": "Home Assistant's own birth/will topic. Its MQTT integration publishes 'online' there when it starts, so a bridge that hears it can repair a consumer that restarted with nothing cached: discovery is retained and reloaded from the broker anyway, but attributes and state are live-only (see retain_policy), so without this message a restarted Home Assistant would show blank diagnostics until the next 60 s heartbeat. The topic is Home Assistant's fixed default, not derived from discovery_prefix - it is not a place this bridge publishes anything, only subscribes. 'offline' is ignored: the bridge keeps publishing either way, and a retained discovery document is what gets the next start up."
     },
     "update_entity": {
       "component": "update",

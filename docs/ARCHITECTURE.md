@@ -313,7 +313,7 @@ broker quirks are ours to find. The self test is what makes that acceptable, and
 listed in `docs/MQTT.md` §5 rather than discovered by a user.
 
 **Related decision**: the Home Assistant discovery documents are **generated** from
-`spec/mqtt.json` (`tools/gen_ha.py`) rather than written by hand. Twenty-one entities across
+`spec/mqtt.json` (`tools/gen_ha.py`) rather than written by hand. Twenty-two entities across
 nine state fields and eight diagnostics is exactly the size at which one renamed key silently
 breaks one entity, and a generated table cannot disagree with the contract.
 
@@ -594,6 +594,79 @@ wire.
 
 ---
 
+### ADR-017 Two views of a fault, a birth subscription, and a schema for the contract
+
+**Context**: three gaps left over from ADR-016's audit, all of the same shape — a consumer can
+read a *value* but has no *statement* to act on.
+
+1. `fault` was a single string sensor. An automation that wants "tell me when something breaks"
+   has to template `value_json.fault != 'none'` in every trigger, and the UI has nothing to
+   highlight: `device_class: problem` is the class Home Assistant raises alerts on, and a
+   `sensor` cannot carry it.
+2. Retained discovery survives a Home Assistant restart; the live-only half does not. After a
+   restart the diagnostics read blank for up to a minute, and no measurement exists until the
+   next A0 frame — which, with the heater out of range, may never arrive. The bridge, meanwhile,
+   has no way of knowing anyone restarted.
+3. The contract file had no structural validator. `test_mqtt_contract.py` pins individual keys
+   against the Python library and the `gen_*` checks pin the generated headers, but a topic that
+   lost its `{device_id}` token, or a numeric field that lost its `unit`, was caught only if
+   someone happened to write an assertion for that particular key.
+
+**Decision**:
+
+- `fault` gains a second entity, `binary_sensor.fault_active`, `device_class: problem`, `true`
+  whenever the code is anything but `none`. The template is
+  `{{ 'true' if value_json.fault | default('none') != 'none' else 'false' }}`: `default()`
+  rather than a second branch, because `binary_sensor.mqtt` matches `payload_on`/`payload_off`
+  only and anything else — `None`, an empty string — is logged as `Invalid state message` on
+  every frame, which is the warning ADR-016 item 2 chased. Both entities bind state + link with
+  `availability_mode: all`: a stale "no fault" is worse than no answer.
+- The bridge subscribes to `homeassistant/status`, Home Assistant's default birth topic, and on
+  `online` republishes discovery, `availability`, `link`, `attributes` and `update/state`, and
+  queues `state` for the next poll. `offline` (Home Assistant's will) is ignored — the bridge
+  keeps publishing either way. The topic is generated from `spec.home_assistant.birth` into
+  `contract::kHaStatusTopic` instead of being retyped in the `.cpp`, and it is the only
+  subscription this client makes outside its own tree.
+- `spec/mqtt.schema.json` (draft 2020-12) describes the machine-read parts: every topic template
+  is namespaced `btwh/{device_id}/…`, a numeric field must carry a `unit`, an enum must carry
+  `values`, `retain` is a closed boolean block on a fixed key set, and the Home Assistant block
+  pins its required members. `python/tests/test_spec_schema.py` validates the contract on every
+  run — and, this being the half that keeps a schema honest, breaks a copy of the contract in
+  three ways and asserts each one is rejected. `jsonschema` is a dev requirement; without it the
+  module skips rather than fails.
+
+**Cost**: a 22nd entity (470 B of payload, against a 1280 B packet budget that the water_heater
+entry already dominates), one extra subscription together with the burst of publishes a birth
+message triggers, a schema to keep in step with the contract, and one new dev-time dependency.
+
+**Found while verifying**: `test_cpp_selftest.py` pinned the host suite at 295 checks (discovery
+79) — a number that had been stale since the discovery self test grew two per-entity checks (the
+link/availability wiring in ADR-014 and the real PUBLISH packet in ADR-016). The file skips when
+no host compiler is present, which is exactly the machine `run_tests.py` is usually run on, so
+nothing ever compared the two. With `ziglang` installed the real total is 386 (discovery 170);
+the assertion, `AGENTS.md` and `firmware/bridge/README.md` now carry the measured numbers.
+
+**Alternatives considered**:
+
+- *One `sensor` carrying `device_class: problem`.* Not a thing: a sensor's device classes are
+  measurements. The field needs two entities or the alert needs a template everywhere.
+- *`binary_sensor` only, dropping the string sensor.* Loses the code, which is what a human
+  troubleshooting actually needs. The two views answer different questions.
+- *`expire_after` to cover the restart gap.* `water_heater`, `number` and `update` do not have
+  the field, and it would not help anyway: it hides a stale value, while the gap here is a
+  *missing* one. The birth message repairs instead of hiding.
+- *More hand-written assertions instead of a schema.* They cover the keys someone remembered to
+  write. A schema covers the next field too, which is the entire point.
+- *Generating the birth subscription from a topic in the contract's `topics` block.* That block
+  is namespaced by device id and validated as such; this topic is Home Assistant's, one per
+  broker. It lives in its own block precisely so it cannot be mistaken for something we publish.
+
+**Benefit**: a fault is one boolean away from a trigger and from the UI's problem highlight; a
+Home Assistant restart costs no data instead of a minute of blanks; and a malformed contract
+edit fails one test with a path and a message, before a generator or a firmware build ever runs.
+
+---
+
 ## 3. Repository layout
 
 Landed in 0.2.0. The repository is a monorepo split by **role**, not by file type: an
@@ -604,7 +677,7 @@ share.
 python/                     Reference implementation
   python/bosch_api.py              codec / session / resident service
   python/device_fsm.py             provisioning + pairing state machine
-  tests/                    221 offline tests
+  tests/                    237 offline tests
   tools/                    console, headless bridge, capture
 
 firmware/                   One directory per application
@@ -663,7 +736,7 @@ breaking change.
 |---|---|---|
 | **0 · done** | Protocol work, Python reference implementation, test suite, ESP32 feasibility firmware | Regression green; firmware boots |
 | **1 · done** | Real-heater verification (SMP / A2/07 / A2/08 / A0), runtime pairing code, power-cycle recovery, repository restructured for multiple applications | All three log stages pass on hardware |
-| **2 · done** | MQTT publishing against `spec/mqtt.json`, HA discovery (21 entities), broker credentials, HTTP OTA + the HA update entity | Bench-verified end to end on a production HAOS Mosquitto; a panel can be built against the contract with no bridge changes |
+| **2 · done** | MQTT publishing against `spec/mqtt.json`, HA discovery (22 entities), broker credentials, HTTP OTA + the HA update entity | Bench-verified end to end on a production HAOS Mosquitto; a panel can be built against the contract with no bridge changes |
 | **3 · current** | One week attached to a real heater; ESP-IDF migration; OTA rollback configuration; watchdog; touch panel in `firmware/panel/` | Seven days without a drop; rollback proven; second application shipped |
 | **4 · optional** | ESPHome external component, field mapping for more models, more language bindings, https OTA sources | At least two models verified by the community |
 
@@ -698,3 +771,4 @@ breaking change.
 | 2026-11-12 | Freshness split from liveness (ADR-014): retained `link` topic, stale snapshot no longer republished, a frame recognised by the parser's timestamp instead of the per-session counter; discovery binds state-fed entities to both signals; origin block added; 209 -> 212 tests |
 | 2026-11-12 | Retain split by kind (ADR-015): `state` and `attributes` published live-only, only status retained, so a dead bridge leaves no reading on the broker; 212 -> 215 tests |
 | 2026-11-12 | Discovery audited against the platform schema (ADR-016): `device.sw_version`/`hw_version` generated from the firmware constant, the timestamp sensor formats instead of passing an epoch through, `rssi`/`last_disconnect_at` publish null and are marked nullable, the update entity loses `entity_category: config`, and the wire buffer grows to 1280 with a packet-level test on both sides; 215 -> 221 tests |
+| 2026-11-12 | Fault binary sensor, Home Assistant birth subscription and a JSON Schema for the contract (ADR-017): `binary_sensor.fault_active` with `device_class: problem`, `homeassistant/status` handled by republishing discovery and the live-only topics, `spec/mqtt.schema.json` validated by a test that also breaks the contract on purpose; 21 -> 22 entities, 221 -> 237 tests |

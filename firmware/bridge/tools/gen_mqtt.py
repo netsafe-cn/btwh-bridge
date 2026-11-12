@@ -8,7 +8,8 @@ build time, so it is generated - exactly like spec/protocol_vectors.json -> vect
 
 What the header carries:
 
-  * topic and discovery constants (never hand-copied into firmware)
+  * topic and discovery constants (never hand-copied into firmware), including the one topic
+    the bridge subscribes to outside its own tree - Home Assistant's birth topic
   * the field table: key, type, precision, unit, device_class, state_class, label
   * one golden snapshot and the exact JSON string the bridge must publish for it
 
@@ -175,6 +176,15 @@ constexpr const char* kDeviceManufacturer = "%s";
 constexpr const char* kDeviceName       = "%s";
 constexpr uint8_t     kQos              = %d;
 
+// Home Assistant's own birth/will topic and the word it publishes on start. Fixed by Home
+// Assistant (its default birth_message), not derived from kDiscoveryPrefix - and the one topic
+// this bridge subscribes to outside its own tree. It exists because attributes and state are
+// live-only (see retain_policy): a Home Assistant that restarts has no cached copy, so without
+// this nudge the diagnostics stay blank until the next 60 s heartbeat.
+constexpr const char* kHaStatusTopic    = "%s";
+constexpr const char* kHaStatusOnline   = "%s";
+constexpr const char* kHaStatusOffline  = "%s";
+
 // Setpoint bounds for the model this image is built for. Single source: spec/profiles.json
 // (cross-checked against every range stated in this file's source before generation). The
 // full profile table lives in proto/profiles_gen.h, which this layer must not see - it would
@@ -194,6 +204,7 @@ struct FieldDesc {
 };
 """ % (doc["base_topic"], ha["discovery_prefix"], ha["device"]["model"],
        ha["device"]["manufacturer"], ha["device"]["name"], doc["qos"],
+       ha["birth"]["topic"], ha["birth"]["payload_online"], ha["birth"]["payload_offline"],
        set_lo, set_hi))
 
     out.append("static const FieldDesc kFields[] = {\n")
