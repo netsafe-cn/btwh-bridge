@@ -9,6 +9,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A getting-started guide for the person who owns the heater, not the repository
+  (`docs/GETTING_STARTED.zh-CN.md`).** Every existing document assumes the reader can read a
+  build log; the person who ends up holding the board cannot. The guide covers what to buy and
+  what not to buy (ESP32-S3, 8 MB flash minimum, the traps: C3, WROOM-32, charge-only USB
+  cables), two ways to flash one `btwh-bridge-full.bin` at `0x0` - the Espressif GUI tool and a
+  single `esptool` command - then the phone-only provisioning flow (join `BTWH-Bridge-XXXX`,
+  password `bridge123`, `192.168.4.1`, an English-form-to-Chinese table), and the pairing
+  sequence that people get wrong: the six-digit code has to go into the *same* form submission
+  as the Wi-Fi password, because saving tears the setup AP down. It also states the limitation
+  plainly instead of hiding it: a board whose Wi-Fi changed has no way back in without a USB
+  cable and the `portal` console command. The whole-image build (bootloader + partitions +
+  boot_app0 + app merged, 1,236,944 B) was produced and its magic bytes checked at `0x0`,
+  `0x8000` and `0x10000`; flashing it wipes stored configuration, which the guide says out loud.
+
 - **A `problem` binary sensor over `fault`, so a fault is one boolean away from a trigger
   (ADR-017).** `binary_sensor.fault_active` is `true` whenever the code is not `none`. The string
   sensor stays beside it: the code is what a human troubleshooting needs, and a `sensor` cannot

@@ -75,7 +75,7 @@ AI 生成的、而且写错了"完全可以作为一条 issue 的第一句话。
 | Python 协议库 `bosch_api` | ✅ 可用 | **237 项**离线测试全绿，含签名冻结契约与黄金向量 |
 | 桌面控制台 / 米家桥接 | ✅ 可用 | tkinter GUI + 巴法云（中国区可选，非主线） |
 | ESP32-S3 网关固件 v2 | ✅ 已验证 | 实机连通通过：SMP 加密 → `A2/07` → `A2/08=01` → `A0` 稳定刷帧；断电重启自动恢复，含「板子比 AP 先启动」场景 |
-| MQTT / Home Assistant 自动发现 | ✅ 端到端验证 | 21 个实体自动发现（热水器 + 11 测量 + 8 诊断 + 1 固件更新，含 RSSI 与最近断连原因，远程排障用）；调温命令往返闭环，已在 HAOS 生产级 Mosquitto 上验证，见 [MQTT.md](docs/MQTT.md) |
+| MQTT / Home Assistant 自动发现 | ✅ 端到端验证 | 22 个实体自动发现（热水器 + 12 实时 + 8 诊断 + 1 固件更新，含 RSSI 与最近断连原因，远程排障用）；调温命令往返闭环，已在 HAOS 生产级 Mosquitto 上验证，见 [MQTT.md](docs/MQTT.md) |
 | OTA 固件远程更新 | ✅ 端到端验证 | 板子经自己的 MQTT 链路自刷（HTTP 镜像 + 校验门禁，失败绝不碰在跑固件）；HA update 实体的「安装」按钮走同一条刷写路径，见 [CHANGELOG](CHANGELOG.md) |
 | 配网（Improv WiFi） | 📐 契约已定 | 以 `python/device_fsm.py` + [API.md §9](docs/API.md) 为准 |
 
@@ -220,6 +220,8 @@ svc.stop()
 
 桥的操作步骤见 [`firmware/bridge/README.md`](firmware/bridge/README.md)；
 板卡手册与工具链说明在 [`docs/hardware/`](docs/hardware/)。
+**不写代码、只想把盒子装起来的人**，看 [`docs/GETTING_STARTED.zh-CN.md`](docs/GETTING_STARTED.zh-CN.md)
+——买哪块板子、怎么刷固件、怎么配 WiFi、怎么按出配对码，一步步写着。
 
 v2 相对早期可行性固件修掉了三个关键点：
 
@@ -237,7 +239,7 @@ python firmware/bridge/tools/log_diag.py <日志路径>
 ```
 
 三项修复之后，网关长出了完整的网络栈：Wi-Fi 配网门户、MQTT 发布 + Home Assistant
-自动发现（21 个实体）、以及经自身 MQTT 链路的 OTA 自刷——bench 工具、串口控制台和
+自动发现（22 个实体）、以及经自身 MQTT 链路的 OTA 自刷——bench 工具、串口控制台和
 HA update 实体共用同一个刷写器。契约见 [MQTT.md](docs/MQTT.md)，发布与分区方案见
 [OTA.md](docs/OTA.md)。
 
