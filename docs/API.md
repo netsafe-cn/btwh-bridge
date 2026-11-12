@@ -14,7 +14,7 @@ capability arrives as new functions or new optional parameters with defaults.
 | Signatures frozen | No deletions, no renames, no new required parameters; new parameters must have defaults |
 | Semantics frozen | The meaning of `True`/`False`, the exception types, and the shape of return values do not change |
 | Extension | Only via new functions or new optional parameters |
-| Regression gate | `python run_tests.py` must be green after any change (204 tests today) |
+| Regression gate | `python run_tests.py` must be green after any change (209 tests today) |
 | Breaking change | Requires a major version bump and a migration note in this document |
 
 ---

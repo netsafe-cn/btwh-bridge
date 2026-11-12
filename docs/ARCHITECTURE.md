@@ -357,6 +357,37 @@ back to "no update available" after the retained manifest replayed on reconnect.
 
 ---
 
+### ADR-012 BLE is a connection-time dependency, never an import-time one
+
+**Context**: on 2026-11-12 a fresh CPython 3.13 without `bleak` could not import `bosch_api`
+at all. Twelve of thirteen test modules failed during collection — including the signature
+snapshot and MQTT contract tests, none of which touch Bluetooth. A module-level
+`from bleak import BleakClient` had quietly turned "run the contract tests" into "install a
+Bluetooth runtime".
+
+**Decision**: resolve `bleak.BleakClient` on first construction, behind a module-level lazy
+class. `import bosch_api` stays Bluetooth-free; only `connect()` needs the real library.
+
+- The name `BleakClient` stays a real module attribute. `test_session.py` replaces it with a
+  fake through `mock.patch.object`; a module `__getattr__` hook would have triggered the
+  import while patching, which is exactly the failure being removed.
+- A missing runtime raises `RuntimeError` naming the install command, not a
+  `ModuleNotFoundError` from three frames down.
+- `test_import_boundaries.py` blocks `bleak` and `winrt` in a subprocess, so the rule holds
+  on a machine where bleak *is* installed; a dedicated CI job runs the whole suite with
+  nothing installed at all.
+
+**Cost**: one tiny class and one attribute lookup per connection attempt.
+
+**Benefit**: the codec, config parser, FSM and the entire offline suite run on a bare
+CPython. The protocol can be worked on without a Bluetooth stack — the same property that
+lets the Python implementation serve as the executable specification.
+
+**Scope note**: the standalone tools under `python/tools/` still import bleak directly. They
+are hardware tools; importing one without bleak should fail loudly.
+
+---
+
 ## 3. Repository layout
 
 Landed in 0.2.0. The repository is a monorepo split by **role**, not by file type: an
@@ -367,7 +398,7 @@ share.
 python/                     Reference implementation
   python/bosch_api.py              codec / session / resident service
   python/device_fsm.py             provisioning + pairing state machine
-  tests/                    204 offline tests
+  tests/                    209 offline tests
   tools/                    console, headless bridge, capture
 
 firmware/                   One directory per application
@@ -456,3 +487,4 @@ breaking change.
 | 2026-11-09 | MQTT client and Home Assistant discovery (ADR-010); `net/` grows `mqtt_wire`, `mqtt_client`, `discovery` plus two self-test suites; 145 -> 157 tests |
 | 2026-11-10 | Inbound grammar layer (`mqtt_rules`) and broker-credential commands, host-tested; the six C++ suites run on the host via `host_selftest.py` (ADR-008 caveat retired); 157 -> 195 checks pinned on both sides |
 | 2026-11-11 | OTA and the HA update entity (ADR-011): live-only `ota` topic, retained manifest pair, one flasher; Wi-Fi join retried at boot; 195 -> 204 tests; bench soak recorded (25 min, zero heartbeat drift, 6 s AP-outage recovery) |
+| 2026-11-12 | BLE moved from import-time to connection-time (ADR-012): the offline suite runs on a bare CPython and a CI job installs nothing; 204 -> 209 tests |

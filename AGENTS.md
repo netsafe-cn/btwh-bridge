@@ -14,7 +14,7 @@ project look more polished, this paragraph is where you stop and ask.
 ## Build and flash
 
 ```bash
-python run_tests.py                                    # 204 offline tests, no hardware
+python run_tests.py                                    # 209 offline tests, no hardware
 python firmware/bridge/tools/gateway_cli.py --build    # compile only (~15 min cold)
 python firmware/bridge/tools/gateway_cli.py --flash    # compile, flash COM3, open console
 python firmware/bridge/tools/gateway_cli.py            # console only, no rebuild

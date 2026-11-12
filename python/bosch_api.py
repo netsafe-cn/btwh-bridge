@@ -41,9 +41,38 @@ import time
 from dataclasses import dataclass, field, asdict
 from typing import Callable, List, Optional
 
-from bleak import BleakClient
-
 from boschlog import logger as LOG
+
+# ------------------------------------------------------------------ optional BLE runtime
+# bleak is a connection-time dependency, not an import-time one (ADR-012). The codec, the
+# config parser, the FSM and every contract test live in this module, and none of them need
+# Bluetooth: importing this library on a machine without bleak must keep working. Only
+# constructing a client needs the real class. The name stays module level on purpose -
+# the session tests replace it with a fake via mock.patch.object(bosch_api, "BleakClient").
+def _load_bleak_client():
+    """Resolve bleak.BleakClient on first use; raise something actionable when absent."""
+    try:
+        from bleak import BleakClient as client_cls
+    except ImportError as exc:
+        raise RuntimeError(
+            "Bluetooth runtime unavailable: install 'bleak' to talk to a heater "
+            "(pip install -r requirements.txt). Protocol, config and contract tests "
+            "do not need it."
+        ) from exc
+    return client_cls
+
+
+class BleakClient:
+    """Lazily resolved stand-in for bleak.BleakClient; the import happens on first use.
+
+    Importing bosch_api must stay Bluetooth-free, so this class defers the real import to
+    construction. A fake patched over this module-level name works unchanged, which is why
+    it is a real attribute rather than a module __getattr__ hook.
+    """
+
+    def __new__(cls, *args, **kwargs):
+        return _load_bleak_client()(*args, **kwargs)
+
 
 # ------------------------------------------------------------------ protocol constants
 SERVICE_BASE = "ff4396a6-50a8-4fc0-bcf6-228e82dfed"

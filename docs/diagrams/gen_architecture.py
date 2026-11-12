@@ -209,7 +209,7 @@ def build(theme: str) -> str:
         "shares spec/protocol_vectors.json",
         "desktop console + Bemfa bridge",
         "capture, log_diag: bench tools",
-        "204 offline tests",
+        "209 offline tests",
     ])
 
     # update loop

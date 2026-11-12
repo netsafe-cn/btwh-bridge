@@ -28,6 +28,26 @@ jobs:
       - name: Full regression (incl. signature contract + golden vectors)
         run: python run_tests.py
 
+  # bleak is a connection-time dependency (ADR-012). This job installs nothing, so a
+  # reintroduced top-level `import bleak` fails here, on a clean runner, instead of only on
+  # a contributor's machine. Everything the suite needs is in the standard library.
+  no_ble_runtime:
+    name: regression without a BLE runtime
+    runs-on: ubuntu-latest
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Prove bleak really is absent
+        run: |
+          python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('bleak') is None else 1)"
+          python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('winrt') is None else 1)"
+      - name: Full regression with no Bluetooth runtime
+        run: python run_tests.py
+
   secrets:
     name: no real credentials tracked
     runs-on: ubuntu-latest
