@@ -47,10 +47,14 @@ namespace net {
 //       an A0 frame, the cached snapshot is dropped instead of republished by the heartbeat, and
 //       discovery binds state-fed entities to both availability signals. Same topics, one added;
 //       the contract stays version 1 because nothing old changed shape.
-constexpr const char* kFirmwareVersion = "2.9.0-ota4";
+//       ota5: readings stop being retained. state and attributes are published live-only, so a
+//       bridge that loses power leaves no reading behind on the broker; only status is retained
+//       (availability, link, the update entities, discovery). Wire-compatible: same topics, same
+//       payloads, one fewer flag.
+constexpr const char* kFirmwareVersion = "2.9.0-ota5";
 
-// Slow-changing metadata, published retained on every connect and refreshed on the
-// attributes heartbeat. Kept out of the state payload so the 4-second message stays small.
+// Slow-changing metadata, published on every connect and refreshed on the attributes heartbeat.
+// Live-only like state: uptime and RSSI are readings, not configuration.
 struct MqttInfo {
   const char* heater;      // BLE address as configured, e.g. 5c:f8:21:eb:6f:5f
   const char* pairState;   // "unpaired" | "paired" | "reconnecting"

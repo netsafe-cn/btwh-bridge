@@ -9,17 +9,21 @@
   "device_id_note": "Last 6 hex digits of the heater BLE address, lower case. Stable across reflashes, so entities survive a firmware update.",
   "qos": 0,
   "retain": {
-    "state": true,
+    "state": false,
+    "attributes": false,
     "availability": true,
     "link": true,
-    "attributes": true
+    "update_state": true,
+    "discovery": true
   },
+  "retain_policy": "Retain status, never readings. A retained reading keeps answering from the broker after the bridge is gone, and any subscriber that does not also read `link` takes it for the truth; `state` and `attributes` are therefore live-only. Statuses are the opposite: `availability=offline` and `link=offline` are true statements about a bridge that stopped, and a consumer that restarts needs them without waiting. Nothing is lost by dropping state's retain flag - the bridge republishes on every A0 frame (~4 s) and every 60 s respectively, so a late consumer is one interval behind at worst. Home Assistant reaches the same conclusion for sensor state payloads (sensor.mqtt, `expire_after`): a broker replaying an expired value at startup is the failure to design out.",
   "topics": {
     "state": {
       "topic": "btwh/{device_id}/state",
       "direction": "bridge -> consumer",
       "payload": "json",
-      "purpose": "Full device snapshot, published when a value changes or every keepalive interval."
+      "retain": false,
+      "purpose": "Full device snapshot, published on every A0 frame (~4 s) while the heater answers, and by the 60 s heartbeat only while the snapshot is still fresh. Live-only: a reading that survives the bridge that took it is a lie waiting for a subscriber, so this topic is never retained. A consumer that needs to know whether the values are current reads link; one that arrives while the bridge is down gets nothing, which is the intended answer."
     },
     "availability": {
       "topic": "btwh/{device_id}/availability",
@@ -91,13 +95,15 @@
       "topic": "btwh/{device_id}/update/state",
       "direction": "bridge -> consumer",
       "payload": "json",
-      "purpose": "The update entity's state: {\"installed_version\":...,\"latest_version\":...}. latest_version is omitted entirely until a manifest has been seen, so Home Assistant shows 'unknown' rather than a fake up-to-date. Republished on connect, on every manifest change, and on the 60 s heartbeat, retained."
+      "retain": true,
+      "purpose": "The update entity's state: {\"installed_version\":...,\"latest_version\":...}. latest_version is omitted entirely until a manifest has been seen, so Home Assistant shows 'unknown' rather than a fake up-to-date. Republished on connect, on every manifest change, and on the 60 s heartbeat. Retained: it is status, so a consumer that restarts gets the current pair immediately instead of an 'unknown' card for a heartbeat; replaying it is idempotent."
     },
     "attributes": {
       "topic": "btwh/{device_id}/attributes",
       "direction": "bridge -> consumer",
       "payload": "json",
-      "purpose": "Slow-changing metadata and link health: firmware version, heater address, uptime, BLE RSSI, last disconnect. Separate topic so it is not repeated in every state message; republished once a minute so uptime and RSSI age at most a minute."
+      "retain": false,
+      "purpose": "Slow-changing metadata and link health: firmware version, heater address, uptime, BLE RSSI, last disconnect. Separate topic so it is not repeated in every state message; republished on every connect and once a minute, so uptime and RSSI age at most a minute. Live-only like state: uptime and RSSI are readings, and a retained uptime outlives the bridge that measured it."
     }
   },
   "state_fields": [
@@ -354,6 +360,7 @@
     "A missing field means 'not reported yet'. Do not print it as 0 - an unheated heater and an unreachable bridge must look different.",
     "fault == 'none' is healthy; any other value is a fault code, not text.",
     "availability == 'offline' overrides state: show 'unavailable' and stop drawing the last value as current.",
+    "state and attributes are live-only. A consumer that starts while the bridge is down receives nothing, and that is the correct answer - do not fill the gap with a local cache and present it as current. Hold the last value only as long as you also hold the fact that it is old.",
     "Never hard-code the base topic in firmware: generate it from this file or read it from the bridge's attributes."
   ],
   "producers": {

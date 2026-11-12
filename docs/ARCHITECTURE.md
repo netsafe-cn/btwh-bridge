@@ -489,6 +489,52 @@ places are valid but not the recommended form. All three are kept on purpose:
 
 ---
 
+### ADR-015 Retain status, never readings
+
+**Context**: ADR-014 fixed *displaying* stale readings in Home Assistant — `link` goes offline,
+the entities grey out — but the values themselves still sat on the broker. Pull the bridge's
+power and `btwh/<device>/state` kept answering `42.3 °C, flame on` to anything that subscribed,
+which is the same lie one layer further out: a Node-RED flow, a panel, or a `mosquitto_sub`
+during debugging. The official pages say two things about this. The MQTT integration's only
+"best practice" sentence is `publish your device or service availability status` (done in
+ADR-014). `sensor.mqtt`, under `expire_after`, goes further: a retained value is replayed by
+the broker at startup and *"could cause the sensor to become available with an expired state,
+[so] it is not recommended to retain the sensor's state payload at the MQTT broker"*.
+
+**Decision**: the split is by kind, not by topic.
+
+- **Readings are live-only** — `state` (every A0 frame, ~4 s) and `attributes` (on connect and
+  every 60 s). Nothing about them is retained, so a dead bridge leaves nothing to misread.
+- **Status stays retained** — `availability`, `link`, `update/state`, and the discovery
+  documents. `offline` is a true statement about a bridge that stopped, and it is the input a
+  restarting consumer needs before any message arrives. The manifest topics keep their ADR-014
+  treatment: replaying them is idempotent, and a bridge that forgets them would claim to be up
+  to date.
+- `spec/mqtt.json` states the policy once (`retain`, `retain_policy`, and a `retain: false` on
+  both reading topics); three tests in `test_mqtt_contract.py` pin the flags and their
+  agreement with the policy block.
+
+**Cost**: a consumer that starts while the bridge is silent gets nothing instead of a stale
+number — that is the intent, but it does mean a dashboard opened during an outage shows an empty
+card rather than a greyed one. `attributes` is the weaker half: after a *consumer* restart
+(Home Assistant reload) the diagnostics can read `unknown` for up to one heartbeat, where the
+`update` entity does not, because `update/state` is still retained. Retained state also cost
+write amplification — one retained write per 4 s frame, ~900 an hour on the broker's disk — and
+that goes away with the flag.
+
+**Benefit**: "the device is offline" and "here is the last reading" can no longer be confused by
+anything that speaks MQTT, whether or not it understands `link`. Pulling the plug now leaves
+exactly two status messages and no measurements, which is also the cheapest possible
+verification.
+
+**Rejected**: clearing the retained value with an empty publish when `link` goes offline. For a
+numeric sensor Home Assistant documents the opposite behaviour — *"an empty value `''` will be
+ignored and will not update the state"* — so the screen would not change, while the empty
+payload re-introduces the `Invalid state message` warning that ADR-014's follow-up removed, and
+the clear would race the next frame anyway.
+
+---
+
 ## 3. Repository layout
 
 Landed in 0.2.0. The repository is a monorepo split by **role**, not by file type: an
@@ -499,7 +545,7 @@ share.
 python/                     Reference implementation
   python/bosch_api.py              codec / session / resident service
   python/device_fsm.py             provisioning + pairing state machine
-  tests/                    214 offline tests
+  tests/                    215 offline tests
   tools/                    console, headless bridge, capture
 
 firmware/                   One directory per application
@@ -590,4 +636,5 @@ breaking change.
 | 2026-11-11 | OTA and the HA update entity (ADR-011): live-only `ota` topic, retained manifest pair, one flasher; Wi-Fi join retried at boot; 195 -> 204 tests; bench soak recorded (25 min, zero heartbeat drift, 6 s AP-outage recovery) |
 | 2026-11-12 | BLE moved from import-time to connection-time (ADR-012): the offline suite runs on a bare CPython and a CI job installs nothing; 204 -> 209 tests |
 | 2026-11-12 | Release and flash-layout design (ADR-013): explicit 16 MB partitions with two 4 MB app slots, plain semver enforced at the tag, a manual manifest hop, and https deferred to a hash-authenticated phase 2; `docs/OTA.md` |
-| 2026-11-12 | Freshness split from liveness (ADR-014): retained `link` topic, stale snapshot no longer republished, a frame recognised by the parser's timestamp instead of the per-session counter; discovery binds state-fed entities to both signals; origin block added; 209 -> 214 tests |
+| 2026-11-12 | Freshness split from liveness (ADR-014): retained `link` topic, stale snapshot no longer republished, a frame recognised by the parser's timestamp instead of the per-session counter; discovery binds state-fed entities to both signals; origin block added; 209 -> 212 tests |
+| 2026-11-12 | Retain split by kind (ADR-015): `state` and `attributes` published live-only, only status retained, so a dead bridge leaves no reading on the broker; 212 -> 215 tests |

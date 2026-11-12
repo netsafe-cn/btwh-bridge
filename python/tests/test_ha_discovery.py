@@ -167,10 +167,13 @@ class TestDiagnosticEntities(unittest.TestCase):
         cfg = self.entities["last_disconnect_at"]["config"]
         self.assertEqual(cfg["device_class"], "timestamp")
         # 0 = "never dropped". Without the guard HA renders 1970-01-01 and a healthy
-        # bridge looks like it dropped during the epoch.
+        # bridge looks like it dropped during the epoch. The else branch must say "None"
+        # (HA's PAYLOAD_NONE), not render nothing: an empty string is not a timestamp and
+        # HA logs "Invalid state message" for every attributes heartbeat.
         self.assertEqual(cfg["value_template"],
                          "{% if value_json.last_disconnect_at %}"
-                         "{{ value_json.last_disconnect_at }}{% endif %}")
+                         "{{ value_json.last_disconnect_at }}"
+                         "{% else %}None{% endif %}")
 
     def test_pair_state_is_an_enum(self):
         cfg = self.entities["pair_state"]["config"]

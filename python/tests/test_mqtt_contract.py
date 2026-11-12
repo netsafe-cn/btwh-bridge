@@ -101,13 +101,14 @@ class TestMqttContract(unittest.TestCase):
                             % name)
             self.assertEqual(spec["direction"], "consumer -> bridge", name)
 
-    def test_update_state_is_bridge_published_and_live(self):
-        # update/state is republished on connect, on manifest change and on the 60 s
-        # heartbeat - all bridge-initiated - so it needs no retain flag to stay fresh,
-        # and HA never has to infer it from the manifest topics directly.
+    def test_update_state_is_bridge_published_and_retained(self):
+        # update/state is status, not a reading: installed_version + latest_version must
+        # survive a consumer restart, or the update card reads 'unknown' for up to a
+        # heartbeat after a reload. The flag matches the firmware, which publishes it with
+        # retain, and replaying it is idempotent - unlike the ota URL above.
         spec = self.doc["topics"]["update_state"]
         self.assertEqual(spec["direction"], "bridge -> consumer")
-        self.assertFalse(spec.get("retain"))
+        self.assertTrue(spec.get("retain"))
         self.assertIn("installed_version", spec.get("purpose", ""))
 
     # ---- liveness vs freshness --------------------------------------------------
@@ -124,6 +125,36 @@ class TestMqttContract(unittest.TestCase):
         self.assertEqual(spec["stale_after_s"], 90)
         self.assertTrue(self.doc["retain"]["availability"],
                         "availability stays retained as well; the two are separate claims")
+
+    # ---- readings are live-only, statuses are retained ---------------------------
+    def test_readings_are_never_retained(self):
+        # 2026-11-12, after reading the official pages: sensor.mqtt states that a retained
+        # state payload is replayed by the broker at startup and "could cause the sensor to
+        # become available with an expired state", so it explicitly does not recommend
+        # retaining it. The same failure hits every non-HA consumer, and the bridge already
+        # republishes state on every A0 frame (~4 s) and attributes on every connect plus the
+        # 60 s heartbeat - the flag buys one interval and leaves a dead bridge answering.
+        for name in ("state", "attributes"):
+            self.assertFalse(self.doc["retain"][name],
+                             "%s is a reading and must not be retained" % name)
+            self.assertFalse(self.doc["topics"][name].get("retain"),
+                             "topic %s contradicts retain[%s]" % (name, name))
+
+    def test_status_topics_stay_retained(self):
+        # The other half of the split: these describe the bridge, they do not measure it.
+        # A retained "offline" is a true statement about a bridge that stopped, and it is what
+        # lets a consumer that restarts decide without waiting for a message that may never come.
+        for name in ("availability", "link", "update_state", "discovery"):
+            self.assertTrue(self.doc["retain"][name],
+                            "%s is status and must stay retained" % name)
+
+    def test_topic_retain_flags_match_the_policy_block(self):
+        # Two places describe the same flag; a drift would make the documented behaviour and
+        # the shipped one disagree without either looking wrong on its own.
+        for name, spec in self.doc["topics"].items():
+            if "retain" in spec and name in self.doc["retain"]:
+                self.assertEqual(spec["retain"], self.doc["retain"][name],
+                                 "retain[%s] and topics.%s.retain disagree" % (name, name))
 
     def test_firmware_stale_window_matches_the_contract(self):
         # The firmware owns the clock, the contract owns the promise. Two copies of "90 s"

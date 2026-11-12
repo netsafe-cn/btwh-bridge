@@ -186,11 +186,13 @@ def main() -> int:
                                 "last_disconnect_at": 0},
                                separators=(",", ":"))
             c.publish("%s/availability" % dev_root, "online", retain=True)
-            c.publish("%s/attributes" % dev_root, attrs, retain=True)
+            # Readings are live-only (spec retain_policy, ADR-015): a retained demo state
+            # would outlive the process and keep answering after Ctrl-C.
+            c.publish("%s/attributes" % dev_root, attrs, retain=False)
             n = publish_discovery(c, spec, device)
             print("[demo] discovery: %d entities published" % n)
             payload = demo_state()
-            c.publish("%s/state" % dev_root, payload, retain=True)
+            c.publish("%s/state" % dev_root, payload, retain=False)
             print("[demo] %s" % payload)
             print("[demo] publishing every %.1fs; Ctrl-C to stop" % args.interval)
 
@@ -257,7 +259,7 @@ def main() -> int:
             while True:
                 time.sleep(args.interval)
                 payload = demo_state()
-                client.publish("%s/%s/state" % (base, device), payload, retain=True)
+                client.publish("%s/%s/state" % (base, device), payload, retain=False)
                 print("[state] %s" % fmt_state(payload))
                 if time.time() - attrs_at >= 60:
                     attrs_at = time.time()
@@ -268,7 +270,7 @@ def main() -> int:
                                         "last_disconnect": "demo bridge (never drops)",
                                         "last_disconnect_at": 0},
                                        separators=(",", ":"))
-                    client.publish("%s/%s/attributes" % (base, device), attrs, retain=True)
+                    client.publish("%s/%s/attributes" % (base, device), attrs, retain=False)
                     print("[attrs] %s" % attrs)
         elif args.setpoint is not None:
             time.sleep(1.0)          # let the subscription settle so attributes arrive

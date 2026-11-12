@@ -226,7 +226,7 @@ Code expired or rejected? **Read a new one and type it again** — no build invo
 | Login MAC | This host's Bluetooth address, set with `mac <MAC>` (placeholder `11:22:33:44:55:66`) |
 
 Protocol references: `docs/BLE_PROTOCOL.md` in the repository root (field calibration in §6, B0/D7 in
-§16), `docs/API.md`, and `python/bosch_api.py` (214 tests). The SMP pin behaviour is corroborated by captures
+§16), `docs/API.md`, and `python/bosch_api.py` (215 tests). The SMP pin behaviour is corroborated by captures
 on real hardware — see `docs/API.md §10`.
 
 ## 8. Build environment (new machine / reinstall)

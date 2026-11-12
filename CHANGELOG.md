@@ -100,6 +100,24 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to reboot into the new image in 24 s wall clock (1.16 MB image, 5.0 s download+flash,
   banner and published attributes both moved to 2.7.1-ota2).
 
+### Changed
+
+- **Readings are no longer retained on the broker, only status is (ADR-015).** `state` and
+  `attributes` were published with the retain flag, so pulling the bridge's power left
+  `42.3 °C, flame on` on the broker for anything that subscribed - the same lie ADR-014 removed
+  from Home Assistant, one layer further out. Both topics are now live-only; `availability`,
+  `link`, `update/state` and the discovery documents stay retained, because "offline" is a true
+  statement about a bridge that stopped and a restarted consumer needs it before any message
+  arrives. Nothing is lost in freshness: `state` is republished on every A0 frame (~4 s) and
+  `attributes` on every connect and every 60 s, so the retained copy was at most four seconds
+  ahead - while costing one retained write per frame, roughly 900 an hour on the broker's disk.
+  This is also what `sensor.mqtt` recommends: a retained value is replayed at startup and can
+  bring an entity back "available with an expired state". `spec/mqtt.json` now states the policy
+  once (`retain`, `retain_policy`) and three contract tests pin it. Clearing the retained value
+  with an empty publish was rejected on the documentation's own terms: for a numeric sensor an
+  empty payload "will be ignored and will not update the state", so the screen would not change
+  and the `Invalid state message` warning would come back.
+
 ### Fixed
 
 - **A bridge that was up but deaf reported two-day-old readings as live.** Found on the bench

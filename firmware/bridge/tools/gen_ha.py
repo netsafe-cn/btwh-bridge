@@ -138,10 +138,13 @@ def ha_diag_entity(field: dict, doc: dict) -> dict:
                     "state_class": "measurement"})
     elif key == "last_disconnect_at":
         cfg["device_class"] = "timestamp"
-        # 0 = never dropped. Rendering nothing makes Home Assistant show 'unknown'
-        # instead of 1970-01-01.
-        cfg["value_template"] = ("{%% if value_json.%s %%}{{ value_json.%s }}{%% endif %%}"
-                                 % (key, key))
+        # 0 = never dropped. The else branch must render Home Assistant's PAYLOAD_NONE
+        # ("None"), not an empty string: an empty string is not a parseable timestamp, so
+        # every attributes heartbeat logged "Invalid state message ''" - one warning per
+        # diagnostic sensor per minute, 366 of them on the bench before this was found -
+        # while the entity still ended up unknown. "None" becomes native_value None directly.
+        cfg["value_template"] = ("{%% if value_json.%s %%}{{ value_json.%s }}"
+                                 "{%% else %%}None{%% endif %%}" % (key, key))
 
     if key in ICONS:
         cfg["icon"] = ICONS[key]

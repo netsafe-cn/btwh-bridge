@@ -110,6 +110,9 @@ void publishLink() {
 
 
 void publishAttributes() {
+  // Live-only, like state: uptime and RSSI are readings, and a retained reading outlives the
+  // bridge that took it. Nothing is lost by dropping the flag - this runs on every connect and
+  // on the 60 s heartbeat, so a consumer that restarts is at most a minute behind.
   // The reasons are this file's own literals (no quotes or backslashes), so the JSON needs
   // no escaping; if a reason ever grows punctuation, quote it at the drop() call site.
   char json[340];
@@ -120,7 +123,7 @@ void publishAttributes() {
            gInfo.heater ? gInfo.heater : "-", gInfo.pairState ? gInfo.pairState : "unpaired",
            (unsigned long)(millis() / 1000), gInfo.rssi, gWhy,
            (long long)gLastDropAt);
-  publishText("attributes", json, true);
+  publishText("attributes", json, false);
 }
 
 void publishUpdateState() {
@@ -594,7 +597,14 @@ void mqttPoll(const Snapshot* snap, bool newFrame) {
     char payload[384];
     const size_t len = buildStateJson(payload, sizeof(payload), *snap);
     if (!len) { drop("state payload does not fit"); return; }
-    if (!publish("state", payload, len, true)) { drop("state write failed"); return; }
+    // Live-only, on purpose. A reading is current or it is nothing; a retained one keeps
+    // answering "42.3 C, flame on" from the broker long after the bridge lost power, and any
+    // subscriber that does not also read `link` takes it for the truth. The heater's A0 frames
+    // arrive every ~4 s, so in practice this flag saves a consumer at most four seconds - and
+    // costs a retained write per frame (~900/hour) on the broker's disk. Home Assistant itself
+    // recommends the same for sensor state payloads (sensor.mqtt, `expire_after`): the broker
+    // replaying an expired value at startup is the failure to design out.
+    if (!publish("state", payload, len, false)) { drop("state write failed"); return; }
     gLastPublish = now;
     gWantPublish = false;
   }

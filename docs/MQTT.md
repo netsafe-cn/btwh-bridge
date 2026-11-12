@@ -13,24 +13,43 @@ The topics and the field list are **not** documented here by hand: they live in
 
 | Topic | Direction | Retained | Payload |
 |---|---|---|---|
-| `btwh/<device>/state` | bridge → consumer | yes | JSON, one message per A0 frame (~4 s) |
+| `btwh/<device>/state` | bridge → consumer | **no — live-only, enforced by tests** | JSON, one message per A0 frame (~4 s) |
 | `btwh/<device>/availability` | bridge → consumer | yes | `online` / `offline` — **liveness of the bridge**, will-set |
 | `btwh/<device>/link` | bridge → consumer | yes | `online` / `offline` — **freshness of the readings**: `offline` after 90 s with no A0 frame, and until the first one arrives |
-| `btwh/<device>/attributes` | bridge → consumer | yes | JSON: firmware, board, heater address, pair state, uptime, RSSI, last disconnect (reason + epoch); refreshed every 60 s |
+| `btwh/<device>/attributes` | bridge → consumer | **no — live-only** | JSON: firmware, board, heater address, pair state, uptime, RSSI, last disconnect (reason + epoch); refreshed every 60 s |
 | `btwh/<device>/set/temperature` | consumer → bridge | no | integer `35`..`60`; anything else is ignored |
 | `btwh/<device>/cmd` | consumer → bridge | no | JSON or text containing `refresh`, `reboot` or `unpair` |
 | `btwh/<device>/ota` | consumer → bridge | **no — live-only, enforced by tests** | `http://host[:port]/path`, or the literal `install` to flash the URL last seen on `update/url` |
 | `btwh/<device>/update/latest` | consumer → bridge | yes | latest available version, one printable line; published by whoever owns the manifest |
 | `btwh/<device>/update/url` | consumer → bridge | yes | the image URL backing `update/latest` |
-| `btwh/<device>/update/state` | bridge → consumer | no (republished on connect, manifest change and the 60 s heartbeat) | JSON: `{"installed_version":...,"latest_version":...}` |
+| `btwh/<device>/update/state` | bridge → consumer | yes | JSON: `{"installed_version":...,"latest_version":...}`; republished on connect, manifest change and the 60 s heartbeat |
 | `homeassistant/<component>/<device>/<key>/config` | bridge → Home Assistant | yes | discovery document, one per entity |
 
 The two update-manifest topics and the `ota` topic form a deliberate mirror pair, and
 `test_mqtt_contract.py` pins it: a **retained** `ota` URL would reflash the bridge on every
 reconnect (a broker-triggered boot loop), while a **non-retained** manifest would leave a
-rebooted bridge believing it is up to date. State is retained and replayed; actions are
-live-only. `update/state` carries `latest_version` only after a manifest has been seen, so
-Home Assistant shows `unknown` rather than a fake "no update available".
+rebooted bridge believing it is up to date. Actions are live-only; the manifest is state.
+`update/state` carries `latest_version` only after a manifest has been seen, so Home Assistant
+shows `unknown` rather than a fake "no update available".
+
+**Retain status, never readings.** `state` and `attributes` carry measurements, so neither is
+retained: a reading that survives the bridge that took it keeps answering from the broker, and
+every subscriber that does not also read `link` takes it for the truth. `availability`, `link`,
+`update/state` and the discovery documents are status — `offline` is a true statement about a
+bridge that stopped, and a consumer that restarts needs it without waiting for a message that
+may never come. Dropping the flag costs a late consumer one interval: the bridge republishes
+`state` on every A0 frame (~4 s) and `attributes` on every connect and every 60 s, so the
+retained copy would have been at most four seconds ahead. Home Assistant reaches the same
+conclusion for sensors (`sensor.mqtt`, `expire_after`): a broker replaying an expired value at
+startup is the failure to design out.
+
+Upgrading a board that still retained its readings is a **one-time manual step**: the broker
+keeps the last retained payload until something overwrites or deletes it, and a live-only
+publisher never will. After the first boot on this build, clear both topics once -
+`mosquitto_pub -r -n -t btwh/<device>/state` and the same for `attributes`, or an empty retained
+publish from any client. OTA cannot do this for you: the retained entry belongs to the broker,
+not to the firmware. Nothing on the Home Assistant side changes either way, because `link`
+already greyed the entities out.
 
 `<device>` is `btwh_` plus the last six hex digits of the heater's BLE address, lower case
 (`5c:f8:21:eb:6f:5f` → `btwh_eb6f5f`). It is derived, never configured, and it survives a
@@ -76,7 +95,7 @@ debugging it:
 | Publish cadence | every A0 frame, plus a 60 s heartbeat | a changed value reaches the broker within one frame; the heartbeat keeps `uptime`/RSSI and the update entity current |
 | Freshness window | 90 s without an A0 frame → `link` = `offline` | 22 missed frames at the 4 s cadence: rides out a reconnect, short enough that a reading is never mistaken for the current one |
 | QoS | 0 everywhere | the contract fixes it; state is a snapshot, a lost one is replaced 4 s later |
-| Session | clean | nothing to persist: the retained state is rewritten on connect |
+| Session | clean | nothing to persist: `state` is live-only, so a consumer that reconnects waits for the next A0 frame instead of being handed the last one |
 
 The will is `offline` on the retained availability topic. A board that loses power therefore
 turns itself grey in Home Assistant without anyone publishing anything. The retained `link`
