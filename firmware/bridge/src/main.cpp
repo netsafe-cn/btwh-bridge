@@ -539,9 +539,8 @@ static void handleCommand(String line) {
     gLastAttemptMs  = millis();
     gOfflineSinceMs = gLastAttemptMs;
     if (ok) {
-      char ip[20];
-      net::stationIp(ip, sizeof(ip));
-      Serial.printf("[WIFI] + ip=%s (time will follow via SNTP)\n", ip);
+      // The join itself has already printed ip/gw/rssi; this line is about what was persisted.
+      Serial.printf("[WIFI] saved to NVS: ssid=%s\n", gCfg.ssid);
     } else {
       Serial.println("[WIFI] x not joined; check the name and the 2.4 GHz band");
     }

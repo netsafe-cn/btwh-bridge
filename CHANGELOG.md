@@ -19,12 +19,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`net/wifistat.{h,cpp}`, 42 host checks; total 411 -> 453) maps both to sentences - 201
   `NO_AP_FOUND` reads "the access point was never heard: wrong name, switched off, out of range,
   or 5 GHz only", 15 reads "the password was rejected" - and keeps unknown codes as numbers
-  instead of swallowing them. On failure the console prints the chain of states the driver went
-  through plus `reason <n> <NAME>: <sentence>`; a success prints `ip / gw / mask / dns / rssi /
-  channel / bssid`, which is what tells "no Wi-Fi" apart from "an address on a network with
-  nothing behind it". The chain is only printed when the attempt fails, because the first build
-  of this log printed "wrong password" 100 ms before the same attempt associated: the status is
-  a sample, not a verdict. A link that is up while the broker
+  instead of swallowing them. A failed attempt prints `status <n>: <sentence>` and
+  `reason <n> <NAME>: <sentence>`; a success prints `ip / gw / mask / dns / rssi / channel /
+  bssid`, which is what tells "no Wi-Fi" apart from "an address on a network with nothing behind
+  it". Nothing is printed while the join is in flight, and that is a correction from the bench:
+  the first version narrated every status change and opened with "wrong password" twice on a
+  join that either succeeded 100 ms later or failed for a different reason - the samples belong
+  to two attempts, the old association's teardown included. Only the verdict at the deadline is
+  this attempt's. A link that is up while the broker
   stays unreachable now says so once every five minutes with those addresses, because the Windows
   mobile hotspot does exactly that after a few hours. The setup page carries the same sentence
   under its status line and marks the network that just failed as `(saved)`, so the person

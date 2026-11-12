@@ -13,6 +13,7 @@ namespace {
 
 constexpr uint32_t kConnectBudgetMs = 15000;
 
+
 // Both are fixed-size copies, not pointers: the console prints them later and the setup page
 // renders them after the attempt has already returned. A pointer into a caller's stack buffer
 // would be the use-after-free this project already paid for once (portal /save, ADR-018).
@@ -59,46 +60,24 @@ bool stationConnect(const char* ssid, const char* pass) {
   Serial.printf("[WIFI] joining %s ...\n", ssid);
   const uint32_t t0 = millis();
 
-  // Keep the order of the states, print none of them yet.
+  // No running commentary while the join is in flight.
   //
-  // Measured 2026-11-12, the first build of this log: the Windows hotspot produced status 6
-  // ("wrong password") for one sample and associated successfully 100 ms later, so the console
-  // read "wrong password" immediately above "+ associated". A driver can report a failed first
-  // handshake and win on its own retry; the status is a sample, not a verdict. Printing samples
-  // as they arrive turns a working join into an alarming log, which is worse than the vague
-  // line this replaced. So the chain is recorded and only shown when the attempt actually fails.
-  int  seen[8] = {0};
-  int  seenN   = 0;
+  // The first build of this log printed a line per status change, and it lied twice on the
+  // 2026-11-12 bench: "wrong password" appeared 100 ms before a successful association, and the
+  // next build led a failed attempt with the same verdict - which was the status of the *old*
+  // association being torn down, not a fact about this one. The coarse status is a sample, and
+  // the samples during a join belong to two different attempts. What is worth printing is the
+  // verdict at the end: the status at the deadline plus the driver's own reason code, which is
+  // why the analysis below reads the reason rather than narrating the way there.
   while (WiFi.status() != WL_CONNECTED) {
-    const int st = (int)WiFi.status();
-    if (seenN == 0 || seen[seenN - 1] != st) {
-      if (seenN < (int)(sizeof(seen) / sizeof(seen[0]))) {
-        seen[seenN++] = st;
-      } else {
-        seen[seenN - 1] = st;   // full: keep the latest, that is the one that stuck
-      }
-    }
-
     if (millis() - t0 > kConnectBudgetMs) {
+      const int   st     = (int)WiFi.status();
       const int   reason = gLastReason;
       const char* rname  = wifistat::reasonName(reason);
       snprintf(gLastFailure, sizeof(gLastFailure), "%s: %s", ssid, wifistat::failureText(st, reason));
 
       Serial.printf("[WIFI] x not associated after %lu ms\n", (unsigned long)kConnectBudgetMs);
-      {
-        // statusText keeps a shared buffer for numbers it has no name for, so each element is
-        // rendered into `chain` before the next call can overwrite it.
-        char chain[192];
-        int  pos = 0;
-        for (int i = 0; i < seenN; i++) {
-          const int n = snprintf(chain + pos, sizeof(chain) - (size_t)pos, "%s%d %s",
-                                 i ? " -> " : "", seen[i], wifistat::statusText(seen[i]));
-          if (n < 0) break;
-          pos += n;
-          if ((size_t)pos >= sizeof(chain)) { pos = (int)sizeof(chain) - 1; break; }
-        }
-        Serial.printf("[WIFI]   chain: %s\n", pos > 0 ? chain : "(no sample)");
-      }
+      Serial.printf("[WIFI]   status %d: %s\n", st, wifistat::statusText(st));
       Serial.printf("[WIFI]   reason %d%s%s: %s\n", reason, rname[0] ? " " : "", rname,
                     wifistat::reasonText(reason));
       WiFi.disconnect();
