@@ -327,8 +327,10 @@ Three rules:
 - Hardware probes → always prefix `probe_`; a `test_` prefix makes CI try to touch
   real hardware and hang
 
-CI runs Linux + Windows × Python 3.11/3.12, plus a job that fails if `config.json` or
-hard-coded credentials are committed. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+CI runs Linux + Windows × Python 3.11/3.12, compiles the firmware with `arduino-cli`
+against the pinned core (esp32 2.0.17 + NimBLE 1.4.3), and fails if the image outgrows
+its OTA slot or the banner disagrees with the release tag - plus jobs that fail if
+`config.json`, hard-coded credentials or a directory boundary cross the line. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ---
 

@@ -289,6 +289,8 @@ finished when it is not.
 | MQTT + Home Assistant discovery (22 entities) | ✅ bench-verified against a production HAOS Mosquitto |
 | OTA + HA update entity | ✅ end to end: MQTT URL flash, manifest, Install button, 4.5 s reflash, entity settles off |
 | Host-side C++ selftest (`host_selftest.py`, 453 checks) | ✅ in CI |
+| Firmware compiles (`arduino-cli`, esp32 2.0.17 + NimBLE 1.4.3) | ✅ in CI, every push |
+| Image fits its OTA slot / banner matches the tag | ✅ in CI (`tools/check_image.py`) |
 | Stability soak | ✅ 25 min: zero heartbeat drift, forced AP outage recovered in 6 s; one-week live soak pending |
 | Hardware facts (16 MB flash, 8 MB Octal PSRAM idle) | ✅ identified; the configuration upgrade is the next step |
 

@@ -296,8 +296,9 @@ python run_tests.py -v       # 逐条列出
 - 改协议层 → 必须同步 `protocol_vectors.json`，并让 ESP32 侧向量测试同样通过
 - 连硬件的探针脚本 → 一律 `probe_` 前缀（`test_` 前缀会被自动纳入回归，CI 会挂）
 
-CI 覆盖 Linux + Windows × Python 3.11/3.12，另有一个 job 检查 `config.json`
-与硬编码密钥是否被误提交，见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)。
+CI 覆盖 Linux + Windows × Python 3.11/3.12；用 `arduino-cli` 按锁定版本
+（esp32 2.0.17 + NimBLE 1.4.3）真正编译一遍固件，并在镜像超出 OTA 槽或版本串与
+发布 tag 不一致时失败；另有 job 检查 `config.json`、硬编码密钥与目录越界，见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)。
 
 ---
 

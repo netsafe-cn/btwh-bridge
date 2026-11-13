@@ -9,7 +9,26 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **A failed Wi-Fi join now says why, in words that point at a fix.** Diagnosing an offline
+- **CI now compiles the firmware, which nothing did before.** The Python suite has always
+  compiled the eight pure modules on the host (453 checks) - and that covered the layers that
+  were designed to be testable, which is exactly the 63% that was never going to break on an
+  Arduino API change. The other 2,679 lines (`main.cpp`, `station`, `portal`, `mqtt_client`,
+  `ble/link`, `app/session`, `app/config`) were only ever compiled by the person holding the
+  board, so a change to any of them could merge green and fail on a desk. A new `firmware` job
+  installs `esp32:esp32@2.0.17` plus `NimBLE-Arduino@1.4.3` into a cached core, runs
+  `gateway_cli.py --build --no-monitor`, and uploads the app image as an artifact. It builds,
+  never flashes: `--build` skips the flash-size probe on purpose because entering the bootloader
+  resets the board.
+
+- **`tools/check_image.py` guards the two numbers nobody reads.** `Sketch uses 1181904 bytes`
+  scrolls past at 35% of the slot and would keep scrolling at 101% - arduino-cli does not fail
+  there; the flash succeeds and the board boots nothing. The script fails the build above
+  `0x330000` (the `default_8MB` app slot), warns above 1.5 MB as the TLS headroom, and - when
+  the ref is a tag - refuses to release unless `kFirmwareVersion` starts with the tag. A line tag
+  (`v2.9.0`) accepts any build under it; a build tag (`v2.9.0-ota11`) pins that build. 14 new
+  tests, 237 -> 251.
+
+, in words that point at a fix.** Diagnosing an offline
   bridge used to mean guessing from one line - `x not associated after 15000 ms (wrong password /
   5 GHz only / out of range)` - printed in every case, including the ones that were none of the
   three. On 2026-11-12 the stored SSID turned out to be a laptop hotspot that was simply switched
