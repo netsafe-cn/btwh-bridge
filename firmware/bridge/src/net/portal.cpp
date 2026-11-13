@@ -295,8 +295,12 @@ void startPortal(ProvisionedFn onProvisioned, void* ctx, bool automatic) {
   // mid-form. Re-checked with sleep left on: the same PC associates, gets a lease, loads the
   // page and submits it. If association ever misbehaves again, look at the captive-portal probe
   // and the DNS server here before reaching for that switch.
-  // PSRAM is off in this build, so the default max_clients=4 keeps the heap happy; a setup
-  // session only ever has one phone on it.
+  // max_clients stays at 4: a setup session only ever has one phone on it, and lwIP keeps a
+  // listening socket plus one slot per client out of internal heap, not PSRAM. PSRAM is enabled
+  // in this build (8 MB, measured 2026-11-12 in the boot banner) - it just has nothing to do with
+  // the socket pool. An earlier note here said "PSRAM is off in this build", which was true before
+  // the build flag was found and is exactly the kind of stale comment that sends someone looking
+  // in the wrong place.
   // WPA2 rather than an open AP: the captive-portal handshake on several older phone/PC
   // drivers (measured on a Marvell AVASTAR) associates to an open ESP32 AP but never
   // completes DHCP, while the same hardware joins a WPA2 one cleanly. The passcode is printed

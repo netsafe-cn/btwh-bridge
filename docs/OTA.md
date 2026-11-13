@@ -221,9 +221,14 @@ something else; do not spend a dedicated session on it before v1 freezes.
 **PSRAM is no longer a phase-1 question.** It was measured on 2026-11-12: the module really
 does carry the 8 MB of an "R8" part, and `PSRAM=opi` brings the banner from `PSRAM=0 bytes`
 to `8386279 bytes`. The earlier `0` was the missing build flag, not missing silicon, so
-`gateway_cli.py` now carries `PSRAM=opi` permanently. Enabling it did change the boot path
-(`qio_opi`), which is why it was flashed as its own run and verified in the banner before
-anything else depended on it.
+`gateway_cli.py` defaults to it. Enabling it did change the boot path (`qio_opi`), which is why
+it was flashed as its own run and verified in the banner before anything else depended on it.
+
+It is a default, not a requirement. Nothing under `src/` allocates from PSRAM — the only
+reference is the boot line that prints its size — so `--psram none` compiles for a board sold
+without an R part. That board would otherwise rely on `CONFIG_SPIRAM_IGNORE_NOTFOUND`, which
+the prebuilt `dio_opi` SDK does set (`sdkconfig.h:315`), so it boots with a warning instead of
+a loop; the switch just removes the warning and the guesswork.
 
 One related trap, worth recording because it bit this board: a bare `FlashSize=8M` selects the
 4 MB `default` scheme, **not** `default_8MB`. That produces the 1.31 MB app slot behind the old

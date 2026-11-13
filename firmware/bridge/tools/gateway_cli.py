@@ -5,7 +5,7 @@
 #   python firmware/bridge/tools/gateway_cli.py           console only
 #   python firmware/bridge/tools/gateway_cli.py --build   build only
 from __future__ import annotations
-import argparse, datetime, os, pathlib, shutil, subprocess, sys, threading, time
+import argparse, datetime, os, pathlib, re, shutil, subprocess, sys, threading, time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent   # firmware/bridge
 TOOLCHAIN = ROOT / "toolchain"
@@ -23,13 +23,42 @@ SKETCH = WORK / "arduino_sketch"         # generated shell for arduino-cli
 SKETCH_NAME = SKETCH.name
 BUILD = WORK / "build"
 LIBS = WORK / "user" / "libraries"
-# All three options are explicit on purpose. A bare FlashSize=8M selects the 4 MB `default`
-# scheme, whose app slot is 1.31 MB at 0x10000 - but this board runs `default_8MB` (app0 and
-# app1 at 0x10000/0x340000, 3.19 MB each, otadata booting app1). With the bare FQBN the image
-# compiles for the wrong slot and uploads to app0 while otadata still boots app1, so a flash
-# succeeds without changing what runs. Measured 2026-11-12 off the board: 16 MB flash
-# (esptool 0x46/0x4018), 8 MB Octal PSRAM claimed by the part number, 1.107 MB image.
-FQBN = "esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=default_8MB,PSRAM=opi"
+# The FQBN is composed, not hardcoded, because a fixed `FlashSize=16M` made every other board
+# fail at the flash step with an error the guide never explained. FlashSize now follows the chip
+# that is actually on the desk; the partition scheme does not.
+#
+# The scheme stays `default_8MB` on every board (app0/app1 at 0x10000/0x340000, 3.19 MB each,
+# otadata booting app1). Letting it float with FlashSize would be worse than wasteful: a bare
+# FlashSize=8M selects the 4 MB `default` scheme, whose app slot is 1.31 MB at 0x10000, so the
+# image compiles for a slot otadata never boots and a flash succeeds without changing what runs.
+# One fixed layout also keeps releases interchangeable between an 8 MB and a 16 MB board.
+#
+# PSRAM stays on `opi` by default because that is the state the bench board was verified in:
+# 2026-11-12 the banner moved from `PSRAM=0 bytes` to `8386279 bytes` when the flag was added and
+# the boot path changed to qio_opi, so it was flashed as its own run and checked before anything
+# depended on it. Turning it off again would silently undo that check on the one board where it
+# was actually done.
+#
+# It is not required, though. Nothing under src/ allocates from PSRAM - the only reference is the
+# boot line that prints its size - so a board without an Octal part runs the same firmware. The
+# `--psram none` switch exists because a hardcoded `PSRAM=opi` turned every plain N8 or N16 board
+# (the ones sold without an R) into a boot-time coin flip that the getting-started guide never
+# mentioned, and a first-time builder has no way to diagnose that.
+BASE_FQBN = "esp32:esp32:esp32s3"
+SCHEME = "default_8MB"          # 3.19 MB per OTA slot
+MIN_FLASH_MB = 8                # two slots; anything smaller cannot update itself
+DEFAULT_FLASH_MB = 16           # the bench board: esptool 0x46/0x4018, silkscreen says N8R8
+
+
+def make_fqbn(flash_mb=DEFAULT_FLASH_MB, psram="opi"):
+    """Compose the FQBN for one board. arduino-esp32 accepts 4 / 8 / 16 MB of flash."""
+    fqbn = "%s:FlashSize=%dM,PartitionScheme=%s" % (BASE_FQBN, flash_mb, SCHEME)
+    if psram and psram != "none":
+        fqbn += ",PSRAM=" + psram
+    return fqbn
+
+
+FQBN = make_fqbn()
 
 
 def find_port():
@@ -45,6 +74,68 @@ def find_port():
         if p.device.upper().startswith("COM"):
             return p.device
     return None
+
+
+def _esptool():
+    """Return the command prefix for esptool, or None when there is no copy to run.
+
+    Three sources, cheapest first: an esptool importable by this interpreter, then `esptool` on
+    PATH, then the one arduino-esp32 installs under Arduino15. None of them is guaranteed -
+    arduino-cli builds a board happily without a Python esptool anywhere - so probing is a
+    convenience and must degrade to the default, never to a failed build.
+    """
+    try:
+        import esptool  # noqa: F401
+        return [sys.executable, "-m", "esptool"]
+    except ImportError:
+        pass
+    for name in ("esptool", "esptool.py"):
+        exe = shutil.which(name)
+        if exe:
+            return [exe]
+    if os.name == "nt":
+        pattern = "AppData/Local/Arduino15/packages/esp32/tools/esptool_py/*/esptool.exe"
+        found = sorted(pathlib.Path.home().glob(pattern))
+        if found:
+            return [str(found[-1])]
+    return None
+
+
+def detect_flash_mb(port):
+    """Ask the chip how much flash it has; None when that question cannot be answered.
+
+    Called only on the --flash path. esptool enters the bootloader by pulling DTR/RTS, which
+    resets the board, and a reset drops the BLE link - the heater then refuses the next session
+    for minutes (measured 2026-11-08, twice). A flash resets the board anyway, so paying that cost
+    here is free; `--build` must never pay it, which is why it does not call this.
+    """
+    if not port:
+        return None
+    prefix = _esptool()
+    if not prefix:
+        return None
+    try:
+        done = subprocess.run(
+            prefix + ["--chip", "esp32s3", "--port", port, "--baud", "115200", "flash_id"],
+            capture_output=True, text=True, timeout=30, errors="replace")
+    except (OSError, subprocess.SubprocessError):
+        return None
+    # "Detected flash size: 16MB" - the number is ground truth, the surrounding sentence is not
+    # parsed: esptool prefixes it with a timestamp and the wording changes between versions.
+    hit = re.search(r"flash size:\s*(\d+)\s*MB", (done.stdout or "") + (done.stderr or ""),
+                    re.IGNORECASE)
+    return int(hit.group(1)) if hit else None
+
+
+def clamp_flash_mb(mb):
+    """Snap a reported size onto a value arduino-esp32 knows (4 / 8 / 16).
+
+    A 32 MB part still compiles as 16 MB: the scheme only reaches 0x670000, so the upper half is
+    unused either way and there is no layout to invent for it. Sizes below 8 are returned as 4 on
+    purpose - the caller refuses them with an explanation instead of building something that
+    cannot update itself.
+    """
+    return 16 if mb >= 16 else (8 if mb >= MIN_FLASH_MB else 4)
 
 
 def run(cmd):
@@ -84,7 +175,8 @@ def _cmd(*args):
     return out + list(args)
 
 
-def build(clean=False):
+def build(clean=False, fqbn=None):
+    fqbn = fqbn or FQBN
     sync_sketch()
     if clean and BUILD.exists():
         # arduino-cli's dependency tracking missed a header-only edit once (2026-11-11):
@@ -105,12 +197,12 @@ def build(clean=False):
     # this line makes arduino-cli agree, so both build systems read the same include lines.
     # Needs a workspace path without spaces - the default ~/esp has none.
     inc = ["--build-property", "compiler.cpp.extra_flags=-I" + str(SKETCH / "src")]
-    return run(_cmd("compile", "--fqbn", FQBN, *libs, *inc,
+    return run(_cmd("compile", "--fqbn", fqbn, *libs, *inc,
                     "--build-path", BUILD, SKETCH))
 
 
-def upload(port):
-    return run(_cmd("upload", "-p", port, "--fqbn", FQBN,
+def upload(port, fqbn=None):
+    return run(_cmd("upload", "-p", port, "--fqbn", fqbn or FQBN,
                     "--build-path", BUILD, SKETCH))
 
 
@@ -178,16 +270,48 @@ def main():
     ap.add_argument("--clean", action="store_true",
                     help="remove the build directory first (use after editing any header)")
     ap.add_argument("--no-monitor", action="store_true")
+    ap.add_argument("--flash-size", choices=("auto", "8", "16"), default="auto",
+                    help="flash size of the board; auto asks the chip on --flash, else 16")
+    ap.add_argument("--psram", choices=("opi", "none", "quad"), default="opi",
+                    help="PSRAM mode; opi is the verified default, none for boards without it")
     a = ap.parse_args()
     port = a.port or find_port()
+
+    flash_mb = DEFAULT_FLASH_MB
+    if a.flash_size != "auto":
+        flash_mb = int(a.flash_size)
+    elif a.flash:
+        # Only here: probing resets the board, and --build must leave a running bridge running.
+        reported = detect_flash_mb(port)
+        if reported:
+            flash_mb = clamp_flash_mb(reported)
+            if reported != flash_mb:
+                print("  board reports %d MB flash, compiling as %d MB" % (reported, flash_mb))
+            else:
+                print("  board reports %d MB flash" % reported)
+        else:
+            print("  flash size could not be read; compiling for %d MB "
+                  "(pass --flash-size 8 for an 8 MB board)" % flash_mb)
+
+    if flash_mb < MIN_FLASH_MB:
+        # One 3.19 MB app slot and no second one: OTA is the whole point of this firmware, so a
+        # board that cannot hold two slots is not a smaller answer, it is a different product.
+        print("\nthis board has %d MB of flash; the bridge needs >= %d MB for two 3.19 MB OTA "
+              "slots.\nA 4 MB ESP32-S3 Mini / Zero will not do - buy an 8 MB or 16 MB part."
+              % (flash_mb, MIN_FLASH_MB))
+        return 1
+
+    fqbn = make_fqbn(flash_mb, a.psram)
+    print("  fqbn: " + fqbn)
+
     if a.build or a.flash:
-        rc = build(clean=a.clean)
+        rc = build(clean=a.clean, fqbn=fqbn)
         if rc != 0:
             print("\nbuild failed, exit=%d" % rc); return rc
         print("\n[OK] build passed")
         if not a.flash:
             return 0
-        rc = upload(port)
+        rc = upload(port, fqbn=fqbn)
         if rc != 0:
             print("\nflash failed, exit=%d" % rc); return rc
         print("\n[OK] flashed, opening the console in 3 s...")

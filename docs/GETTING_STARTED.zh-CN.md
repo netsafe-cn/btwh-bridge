@@ -49,11 +49,25 @@
 
 ### 认两个参数
 
-- **Flash 8MB 起步**（商品名里常写 N8R8 或 N16R8，8 就是 8MB Flash，16 就是 16MB）
-- **板载 USB 转串口芯片**（一般标 CH343 / CH340 / CP2102）
+- **Flash 8MB 起步**。商品名里的 `N8` / `N16` 就是 Flash 大小（8MB / 16MB）。**8MB 是硬门槛**：
+  固件要占两个可切换的槽（升级失败能退回上一版），一个槽 3.19MB。
+- **板载 USB 转串口芯片**（一般标 CH343 / CH340 / CP2102），刷固件走它。
+- **PSRAM 有没有都行**（名字里的 `R8` / `R2`）。固件不往 PSRAM 里分配任何内存，没有也照跑，
+  不用为它多花钱。
 
-本工程实测用的是一块 **微雪（Waveshare）ESP32-S3-DEV-KIT**，丝印写 N8R8，实测 16MB Flash。
-淘宝、微雪官网、立创商城搜 **"ESP32-S3-DEV-KIT N16R8"** 都能找到，百元以内。
+本工程实测用的是一块 **微雪（Waveshare）ESP32-S3-DEV-KIT**：丝印写 N8R8，实测却是 16MB Flash。
+所以**别信丝印**——刷之前脚本会自己读一次芯片。淘宝、微雪官网、立创商城搜
+**"ESP32-S3-DEV-KIT N16R8"** 都能找到，百元以内。
+
+### 这些板子不行
+
+| 板子 | 为什么不行 |
+|---|---|
+| ESP32-S3 但只有 **4MB Flash**（S3 Mini、S3 Zero、很多"超小"板） | 装不下两个升级槽，**OTA 用不了**，而这是本固件的核心功能 |
+| ESP32-C3 / C6 / S2 / WROOM-32 / ESP8266 | 芯片不是 S3，固件刷不进去 |
+
+拿不准就先插上电脑刷一次：脚本会读芯片再决定怎么编译，4MB 的板子会被**直接拒绝并说清原因**，
+不会烧坏板子。
 
 ### 三个避坑提示
 
@@ -74,12 +88,16 @@
 
 ### 3.1 先拿到固件文件
 
-你需要一个文件，叫 **`btwh-bridge-full.bin`**（约 1.2MB）。来源二选一：
+你需要一个文件，叫 **`btwh-bridge-full-<版本>.bin`**（约 1.2MB）。来源二选一：
 
 - 别人给你（微信传文件即可，这是唯一需要的文件）
 - 自己生成（需要一点点电脑操作，见 [附录 A](#附录-a自己构建固件)）
 
 这个文件是"整包镜像"，一个文件包含引导程序、分区表和应用程序，所以只需要烧一个地址。
+
+> **这个整包是按 16MB（N16）的板子生成的，不是通用文件。** 镜像里带着 flash 容量和分区布局，
+> 换一块容量不同的板子就不是同一个东西了。如果你买的是 8MB（N8），跳过这个文件，走
+> [附录 A](#附录-a自己构建固件) 编一次：脚本会读到你板子的真实容量再编，得到的镜像才跟它对得上。
 
 ### 3.2 插上板子，看电脑认不认
 
@@ -338,24 +356,38 @@ git clone https://github.com/netsafe-cn/btwh-bridge.git
 cd btwh-bridge
 
 # 编译 + 烧录（--flash 会先自动编译，一条命令就够）
+# 脚本会先读一次芯片的真实 flash 容量再据此编译，不用你操心型号
 # 改过头文件就加 --clean，否则会用旧的编译产物
 python firmware/bridge/tools/gateway_cli.py --flash
 
-# 只编译不烧
+# 只编译不烧。板子不在线时用，默认按 16MB 编；8MB 的板子显式指定
 python firmware/bridge/tools/gateway_cli.py --build
+python firmware/bridge/tools/gateway_cli.py --build --flash-size 8
 ```
 
-想做出那个"一个文件"的整包镜像（给别人刷）时：
+两个常见情况：
+
+- **4MB 的板子会被直接拒绝**，并告诉你为什么（两 3.19MB 的升级槽放不下）。这是故意的——
+  勉强编进去只会得到一个不能 OTA 的固件。
+- **没有 PSRAM 的板子照常可用**。编译默认按 Octal PSRAM 配置，芯片上没有这个器件时启动会打印
+  一行警告然后跳过，不影响功能。想彻底关掉就加 `--psram none`。
+
+想做出那个"一个文件"的整包镜像（给别人刷）时。**整包的 flash 大小必须跟目标板一致**，
+所以下面这条是 **16MB 板子**的版本：
 
 ```bash
 cd <构建输出目录>          # gateway_cli.py 会打印这个路径，通常是 ~/esp/build
-esptool --chip esp32s3 merge_bin -o btwh-bridge-full.bin \
+esptool --chip esp32s3 merge_bin -o btwh-bridge-full-16mb.bin \
   --flash_mode dio --flash_freq 80m --flash_size 16MB \
   0x0     arduino_sketch.ino.bootloader.bin \
   0x8000  arduino_sketch.ino.partitions.bin \
   0xe000  <arduino-esp32>/tools/partitions/boot_app0.bin \
   0x10000 arduino_sketch.ino.bin
 ```
+
+给 8MB 的板子做整包：先用 `--build --flash-size 8` 编一次，再把上面命令里两个 `16MB`
+改成 `8MB`、输出名改成 `-8mb`。**两步必须配套**——用 16MB 编出来的产物配上 `--flash_size 8MB`
+合并，得到的还是一个要求 16MB flash 的镜像。
 
 烧这个整包时地址是 **`0x0`**，一个文件搞定，其余什么都不用填。
 

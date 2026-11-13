@@ -145,7 +145,12 @@ cd firmware/bridge
 python tools/gateway_cli.py --flash
 ```
 
-It finds the CH343 port, builds, flashes and opens the serial console.
+It finds the CH343 port, reads the chip's real flash size, builds for exactly that, flashes and
+opens the serial console. Boards with 4 MB are refused (two 3.19 MB OTA slots do not fit) and
+boards without PSRAM work, because nothing under `src/` allocates from it.
+
+`--build --flash-size 8` builds for an 8 MB part when no board is attached; `--psram none` drops
+the Octal PSRAM flag entirely.
 
 ### Then follow this order
 

@@ -190,6 +190,25 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The build follows the board instead of a hardcoded `FlashSize=16M`.** One line decided what
+  every board had to be, and the getting-started guide taught people to buy exactly that part or
+  meet an error the guide never explained. `gateway_cli.py` now asks the chip on the `--flash`
+  path (`esptool flash_id`, ~2 s) and composes the FQBN from the answer, degrading to the default
+  when there is no esptool, no port or no reply. `--build` deliberately does not probe: entering
+  the bootloader pulls DTR/RTS, and a reset drops the BLE link for minutes (measured 2026-11-08,
+  twice), so a build must leave a running bridge running. The partition scheme stays
+  `default_8MB` on every board - letting it follow FlashSize would hand an 8 MB part the 4 MB
+  `default` scheme, whose 1.31 MB slot otadata never boots, so the flash would succeed and the
+  running firmware would not change. A 4 MB board is refused outright with the reason (two
+  3.19 MB OTA slots do not fit) instead of compiling into a single-slot image that cannot update
+  itself. PSRAM keeps `opi` as its default because that is the state the bench board was verified
+  in (banner `0` -> `8386279` bytes on 2026-11-12); `--psram none` exists for boards sold without
+  an R part, and since the prebuilt `dio_opi` SDK sets `CONFIG_SPIRAM_IGNORE_NOTFOUND`, such a
+  board boots with a warning either way - the switch only removes the guesswork. The distributed
+  image stays the 16 MB one and the guide now says so plainly: it carries a flash size and a
+  partition layout, so it is a build for one capacity rather than a universal artefact. An 8 MB
+  board compiles its own, which the script now sizes automatically instead of demanding 16 MB.
+
 - **The last-disconnect entity stopped advertising "epoch" in its name (2.9.0-ota8).** Since the
   ADR-016 fix the entity renders ISO 8601 through `timestamp_custom` and carries
   `device_class: timestamp`, but the label still read `Last MQTT disconnect (epoch)` - true of the
