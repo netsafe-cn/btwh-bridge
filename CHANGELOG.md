@@ -7,6 +7,27 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A failed session is no longer terminal.** `poll()` returned early for any phase but
+  `kRunning`, so one hard reset left the bridge in `kFailed` for the rest of the evening: no
+  retry, no recovery, `link: offline` on MQTT until a human typed `go` (measured 2026-11-13).
+  A 24/7 device cannot depend on a human, and a power cut produces exactly that state.
+
+  It is replaced by a ladder with numbers taken from measurement rather than taste:
+
+  | Step | Wait | Why |
+  |---|---|---|
+  | link dropped | 1 min | the heater refuses sessions for minutes right after a cut (2026-11-08) |
+  | attempt failed | 2 min | nothing to gain from haste; the window is closed or the code is wrong |
+  | 3 failures in a row | 15 min quiet, then restart | ~4 min sufficed once, 27 min another time; the minimum is unknown, so err long |
+
+  The drop path also stopped blocking: it used to be `delay(5000); start(false);`, which froze
+  `loop()` - and with it MQTT, the console and the portal - for five seconds and then
+  reconnected inside the refusal window. `status` now prints the ladder (`retry: in Ns`,
+  consecutive failures), because "why is it not retrying" was the question that cost an
+  evening. Seven contract tests pin the shape in `test_firmware_contract.py`.
+
 ### Added
 
 - **CI now compiles the firmware, which nothing did before.** The Python suite has always

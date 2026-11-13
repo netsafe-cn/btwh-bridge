@@ -377,6 +377,14 @@ static void printStatus() {
     Serial.println("  data age   : no A0 this session (link stays offline)");
   }
   Serial.printf("  last       : %s\n", auth::reasonText(s.lastResult));
+  // The ladder is invisible otherwise, and "why is it not retrying" is the question that cost
+  // an evening on 2026-11-13.
+  if (s.retryInMs) {
+    Serial.printf("  retry      : in %lus (consecutive failures: %d)\n",
+                  (unsigned long)(s.retryInMs / 1000), s.failures);
+  } else {
+    Serial.printf("  retry      : none scheduled (consecutive failures: %d)\n", s.failures);
+  }
   Serial.printf("  wifi       : %s  ssid=%s\n",
                 net::stationUp() ? "up" : "down", gCfg.ssid[0] ? gCfg.ssid : "(none)");
   {

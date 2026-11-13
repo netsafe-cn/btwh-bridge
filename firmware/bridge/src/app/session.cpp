@@ -35,6 +35,38 @@ uint32_t gSessionStart = 0;
 proto::A0State gLastState{};
 bool          gHaveState = false;
 
+// ---------------------------------------------------------------- retry ladder
+// Every number here comes from a measurement, not from taste.
+//
+//   kRetryAfterDropMs   A link that dropped is usually a heater-side event (the heater hung
+//                       up). Reconnecting within seconds runs straight into the refusal window
+//                       measured on 2026-11-08, so wait a minute first. The old code used 5 s
+//                       and a blocking delay().
+//   kRetryAfterFailMs   After a failed authorisation there is nothing to gain from haste: the
+//                       heater's window is closed or the code is wrong. Two minutes keeps the
+//                       device self-healing without burning attempts.
+//   kQuietAfter         Three consecutive failures is no longer a transient; stop knocking.
+//   kQuietMs            Fifteen minutes of silence, then the ladder restarts. Measured
+//                       2026-11-08: ~4 minutes was enough after a 3-minute quiet period;
+//                       2026-11-13: 27 minutes of silence was enough after a hard reset. The
+//                       real minimum is unknown, so this errs on the long side - a bridge that
+//                       comes back after 15 minutes beats one that needs a human.
+constexpr uint32_t kRetryAfterDropMs = 60UL * 1000;
+constexpr uint32_t kRetryAfterFailMs = 120UL * 1000;
+constexpr int      kQuietAfter       = 3;
+constexpr uint32_t kQuietMs          = 15UL * 60 * 1000;
+
+int      gFailures   = 0;      // consecutive failures, reset by a success or a human request
+bool     gRetryArmed = false;
+uint32_t gRetryAtMs  = 0;
+
+void armRetry(uint32_t delayMs) {
+  gRetryArmed = true;
+  gRetryAtMs  = millis() + delayMs;
+}
+
+void disarmRetry() { gRetryArmed = false; }
+
 void banner(const char* s) { Serial.printf("\n===== %s =====\n", s); }
 
 // ---------------------------------------------------------------- auth transport
@@ -157,6 +189,7 @@ bool start(bool forceRebond) {
 
   gRunning      = true;
   gPhase        = kRunning;
+  disarmRetry();          // we are about to try; a queued attempt would be a duplicate
   gSessionStart = millis();
   gReply07      = -1;
   gReply08      = -1;
@@ -189,26 +222,58 @@ bool start(bool forceRebond) {
   }
 
   if (!ok) {
-    Serial.printf("\n[result] x failed (%s). Fix it and type the code again; no reflash needed.\n",
-                  auth::reasonText(gLast));
+    Serial.printf("\n[result] x failed (%s).\n", auth::reasonText(gLast));
     ble::disconnect();
     gPhase = kFailed;
+
+    // The ladder. A failure is no longer the end of the story: schedule the next attempt,
+    // going quiet for a long stretch once it is clearly not a transient.
+    //
+    // Order matters here and cost a build: computing the delay from the counter AFTER resetting
+    // it made the "15 min quiet" branch schedule 2 minutes - the log said one thing and the
+    // timer did another, which the board test caught at 22:53 on 2026-11-13.
+    gFailures++;
+    uint32_t delayMs;
+    if (gFailures >= kQuietAfter) {
+      Serial.printf("[RETRY] %d failures in a row: going quiet for 15 min, then starting over\n",
+                    gFailures);
+      delayMs  = kQuietMs;
+      gFailures = 0;              // the ladder restarts once the silence is over
+    } else {
+      Serial.printf("[RETRY] attempt %d failed; next try in 2 min\n", gFailures);
+      delayMs = kRetryAfterFailMs;
+    }
+    armRetry(delayMs);
   } else {
     Serial.println("\n[result] + all three stages passed, listening for A0 (a frame every 4 s)");
+    gFailures = 0;
+    disarmRetry();
   }
   gRunning = false;
   return ok;
 }
 
 void poll() {
+  // A scheduled attempt fires whatever the phase: kFailed used to be terminal, and that is
+  // exactly the state a power cut leaves behind.
+  if (gRetryArmed && (int32_t)(millis() - gRetryAtMs) >= 0) {
+    disarmRetry();
+    if (!gRunning && gCfg && gCfg->pinValid()) {
+      Serial.println("[RETRY] trying again with the stored code");
+      start(false);
+    }
+    return;
+  }
+
   if (gPhase != kRunning) return;
 
   if (!ble::isConnected()) {
-    Serial.println("[CONN] link dropped, reconnecting in 5 s with the current code");
+    // Was a blocking delay(5000) + immediate start(): it froze loop() (and with it MQTT and
+    // the console) and reconnected inside the heater's refusal window.
+    Serial.println("[CONN] link dropped; scheduling a fresh session in 1 min");
     gPhase = kWaitCode;
     ble::disconnect();
-    delay(5000);
-    start(false);
+    armRetry(kRetryAfterDropMs);
     return;
   }
 
@@ -222,6 +287,7 @@ void poll() {
 
 void shutdown() {
   gPhase = kWaitCode;          // stop poll() from reconnecting while we tear down
+  disarmRetry();
   if (ble::isConnected()) {
     Serial.println("[CONN] closing the link cleanly before restart");
     ble::disconnect();
@@ -242,6 +308,10 @@ Status status() {
   s.sessionMs = gSessionStart ? (millis() - gSessionStart) : 0;
   s.raw       = gRaw;
   s.lastResult = gLast;
+  s.failures  = gFailures;
+  s.retryInMs = gRetryArmed ? (uint32_t)((int32_t)(gRetryAtMs - millis()) > 0
+                                         ? (int32_t)(gRetryAtMs - millis()) : 0)
+                            : 0;
   return s;
 }
 

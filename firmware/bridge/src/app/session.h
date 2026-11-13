@@ -39,6 +39,10 @@ struct Status {
   uint32_t sessionMs;
   bool     raw;
   auth::Result lastResult;
+  // Auto-retry state. `failures` is consecutive; it drives the quiet period. `retryInMs` is
+  // how long until the next attempt, 0 when none is scheduled.
+  int      failures;
+  uint32_t retryInMs;
 };
 
 void begin(Config* cfg);
@@ -47,9 +51,19 @@ void begin(Config* cfg);
 void noteCodeChanged();
 
 // Connect, pair, submit the MAC, submit the code. Blocking; 30 s worst case on five timeouts.
+// Starts the retry ladder at zero: a human asking for a session should not inherit a quiet
+// period that was scheduled for a machine.
 bool start(bool forceRebond);
 
-// Link-drop recovery and the "30 s with no A0" warning. Call from loop().
+// Retry scheduling and the "30 s with no A0" warning. Call from loop().
+//
+// A failed attempt is NOT terminal any more. Measured on 2026-11-13: one hard reset left the
+// bridge stuck in kFailed for the rest of the evening - no retry, no recovery, MQTT publishing
+// `link: offline` until a human typed `go`. At the same time a retry loop is not the answer
+// either: right after a link is cut the heater refuses sessions for minutes (2026-11-08), and
+// hammering it produces the same refusal again. So the ladder waits, gives up loudly for a
+// while, and then starts over - forever, because this device must survive a power cut that
+// nobody is watching.
 void poll();
 
 // Orderly teardown before the CPU restarts. ESP.restart() drops the BLE link at the radio

@@ -135,5 +135,95 @@ class TestAttributesPayload(unittest.TestCase):
                       "MqttInfo.rssi is not read anywhere in mqtt_client.cpp")
 
 
+class TestSessionRetryLadder(unittest.TestCase):
+    """A failed session must not be terminal, and must not turn into a hammer either.
+
+    Both halves are measured, not assumed:
+
+      2026-11-13  one hard reset left the bridge in kFailed all evening. poll() returned early
+                  for any phase but kRunning, so nothing ever retried. MQTT published
+                  `link: offline` until a human typed `go`.
+      2026-11-08  right after a link is cut the heater refuses sessions for minutes; retrying
+                  within seconds reproduces the refusal.
+
+    So the ladder waits, goes quiet, and starts over. This test pins the shape so a later
+    refactor cannot quietly restore either failure mode.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = (ROOT / "firmware" / "bridge" / "src" / "app" / "session.cpp") \
+            .read_text(encoding="utf-8")
+        cls.hdr = (ROOT / "firmware" / "bridge" / "src" / "app" / "session.h") \
+            .read_text(encoding="utf-8")
+
+    def test_failure_arms_a_retry(self):
+        body = self.src[self.src.index("if (!ok) {"):]
+        body = body[:body.index("gRunning = false;")]
+        self.assertIn("armRetry(", body,
+                      "a failed attempt no longer schedules a retry: kFailed is terminal again")
+        self.assertIn("gPhase = kFailed;", body)
+
+    def test_retry_loop_does_not_care_about_phase(self):
+        # The scheduled attempt must be evaluated BEFORE the phase gate; after it, a kFailed
+        # board would sit there forever - exactly the 2026-11-13 bug.
+        poll = self.src[self.src.index("void poll()"):]
+        armed = poll.index("gRetryArmed &&")
+        gate = poll.index("if (gPhase != kRunning) return;")
+        self.assertLess(armed, gate,
+                        "the retry check sits behind the phase gate; kFailed would never retry")
+
+    def test_no_blocking_delay_in_the_drop_path(self):
+        # The old drop path was `delay(5000); start(false);` - it froze loop() (MQTT, console,
+        # portal) for five seconds and reconnected inside the heater's refusal window.
+        # Comments are stripped first: this file's own explanation of the old bug contains the
+        # very string we are hunting.
+        poll = self.src[self.src.index("void poll()"):]
+        poll = poll[:poll.index("void shutdown()")]
+        code = "\n".join(line.split("//")[0] for line in poll.splitlines())
+        self.assertNotIn("delay(", code,
+                         "poll() blocks again; a retry must be scheduled, not slept")
+
+    def test_the_ladder_has_a_quiet_period(self):
+        for needle in ("kQuietAfter", "kQuietMs", "kRetryAfterFailMs", "kRetryAfterDropMs"):
+            self.assertIn(needle, self.src, "%s is missing from the retry ladder" % needle)
+        quiet = re.search(r"kQuietMs\s*=\s*(\d+)UL\s*\*\s*60\s*\*\s*1000", self.src)
+        self.assertIsNotNone(quiet, "kQuietMs is not expressed in minutes")
+        self.assertGreaterEqual(int(quiet.group(1)), 10,
+                                "a quiet period shorter than 10 min just re-enters the refusal")
+
+    def test_quiet_branch_actually_waits_the_quiet_period(self):
+        # Board test 2026-11-13 22:53: the log said "going quiet for 15 min" and the next
+        # attempt came two minutes later, because the failure counter was reset before the
+        # delay was computed. The ladder announced one thing and did another.
+        body = self.src[self.src.index("gFailures++;"):]
+        body = body[:body.index("armRetry(delayMs);") + len("armRetry(delayMs);")]
+        quiet = body.index("delayMs  = kQuietMs;")
+        reset = body.index("gFailures = 0;")
+        self.assertLess(quiet, reset,
+                        "the quiet delay must be taken before the counter is reset")
+        self.assertIn("armRetry(delayMs)", body, "the delay is not the one that gets armed")
+        # The buggy indirection was a helper that recomputed the delay from the counter.
+        self.assertNotIn("retryDelayNow", self.src,
+                         "a helper that recomputes the delay will drift out of step again")
+
+    def test_success_clears_the_ladder(self):
+        body = self.src[self.src.index("} else {"):]
+        body = body[:body.index("gRunning = false;")]
+        self.assertIn("gFailures = 0;", body, "a good session must reset the failure count")
+        self.assertIn("disarmRetry()", body, "a good session must cancel a queued attempt")
+
+    def test_shutdown_cancels_a_queued_attempt(self):
+        body = self.src[self.src.index("void shutdown()"):]
+        self.assertIn("disarmRetry()", body,
+                      "shutdown() must not leave an attempt queued for a rebooting board")
+
+    def test_status_exposes_the_ladder(self):
+        # "why is it not retrying?" was the question this evening; status has to answer it.
+        for needle in ("failures", "retryInMs"):
+            self.assertIn(needle, self.hdr, "Status lost %s" % needle)
+        self.assertIn("s.retryInMs", self.src, "status() does not fill retryInMs")
+
+
 if __name__ == "__main__":
     unittest.main()
