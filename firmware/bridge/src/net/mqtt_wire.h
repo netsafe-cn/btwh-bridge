@@ -101,6 +101,14 @@ size_t buildDisconnect(uint8_t* out, size_t cap);
 //    -1  malformed (bad remaining length, truncated header); the connection should be dropped
 int decode(const uint8_t* buf, size_t len, Packet* out, size_t* consumed);
 
+// Size of the packet starting at `buf`, read from the fixed header alone. 0 = the header is still
+// arriving, -1 = the length prefix is not a legal four-byte varint. Unlike decode() this does not
+// care how large the packet is, which is the whole point: it lets the client throw away a packet
+// it cannot hold and keep the stream in sync instead of dropping the connection. MQTT puts no
+// upper bound on packet size, so a broker - or another integration publishing a kilobyte of JSON
+// on a subscribed topic - can legitimately send one.
+int packetLength(const uint8_t* buf, size_t len, size_t* total);
+
 // Unpacks a PUBLISH body. False when the body is too short to hold the topic it claims.
 bool parsePublish(const Packet& p, PublishInfo& out);
 

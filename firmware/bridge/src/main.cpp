@@ -42,6 +42,7 @@
 #include "app/session.h"
 #include "auth/login.h"
 #include "ble/link.h"
+#include "net/discover.h"
 #include "net/portal.h"
 #include "net/discovery.h"
 #include "net/mqtt_client.h"
@@ -280,20 +281,56 @@ static void refreshMqttInfo() {
 
 // Starts or restarts the client from the configured broker string. Called at boot and whenever
 // `broker` changes the address; a refresh is enough because the client owns its socket.
+// An address found over mDNS, in effect only while the broker field is empty. Deliberately NOT
+// written to NVS: it describes the network as it is today, and storing it would rebuild exactly
+// the staleness this replaces (measured 2026-11-14: the same Home Assistant was carried to
+// another building, got a new subnet, and every stored address went dead at once).
+static char     gAutoBroker[24] = {0};
+static uint16_t gAutoPort       = 1883;
+
+// Resolves the broker once and caches it. Blocking for a second or two, so it runs at boot and
+// from the console command - never from loop().
+static bool runDiscovery(const char* why) {
+  char host[24];
+  char how[72];
+  uint16_t port = 1883;
+  if (!net::discoverBroker(host, sizeof(host), &port, how, sizeof(how))) {
+    Serial.printf("[MDNS] x %s: %s\n", why, how);
+    return false;
+  }
+  strncpy(gAutoBroker, host, sizeof(gAutoBroker) - 1);
+  gAutoBroker[sizeof(gAutoBroker) - 1] = 0;
+  gAutoPort = port;
+  Serial.printf("[MDNS] + %s -> %s:%u (%s)\n", why, gAutoBroker, (unsigned)gAutoPort, how);
+  return true;
+}
+
 static void startMqtt() {
   char deviceId[20];
   net::mqtt::deviceIdFromAddress(gCfg.heater, deviceId, sizeof(deviceId));
 
+  // What the user typed wins. An empty field means "find it yourself", and the discovered
+  // answer is what the client is given - in the host:port form the parser already accepts.
+  char target[sizeof(gCfg.broker) + 8];
+  if (gCfg.broker[0]) {
+    snprintf(target, sizeof(target), "%s", gCfg.broker);
+  } else if (gAutoBroker[0]) {
+    snprintf(target, sizeof(target), "%s:%u", gAutoBroker, (unsigned)gAutoPort);
+  } else {
+    target[0] = 0;
+  }
+
   refreshMqttInfo();
   net::mqttSetHooks(onMqttSetpoint, onMqttCommand, nullptr);
 
-  net::mqttBegin(gCfg.broker, deviceId);
+  net::mqttBegin(target, deviceId);
   // Credentials come after begin: begin() applies the address, this applies the account, and
   // together they are the whole connection contract from the config. Called on every restart
   // (broker command, portal save, boot) so NVS is the single source of truth.
   net::mqttSetCredentials(gCfg.mqttUser, gCfg.mqttPass);
-  if (!gCfg.broker[0]) {
-    Serial.println("[MQTT] no broker configured; telemetry stays on the serial port");
+  if (!target[0]) {
+    Serial.println("[MQTT] no broker configured and none discovered; telemetry stays on the serial");
+    Serial.println("       (type `discover`, or `broker <host[:port]>` to set one by hand)");
     return;
   }
   Serial.printf("[MQTT] starting as %s (%s)\n", deviceId,
@@ -340,6 +377,7 @@ static void printHelp() {
   Serial.println("  selftest          run the golden protocol vectors on the board");
   Serial.println("  mqtt              print the payload this state would publish");
   Serial.println("  broker HOST[:P]   set the MQTT broker ( - clears it ); restarts the client");
+  Serial.println("  discover          look for the broker over mDNS (broker field empty = auto)");
   Serial.println("  mqttuser U PASS   set the broker account ( - clears ); restarts the client");
   Serial.println("  ota               print how to update firmware over MQTT");
   Serial.println("  portal            start the setup portal by hand (LAN page if online, else AP)");
@@ -439,6 +477,10 @@ static void handleCommand(String line) {
     strncpy(gCfg.broker, arg.c_str(), sizeof(gCfg.broker) - 1);
     gCfg.broker[sizeof(gCfg.broker) - 1] = 0;
     gCfg.saveNetwork();
+    // A typed address replaces a discovered one. Clearing the field does not silently fall back
+    // to the discovered address either: "-" means "no broker", and `discover` is how you ask for
+    // one, so the two commands stay predictable.
+    gAutoBroker[0] = 0;
     Serial.printf("[CFG] broker = %s\n", gCfg.broker[0] ? gCfg.broker : "(none)");
     startMqtt();
     return;
@@ -474,6 +516,11 @@ static void handleCommand(String line) {
                   gCfg.mqttUser[0] ? gCfg.mqttUser : "(anonymous)",
                   gCfg.mqttPass[0] ? "(set)" : "(none)");
     startMqtt();
+    return;
+  }
+  if (low == "discover") {
+    if (!net::stationUp()) { Serial.println("[MDNS] the station is down; join Wi-Fi first"); return; }
+    if (runDiscovery("console")) startMqtt();
     return;
   }
   if (low == "portal") {
@@ -689,6 +736,11 @@ void setup() {
     gLastAttemptMs  = millis();
     gOfflineSinceMs = gLastAttemptMs;
   }
+
+  // No broker in NVS: look for one instead of leaving the bridge dumb. One or two seconds at
+  // boot, and the cost of not doing it is a device that publishes nowhere until someone types an
+  // address into a form.
+  if (!gCfg.broker[0] && net::stationUp()) runDiscovery("no broker configured");
 
   // MQTT comes after Wi-Fi, for the same reason: the client needs an IP to do anything at all,
   // and starting it earlier only produces a failed attempt on the boot log.

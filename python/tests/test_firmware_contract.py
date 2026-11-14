@@ -330,5 +330,121 @@ class TestNoHomeNetworkInTheRepository(unittest.TestCase):
         self.assertEqual(hits, [], "private network addresses belong in config, not in the source")
 
 
+class TestBrokerDiscovery(unittest.TestCase):
+    """An empty broker field means "find it", so a buyer never has to know an IP address.
+
+    The candidate order in net/discover.cpp is not an opinion about how networks should be set
+    up - it was measured on the target LAN with _handoff/mdns_probe.py (2026-11-14):
+
+      _mqtt._tcp.local           no answer; the Home Assistant Mosquitto add-on advertises nothing
+      _home-assistant._tcp.local answer; SRV says host:80, so the port is the web UI, not the broker
+
+    Those two facts are what the assertions below protect: try the honest service first, and when
+    falling back, do not reuse the advertised port.
+    """
+
+    def setUp(self):
+        self.src = (ROOT / "firmware" / "bridge" / "src" / "net" / "discover.cpp").read_text(
+            encoding="utf-8")
+        self.main = (ROOT / "firmware" / "bridge" / "src" / "main.cpp").read_text(encoding="utf-8")
+
+    def test_mqtt_service_is_tried_before_the_home_assistant_fallback(self):
+        self.assertLess(self.src.index('queryService("mqtt"'),
+                        self.src.index('queryService("home-assistant"'),
+                        "a broker that advertises itself must win over the inference")
+
+    def test_the_fallback_does_not_reuse_the_advertised_port(self):
+        body = self.src[self.src.index('queryService("home-assistant"'):]
+        body = body[:body.index("return true;")]
+        self.assertIn("*port = 1883;", body,
+                      "the advertised port is the web UI; the broker is the add-on on 1883")
+        self.assertNotIn("MDNS.port(0)", body,
+                         "MDNS.port(0) here would install the web UI port as the broker port")
+
+    def test_the_address_is_resolved_in_a_second_query(self):
+        # MDNS.queryService() runs mdns_query_ptr, which returns PTR answers without following
+        # SRV/A: MDNS.IP() then reads a null addr and reports 0.0.0.0. Measured on the board
+        # 2026-11-14 - the service was found and the address came back as 0.0.0.0, so the bridge
+        # sat there dialling nothing. The SRV target has to be resolved separately.
+        self.assertIn("MDNS.hostname(", self.src,
+                      "the SRV target is where the address comes from")
+        self.assertIn("queryHost(", self.src,
+                      "the address needs its own A query; IP() alone is 0.0.0.0")
+        self.assertLess(self.src.index("MDNS.IP("), self.src.index("queryHost("),
+                        "the cheap read is tried first and the extra query only when it fails")
+
+    def test_the_reason_is_reported(self):
+        # An unlabelled guess gets blamed on the wrong component later.
+        self.assertIn("advertised _mqtt._tcp", self.src)
+        self.assertIn("Home Assistant host", self.src)
+
+    def test_boot_discovers_only_when_nothing_was_configured(self):
+        self.assertIn('if (!gCfg.broker[0] && net::stationUp()) runDiscovery(', self.main,
+                      "discovery at boot must not override a configured broker")
+
+    def test_a_typed_broker_wins_over_the_discovered_one(self):
+        body = self.main[self.main.index("static void startMqtt()"):]
+        body = body[:body.index("refreshMqttInfo();")]
+        self.assertLess(body.index("if (gCfg.broker[0])"), body.index("gAutoBroker[0]"),
+                        "the config field has to be checked before the discovered address")
+        self.assertIn("gAutoBroker[0] = 0;", self.main,
+                      "typing a broker must clear a discovered one, or they fight")
+
+    def test_the_discovered_address_is_not_persisted(self):
+        # Storing it would recreate the staleness the feature exists to remove.
+        self.assertNotIn("gCfg.broker", self.src,
+                         "discover.cpp must not touch the stored config")
+        idx = self.main.index("static bool runDiscovery")
+        body = self.main[idx:self.main.index("static void startMqtt()")]
+        self.assertNotIn("saveNetwork()", body,
+                         "a discovered address is an observation, not configuration")
+
+
+class TestOversizePacketIsSkipped(unittest.TestCase):
+    """A legal packet bigger than the receive buffer must be thrown away, not fatal.
+
+    Measured 2026-11-14: the board sat in a reconnect loop publishing `malformed or oversized
+    packet` every 4 seconds. The cause was a 1083-byte retained document delivered to it - on a
+    topic it had never subscribed to, which is the dev broker's bug - but the firmware turned one
+    big packet into a bridge that could never come back. MQTT puts no upper bound on packet size,
+    so any broker, or any other integration publishing a kilobyte on a subscribed topic, can do
+    the same thing to a production unit.
+    """
+
+    def setUp(self):
+        self.wire = (ROOT / "firmware" / "bridge" / "src" / "net" / "mqtt_wire.cpp").read_text(
+            encoding="utf-8")
+        self.hdr = (ROOT / "firmware" / "bridge" / "src" / "net" / "mqtt_wire.h").read_text(
+            encoding="utf-8")
+        self.src = MQTT_CLIENT_CPP.read_text(encoding="utf-8")
+
+    def test_the_size_is_available_without_the_body(self):
+        self.assertIn("int packetLength(", self.hdr,
+                      "the size has to be readable before the body is buffered")
+        self.assertIn("int packetLength(", self.wire)
+
+    def test_the_client_drains_instead_of_dropping(self):
+        body = self.src[self.src.index("void drainSocket()"):]
+        body = body[:body.index("wire::Packet p{};")]
+        self.assertIn("gSkipBytes", body, "oversize must set a discard count")
+        self.assertIn("packetLength(", body, "the discard needs the packet's total size")
+        branch = body[body.index("total > sizeof(gRx)"):]
+        self.assertNotIn("drop(", branch,
+                         "the oversize branch must discard the packet, not drop the connection")
+
+    def test_the_discard_count_survives_between_polls(self):
+        # The body arrives over several polls; a local counter would lose the remainder and
+        # desynchronise the stream.
+        self.assertIn("size_t  gSkipBytes", self.src)
+        self.assertGreaterEqual(self.src.count("gSkipBytes = 0;"), 2,
+                                "the counter must be reset with the receive buffer")
+
+    def test_the_stream_is_only_dropped_for_an_illegal_prefix(self):
+        body = self.src[self.src.index("void drainSocket()"):]
+        body = body[:body.index("memmove(gRx")] if "memmove(gRx" in body else body
+        self.assertIn('drop("malformed length prefix")', body,
+                      "a prefix that is not four bytes long cannot be recovered from")
+
+
 if __name__ == "__main__":
     unittest.main()

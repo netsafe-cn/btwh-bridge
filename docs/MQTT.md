@@ -103,6 +103,25 @@ topic is the second, independent signal: it goes `offline` when the heater stops
 comes back with the first frame of the new session, so a bridge that is up but deaf is
 described accurately instead of looking healthy.
 
+### When no broker is configured
+
+An empty broker field is not "disabled" — it means *find one*. At boot, and on the `discover`
+console command, the bridge asks mDNS:
+
+| Step | Query | Why this order |
+|---|---|---|
+| 1 | `_mqtt._tcp.local` | a broker that advertises itself: Mosquitto on a NAS, a Pi, most non-HA setups |
+| 2 | `_home-assistant._tcp.local` | the Home Assistant Mosquitto **add-on** does not advertise `_mqtt._tcp` (measured 2026-11-14 on a live network: the only service present was `_home-assistant._tcp`). The add-on runs on the HA host, so that address with port 1883 is the broker. The advertised port is the web UI (80) and is deliberately ignored |
+
+The answer is never written to NVS. It is an observation about the network as it is today, and
+storing it would recreate the staleness the feature exists to remove: the same Home Assistant
+moved to another subnet on 2026-11-14 and every stored address went dead at once. Typing an
+address with the `broker` command still wins, and `broker -` still means "no broker", so the two
+behave predictably.
+
+The mDNS hostname the bridge publishes is `btwh-bridge.local` — the LAN-mode setup page is
+reachable there too, without an address.
+
 Commands:
 
 - `refresh` — publish the current snapshot immediately (the client already queues it).

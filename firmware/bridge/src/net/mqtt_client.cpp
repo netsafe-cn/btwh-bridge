@@ -87,6 +87,12 @@ bool gForgetPending = false;
 uint8_t gTx[kTxCap];
 uint8_t gRx[wire::kMaxPacket];
 size_t  gRxLen = 0;
+// Bytes still to be thrown away from a packet the buffer cannot hold. MQTT puts no upper bound on
+// packet size, so this is a normal condition, not an error: the stream stays in sync as long as
+// the body is consumed. Measured 2026-11-14 - a broker delivering a 1083-byte retained document
+// (on a topic this client never subscribed to, which is that broker's own bug) turned one
+// oversize packet into a reconnect loop that never recovered.
+size_t  gSkipBytes = 0;
 
 // ---------------------------------------------------------------- helpers
 
@@ -278,6 +284,7 @@ void drop(const char* why) {
   }
   gSock.stop();
   gRxLen       = 0;
+  gSkipBytes   = 0;
   gState       = kIdle;
   // The freshness marker stays retained at the broker while we are away - availability goes
   // offline, and the entities that combine both signals are already unavailable. Forgetting
@@ -293,6 +300,7 @@ void beginConnect() {
   gLastAttempt = millis();
   gSock.stop();
   gRxLen = 0;
+  gSkipBytes = 0;
 
   if (!gSock.connect(gHost, gPort, 3000)) {
     strncpy(gWhy, "tcp connect failed", sizeof(gWhy) - 1);
@@ -556,6 +564,15 @@ void handle(const wire::Packet& p) {
 // Reads whatever the socket has, then decodes as many packets as are complete. Every packet is
 // handled before the buffer is compacted, so `body` stays valid while it is being read.
 void drainSocket() {
+  // Finish throwing away an oversized packet first: its tail is still on the wire and the parser
+  // cannot resume until it is gone.
+  while (gSkipBytes && gSock.available()) {
+    if (gSock.read() < 0) break;
+    gSkipBytes--;
+    gLastRx = millis();
+  }
+  if (gSkipBytes) return;
+
   while (gSock.available() && gRxLen < sizeof(gRx)) {
     const int c = gSock.read();
     if (c < 0) break;
@@ -564,13 +581,30 @@ void drainSocket() {
   }
 
   for (;;) {
+    // A packet bigger than the buffer is legal. Read its size from the header, throw the whole
+    // thing away, and carry on: dropping the connection here turns somebody else's kilobyte of
+    // JSON on a subscribed topic into a bridge that never reconnects.
+    if (gRxLen == 0) break;
+    size_t total = 0;
+    const int whole = wire::packetLength(gRx, gRxLen, &total);
+    if (whole < 0) { drop("malformed length prefix"); return; }
+    if (whole > 0 && total > sizeof(gRx)) {
+      const size_t held = (gRxLen < total) ? gRxLen : total;
+      gSkipBytes = total - held;
+      Serial.printf("[MQTT] skipped a %u byte packet (the buffer holds %u)\n",
+                    (unsigned)total, (unsigned)sizeof(gRx));
+      gRxLen -= held;                        // normally nothing remains; harmless if it does
+      if (gSkipBytes) return;                // the rest is still arriving
+      continue;
+    }
+
     wire::Packet p{};
     size_t used = 0;
     const int r = wire::decode(gRx, gRxLen, &p, &used);
     if (r == 0) break;
-    // -1 covers both a malformed length prefix and a packet larger than kMaxPacket (legal, but
-    // bigger than this client commits to decode). Either way the stream cannot continue.
-    if (r < 0) { drop("malformed or oversized packet"); return; }
+    // -1 here means a length prefix that is not a legal four-byte varint: the stream really is
+    // desynchronised and cannot continue. Oversize never reaches this point any more.
+    if (r < 0) { drop("malformed length prefix"); return; }
     handle(p);
     if (gState != kUp && gState != kWaitConnack) return;   // handle() dropped the link
     memmove(gRx, gRx + used, gRxLen - used);

@@ -178,6 +178,7 @@ Code expired or rejected? **Read a new one and type it again** — no build invo
 | `wifi <ssid> <password>` | Join a network now, persisted to NVS (open network: `wifi <ssid> -`; `wifi` alone prints the state) |
 | `broker <host[:port]>` | Set the MQTT broker; `broker` alone prints the current one (`-` clears) |
 | `mqttuser <name> <password>` | Broker credentials, persisted in NVS (`-` clears both; a password may contain spaces) |
+| `discover` | Look for the broker over mDNS; an empty broker field does this at boot too |
 | `portal` | Start the Wi-Fi provisioning portal by hand (one form: Wi-Fi + heater + code + broker). Not needed for a board that cannot join: that path is automatic after 5 min, see ADR-018 |
 | `ota` | Prints how to flash: the URL goes to the MQTT `ota` topic — the console deliberately refuses to become a second flasher |
 | `status` | Print configuration and runtime state |

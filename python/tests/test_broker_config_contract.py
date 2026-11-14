@@ -84,10 +84,16 @@ class TestWiring(unittest.TestCase):
     def test_start_mqtt_passes_the_stored_account(self):
         """The one place the client is (re)started must hand it both the address and the
         account, credentials AFTER begin: begin() no longer resets them, but the call order
-        is still the documented contract."""
+        is still the documented contract.
+
+        The address is `target`, not `gCfg.broker` directly, since an empty config field is
+        resolved either from mDNS or to nothing at all - the client still has to be started
+        without one, because `begin("")` is what clears a previous broker."""
         body = _function_body(MAIN_CPP, "static void startMqtt() {")
-        self.assertIn("net::mqttBegin(gCfg.broker", body)
-        begin_at = body.index("net::mqttBegin(gCfg.broker")
+        self.assertIn("net::mqttBegin(target", body)
+        self.assertIn("gCfg.broker", body,
+                      "the resolved address has to start from the stored one")
+        begin_at = body.index("net::mqttBegin(target")
         creds_at = body.index("net::mqttSetCredentials(gCfg.mqttUser, gCfg.mqttPass)")
         self.assertLess(begin_at, creds_at,
                         "mqttSetCredentials must follow mqttBegin in startMqtt()")

@@ -189,7 +189,7 @@ http://192.168.4.1/
 | **1 · Your heater** → `Heaters in range` | 附近的热水器 | 下拉里选你家热水器。名字和热水器面板上显示的一致 |
 | **2 · Wi-Fi** → `Network` / `Password` | 网络 / 密码 | 选家里的 **2.4G** 网络，输 WiFi 密码 |
 | **3 · Pairing code** → 六位数字框 | 配对码 | **先空着**，第 5 节拿到码再回来填 |
-| **4 · MQTT broker** | 消息服务器 | **没有 Home Assistant 就整段留空** |
+| **4 · MQTT broker** | 消息服务器 | **留空 = 自动找**（mDNS）；没有 Home Assistant 就整段留空 |
 | **Save and connect** | 保存并连接 | 最后按这个按钮 |
 
 > **下拉里没有热水器？** 说明板子没听到热水器的蓝牙广播。热水器长时间不用会休眠，
@@ -406,6 +406,7 @@ esptool --chip esp32s3 merge_bin -o btwh-bridge-full-16mb.bin \
 | `portal` | 在局域网开配置页（想主动换网络时用；连不上会自己开热点，不用它） |
 | `wifi <名字> <密码>` | 直接写 WiFi 配置并立刻连接 |
 | `broker <地址>` | 改 MQTT 服务器；`broker -` 清空 |
+| `discover` | 用 mDNS 找 broker（地址留空时开机也会自动找） |
 
 失败对照表（`A2/08` 那些码是什么意思）在
 [`firmware/bridge/README.md`](../firmware/bridge/README.md) 里。

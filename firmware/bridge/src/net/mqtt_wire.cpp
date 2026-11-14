@@ -233,8 +233,8 @@ void deviceIdFromAddress(const char* address, char* out, size_t cap) {
 
 // ---------------------------------------------------------------- inbound
 
-int decode(const uint8_t* buf, size_t len, Packet* out, size_t* consumed) {
-  if (!buf || !out || len < 2) return 0;
+int packetLength(const uint8_t* buf, size_t len, size_t* total) {
+  if (!buf || len < 2) return 0;
 
   size_t rem = 0;
   size_t mul = 1;
@@ -245,20 +245,37 @@ int decode(const uint8_t* buf, size_t len, Packet* out, size_t* consumed) {
     d = buf[i++];
     rem += (size_t)(d & 0x7F) * mul;
     mul *= 128;
-    // Four bytes is the protocol maximum. Anything longer is a desynchronised stream, not a
-    // big packet, and the only safe action is to drop the connection.
+    // Four bytes is the protocol maximum. Anything longer is a desynchronised stream, not a big
+    // packet, and the only safe action is to drop the connection.
     if (mul > 128UL * 128 * 128) return -1;
   } while (d & 0x80);
 
-  if (rem > kMaxPacket) return -1;
-  if (len < i + rem) return 0;              // body still arriving
+  if (total) *total = i + rem;
+  return (int)(i + rem);
+}
 
+int decode(const uint8_t* buf, size_t len, Packet* out, size_t* consumed) {
+  if (!buf || !out || len < 2) return 0;
+
+  size_t total = 0;
+  const int whole = packetLength(buf, len, &total);
+  if (whole <= 0) return whole;              // 0: header still arriving, -1: not a legal prefix
+  if ((size_t)whole > kMaxPacket) return -1; // legal, but larger than this client holds
+  if (len < total) return 0;                 // body still arriving
+
+  // Walk the length prefix once more for its width; packetLength() validated it, so this cannot
+  // run past the end.
+  size_t hdr = 1;
+  while (hdr < len && (buf[hdr] & 0x80)) hdr++;
+  hdr++;
+
+  const size_t rem = total - hdr;
   out->type = (uint8_t)(buf[0] >> 4);
   out->flags = (uint8_t)(buf[0] & 0x0F);
-  out->body = buf + i;
+  out->body = buf + hdr;
   out->length = rem;
-  if (consumed) *consumed = i + rem;
-  return (int)(i + rem);
+  if (consumed) *consumed = total;
+  return (int)total;
 }
 
 bool parsePublish(const Packet& p, PublishInfo& out) {
@@ -358,6 +375,30 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
   check(c, topicIs(info, topic), "topic round-trips", nullptr);
   check(c, info.payloadLen == strlen(payload) &&
            memcmp(info.payload, payload, info.payloadLen) == 0, "payload round-trips", nullptr);
+
+  // 5. A packet larger than the receive buffer. MQTT allows any size, so this has to be a
+  //    skippable condition rather than a fatal one: packetLength() reports the full size so the
+  //    client can throw the body away and keep the stream in sync, while decode() still refuses
+  //    to hand back a body it cannot hold.
+  //    Header 0x30, remaining length 900 in the two-byte form: 900 = 4 + 7 * 128 -> 0x84 0x07.
+  {
+    uint8_t big[3] = {0x30, 0x84, 0x07};
+    size_t total = 0;
+    const int whole = packetLength(big, sizeof(big), &total);
+    check(c, whole == 903 && total == 903, "packetLength sizes a packet bigger than the buffer",
+          nullptr);
+    check(c, decode(big, sizeof(big), &pkt, &used) == -1,
+          "decode still refuses a body it cannot hold", nullptr);
+
+    uint8_t partial[2] = {0x30, 0x84};
+    check(c, packetLength(partial, sizeof(partial), &total) == 0,
+          "packetLength waits for the rest of a length prefix", nullptr);
+
+    // Four continuation bytes is past the protocol's limit, so the stream really is broken.
+    uint8_t bad[6] = {0x30, 0x80, 0x80, 0x80, 0x80, 0x01};
+    check(c, packetLength(bad, sizeof(bad), &total) == -1,
+          "packetLength rejects an illegal length prefix", nullptr);
+  }
   check(c, info.retained && info.qos == 0, "retain set, qos 0", nullptr);
 
   // 7. Fragmented arrival: one byte at a time must return 0 until the last byte.

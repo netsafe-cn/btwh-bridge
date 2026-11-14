@@ -7,6 +7,27 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **The broker can be found instead of typed.** An empty broker field now means "look for one":
+  at boot and on the `discover` console command the bridge asks mDNS. The order is measured, not
+  assumed — `_handoff/mdns_probe.py` was run on the target LAN first (2026-11-14):
+
+  | Step | Query | Result on the target network |
+  |---|---|---|
+  | 1 | `_mqtt._tcp.local` | **no answer** — the Home Assistant Mosquitto add-on advertises nothing |
+  | 2 | `_home-assistant._tcp.local` | answer: instance → `host:80` → the HA host's address |
+
+  So the honest service is tried first (a broker on a NAS or a Pi usually does advertise it), and
+  the fallback treats the HA host as the broker on 1883 — the add-on default — deliberately
+  ignoring the advertised port, which is the web UI. The bridge also publishes itself as
+  `btwh-bridge.local`, so the LAN-mode setup page needs no address either.
+
+  The discovered address is never written to NVS: it describes the network as it is today, and
+  storing it rebuilds the staleness the feature exists to remove (the same Home Assistant moved
+  to another subnet that day and every stored address went dead at once). A typed address still
+  wins, and `broker -` still means "no broker", so both stay predictable.
+
 ### Fixed
 
 - **The MQTT device id now follows the heater address.** The id is derived from the heater's BLE
