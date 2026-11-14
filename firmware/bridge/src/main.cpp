@@ -583,10 +583,29 @@ static void handleCommand(String line) {
     String v = line.substring(5);
     v.trim();
     v.toLowerCase();
+
+    // The device id is derived from this address, so every MQTT topic moves with it. Capture
+    // both ids around the write: the documents under the old one have to be deleted, or the
+    // consumer keeps a second device that never updates again (measured 2026-11-13 - a bogus
+    // aa:bb:cc:dd:ee:ff left 22 entities standing beside the real heater's).
+    char oldId[20];
+    char newId[20];
+    net::mqtt::deviceIdFromAddress(gCfg.heater, oldId, sizeof(oldId));
+    net::mqtt::deviceIdFromAddress(v.c_str(), newId, sizeof(newId));
+
     strncpy(gCfg.heater, v.c_str(), sizeof(gCfg.heater) - 1);
     gCfg.heater[sizeof(gCfg.heater) - 1] = 0;
     gCfg.save();
     Serial.printf("[CFG] heater address = %s\n", gCfg.heater);
+
+    if (strcmp(oldId, newId) != 0) {
+      // Forget first, then begin: mqttForgetDevice() writes on the live socket, and begin()
+      // replaces the device id and drops that socket. Returns false when offline, where there
+      // is nothing of ours retained to delete.
+      net::mqttForgetDevice(oldId);
+      startMqtt();
+      Serial.printf("[CFG] mqtt device id %s -> %s\n", oldId, newId);
+    }
     return;
   }
   Serial.printf("[?] unknown command: %s (type help for the list)\n", line.c_str());

@@ -231,9 +231,9 @@ dashboard, then swap in the board by changing only the device id.
 With the board in the loop:
 
 ```
-broker 192.168.110.10            # serial console; restarts the client
+broker 192.0.2.10                # serial console; restarts the client
 mqttuser btwh <password>         # optional: broker credentials, persisted in NVS
-status                           # shows "mqtt : up 192.168.110.10:1883 as btwh_eb6f5f"
+status                           # shows "mqtt : up 192.0.2.10:1883 as btwh_eb6f5f"
 mqtt                             # prints the payload for the live state
 ```
 
@@ -243,8 +243,8 @@ Point Home Assistant at the same broker and the device appears under *Settings â
 The OTA paths have one-line bench drivers (live-only publish, never retained):
 
 ```bash
-python python/tools/mqtt_watch.py --ota http://192.168.137.1:8000/firmware.bin --device <id>
-python python/tools/mqtt_watch.py --manifest 2.8.1,http://192.168.137.1:8000/firmware.bin --device <id>
+python python/tools/mqtt_watch.py --ota http://192.0.2.10:8000/firmware.bin --device <id>
+python python/tools/mqtt_watch.py --manifest 2.8.1,http://192.0.2.10:8000/firmware.bin --device <id>
 ```
 
 `--ota` flashes immediately; `--manifest` publishes the retained version/URL pair that turns

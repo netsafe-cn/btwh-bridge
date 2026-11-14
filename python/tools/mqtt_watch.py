@@ -13,7 +13,7 @@ Two jobs, one file, because both need the same topic knowledge:
             this, every UI change waits for a 4-second broadcast.
 
 Examples:
-    python python/tools/mqtt_watch.py --host 192.168.110.138
+    python python/tools/mqtt_watch.py --host 192.0.2.10
     python python/tools/mqtt_watch.py --demo --device btwh_eb6f5f
     python python/tools/mqtt_watch.py --host 127.0.0.1 --set 42      # publish a setpoint
 

@@ -95,6 +95,13 @@ typedef void (*CommandFn)(void* ctx, const char* verb);
 // in the host self test.
 
 void mqttBegin(const char* broker, const char* deviceId);
+// Deletes every retained document `deviceId` left at the broker: its discovery configs and the
+// retained availability / link / OTA-state topics. Call it BEFORE mqttBegin() with a new id,
+// which is what the `addr` console command does. Without it the old id stays retained and HA
+// grows a second device that never updates again (measured 2026-11-13: aa:bb:cc:dd:ee:ff left
+// 22 entities behind beside the real heater's). Returns false when the client is not connected
+// - nothing was published in that state, so there is nothing to delete.
+bool mqttForgetDevice(const char* deviceId);
 // Broker account. Called right after every mqttBegin(); empty strings mean anonymous.
 // mqttBegin() does not clear these - clearing is this function with ("", "").
 void mqttSetCredentials(const char* user, const char* pass);

@@ -122,7 +122,7 @@ void stationDiag(char* out, size_t cap) {
     return;
   }
   // Gateway and DNS earn their place: a board with an address and no route is the failure the
-  // Windows mobile hotspot produces after a few hours, and "ip=192.168.137.2 gw=0.0.0.0" says
+  // Windows mobile hotspot produces after a few hours, and "ip=192.0.2.2 gw=0.0.0.0" says
   // that in one glance.
   // The channel is asked of the driver: this core has no WiFi.channel().
   uint8_t            primary = 0;

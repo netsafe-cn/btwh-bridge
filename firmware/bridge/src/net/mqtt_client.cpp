@@ -76,6 +76,14 @@ char     gManifestUrl[128]  = "";
 bool   gLinkFresh    = false;
 int8_t gLinkReported = -1;   // -1 = not published on this connection, 0 = offline, 1 = online
 
+// A device id whose retained documents are being deleted. The first pass runs on the live
+// socket, but the socket is then closed without a DISCONNECT, so the broker fires this
+// connection's last will - `availability = offline`, retained, on the OLD id's topic tree -
+// after the deletion has already gone out. The name is kept until a new session exists, which
+// is the first moment the will is provably behind us, and the deletion runs once more.
+char gForgetId[20] = {0};
+bool gForgetPending = false;
+
 uint8_t gTx[kTxCap];
 uint8_t gRx[wire::kMaxPacket];
 size_t  gRxLen = 0;
@@ -84,6 +92,37 @@ size_t  gRxLen = 0;
 
 void makeTopic(char* out, size_t cap, const char* suffix) {
   snprintf(out, cap, "%s/%s/%s", contract::kBaseTopic, gDeviceId, suffix);
+}
+
+// Publishes on a topic given in full rather than as a suffix of this device's tree: the only
+// caller is mqttForgetDevice(), which writes into a topic tree that belongs to a device id we
+// no longer are.
+bool publishRaw(const char* topic, const void* payload, size_t len, bool retain) {
+  const size_t n = wire::buildPublish(gTx, sizeof(gTx), topic, payload, len, retain);
+  if (!n) {
+    Serial.printf("[MQTT] x %s does not fit in one packet\n", topic);
+    return false;
+  }
+  return gSock.write(gTx, n) == n;
+}
+
+// Deletes every retained document a device id left at the broker. Two kinds outlive the id that
+// wrote them: the discovery configs (they are what makes a consumer create the device) and the
+// retained availability / link / OTA state (they keep a dead device looking alive). An empty
+// retained payload is how MQTT says "delete this topic".
+size_t clearRetained(const char* deviceId) {
+  size_t cleared = 0;
+  char topic[120];
+  for (size_t i = 0; i < discovery::entityCount(); i++) {
+    if (!discovery::expand(discovery::entityTopic(i), deviceId, topic, sizeof(topic))) continue;
+    if (publishRaw(topic, "", 0, true)) cleared++;
+  }
+  static const char* const kRetained[] = {"availability", "link", "update/state"};
+  for (size_t i = 0; i < sizeof(kRetained) / sizeof(kRetained[0]); i++) {
+    snprintf(topic, sizeof(topic), "%s/%s/%s", contract::kBaseTopic, deviceId, kRetained[i]);
+    if (publishRaw(topic, "", 0, true)) cleared++;
+  }
+  return cleared;
 }
 
 bool publish(const char* suffix, const void* payload, size_t len, bool retain) {
@@ -201,6 +240,17 @@ void onConnected() {
   publishLink();
   publishAttributes();
   publishUpdateState();
+  // Before the new id's discovery goes out, finish deleting the one we left. Only now is the
+  // old connection's last will accounted for: the broker publishes it when it notices the old
+  // socket died, which happened before this CONNACK. Without this second pass the old id keeps
+  // a retained `availability = offline` and Home Assistant shows the ghost beside the real
+  // device (measured 2026-11-14: 25 documents cleared, 1 came back).
+  if (gForgetPending) {
+    const size_t again = clearRetained(gForgetId);
+    gForgetPending = false;
+    Serial.printf("[MQTT] cleared %u of the %s documents again (the will had restored availability)\n",
+                  (unsigned)again, gForgetId);
+  }
   publishDiscovery();
   subscribe("set/temperature");
   subscribe("cmd");
@@ -568,6 +618,22 @@ void mqttBegin(const char* broker, const char* deviceId) {
   gLastAttempt = millis();
   Serial.printf("[MQTT] broker=%s:%u device=%s auth=%s\n", gHost, (unsigned)gPort, gDeviceId,
                 gUser[0] ? gUser : "anonymous");
+}
+
+// The one entry point main.cpp needs: mark the id as forgotten, delete what we can right now,
+// and let onConnected() finish the job once the old connection's will has fired.
+bool mqttForgetDevice(const char* deviceId) {
+  if (gState != kUp || !deviceId || !deviceId[0]) return false;
+
+  const size_t cleared = clearRetained(deviceId);
+  // The caller restarts the client straight after this, which closes the socket. flush() waits
+  // for lwIP to hand the queue to the network, so the deletions are not lost in that close.
+  gSock.flush();
+  strncpy(gForgetId, deviceId, sizeof(gForgetId) - 1);
+  gForgetId[sizeof(gForgetId) - 1] = 0;
+  gForgetPending = true;
+  Serial.printf("[MQTT] cleared %u retained documents left by %s\n", (unsigned)cleared, deviceId);
+  return true;
 }
 
 void mqttSetCredentials(const char* user, const char* pass) {

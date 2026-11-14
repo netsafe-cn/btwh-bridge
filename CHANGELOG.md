@@ -9,6 +9,27 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The MQTT device id now follows the heater address.** The id is derived from the heater's BLE
+  address (`btwh_` + last three bytes), but nothing recomputed it: `addr` wrote NVS while the
+  client kept publishing under the id it started with. Measured 2026-11-13: a bogus
+  `aa:bb:cc:dd:ee:ff` used during a recovery test left 22 retained discovery documents at the
+  broker, and Home Assistant grew a second device beside the real heater that could never update
+  again — a ghost that survived reboots and broker reconnects.
+
+  `mqttForgetDevice(oldId)` deletes what the id it is leaving had retained — the 22 discovery
+  configs plus `availability`, `link` and `update/state` — before `mqttBegin()` takes the socket
+  away, and the client restarts under the new id. An empty retained payload is the MQTT deletion,
+  and `flush()` runs first because the socket closes immediately after. It only runs when the
+  derived id actually changes, so editing an address that keeps the last three bytes does not
+  churn the connection.
+
+- **No private network addresses in the sources any more.** The portal's broker placeholder, the
+  LAN-mode example in the getting-started guide and two self-test vectors all carried the
+  author's own broker address. Harmless to the firmware, wrong in a repository other people read
+  and fork; everything example-shaped now uses 192.0.2.0/24 (RFC 5737). `192.168.4.1` stays
+  because it is the SoftAP gateway the captive portal redirects to, and a contract test now
+  fails the build if another private address creeps back in.
+
 - **A failed session is no longer terminal.** `poll()` returned early for any phase but
   `kRunning`, so one hard reset left the bridge in `kFailed` for the rest of the evening: no
   retry, no recovery, `link: offline` on MQTT until a human typed `go` (measured 2026-11-13).

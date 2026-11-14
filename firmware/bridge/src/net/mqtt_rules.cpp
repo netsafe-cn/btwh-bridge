@@ -298,8 +298,8 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
   t.ctx = ctx;
 
   // 1. Broker address grammar: the console, the portal and boot all feed this parser.
-  checkBroker(t, "192.168.9.206", true, "192.168.9.206", 1883);
-  checkBroker(t, "192.168.9.206:1883", true, "192.168.9.206", 1883);
+  checkBroker(t, "192.0.2.10", true, "192.0.2.10", 1883);
+  checkBroker(t, "192.0.2.10:1883", true, "192.0.2.10", 1883);
   checkBroker(t, "mqtt.example.com:8883", true, "mqtt.example.com", 8883);
   checkBroker(t, "localhost:1", true, "localhost", 1);
   checkBroker(t, "localhost:65535", true, "localhost", 65535);
@@ -316,7 +316,7 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
     char tiny[4];
     uint16_t port = 0;
     t.total++;
-    if (parseBroker("192.168.9.206", tiny, sizeof(tiny), &port)) {
+    if (parseBroker("192.0.2.10", tiny, sizeof(tiny), &port)) {
       t.failed++;
       line(t, "  x parseBroker: undersized buffer accepted");
     }
@@ -393,19 +393,19 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
   // 7. OTA URL grammar. The bench shape first: a plain-LAN http server is what the update
   //    path will actually talk to. Then every refusal: https (no TLS stack in the flasher),
   //    missing scheme, missing path, empty port, out-of-range port, oversized anything.
-  checkOta(t, "http://192.168.137.1:8000/firmware.bin", true,
-           "192.168.137.1", 8000, "/firmware.bin");
-  checkOta(t, "http://192.168.137.1/firmware.bin", true,
-           "192.168.137.1", 80, "/firmware.bin");            // default port
+  checkOta(t, "http://192.0.2.10:8000/firmware.bin", true,
+           "192.0.2.10", 8000, "/firmware.bin");
+  checkOta(t, "http://192.0.2.10/firmware.bin", true,
+           "192.0.2.10", 80, "/firmware.bin");            // default port
   checkOta(t, "http://nas.local:8123/ota/v2.bin\n", true,
            "nas.local", 8123, "/ota/v2.bin");                // trailing newline trimmed
-  checkOta(t, "https://192.168.137.1/firmware.bin", false, "", 0, "");   // no TLS in the flasher
-  checkOta(t, "HTTP://192.168.137.1/firmware.bin", false, "", 0, "");    // case-sensitive scheme
-  checkOta(t, "ftp://192.168.137.1/firmware.bin", false, "", 0, "");
-  checkOta(t, "192.168.137.1:8000/firmware.bin", false, "", 0, "");      // no scheme
-  checkOta(t, "http://192.168.137.1", false, "", 0, "");     // no path at all
-  checkOta(t, "http://192.168.137.1:8000", false, "", 0, ""); // port but no path
-  checkOta(t, "http://192.168.137.1:8000/", true, "192.168.137.1", 8000, "/");   // bare root is a path
+  checkOta(t, "https://192.0.2.10/firmware.bin", false, "", 0, "");   // no TLS in the flasher
+  checkOta(t, "HTTP://192.0.2.10/firmware.bin", false, "", 0, "");    // case-sensitive scheme
+  checkOta(t, "ftp://192.0.2.10/firmware.bin", false, "", 0, "");
+  checkOta(t, "192.0.2.10:8000/firmware.bin", false, "", 0, "");      // no scheme
+  checkOta(t, "http://192.0.2.10", false, "", 0, "");     // no path at all
+  checkOta(t, "http://192.0.2.10:8000", false, "", 0, ""); // port but no path
+  checkOta(t, "http://192.0.2.10:8000/", true, "192.0.2.10", 8000, "/");   // bare root is a path
   checkOta(t, "http://host:/firmware.bin", false, "", 0, "");  // empty port is a typo
   checkOta(t, "http://host:0/firmware.bin", false, "", 0, ""); // port 0
   checkOta(t, "http://host:65536/firmware.bin", false, "", 0, "");
@@ -420,7 +420,7 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
     uint16_t port = 0;
     char path[64];
     t.total++;
-    if (parseOtaUrl("http://192.168.137.1:8000/firmware.bin", tiny, sizeof(tiny), &port,
+    if (parseOtaUrl("http://192.0.2.10:8000/firmware.bin", tiny, sizeof(tiny), &port,
                     path, sizeof(path))) {
       t.failed++;
       line(t, "  x parseOtaUrl: undersized host buffer accepted");
@@ -433,7 +433,7 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
     uint16_t port = 0;
     char tinyPath[8];
     t.total++;
-    if (parseOtaUrl("http://192.168.137.1:8000/firmware.bin", host, sizeof(host), &port,
+    if (parseOtaUrl("http://192.0.2.10:8000/firmware.bin", host, sizeof(host), &port,
                     tinyPath, sizeof(tinyPath))) {
       t.failed++;
       line(t, "  x parseOtaUrl: undersized path buffer accepted");

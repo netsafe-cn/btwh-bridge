@@ -225,5 +225,110 @@ class TestSessionRetryLadder(unittest.TestCase):
         self.assertIn("s.retryInMs", self.src, "status() does not fill retryInMs")
 
 
+class TestDeviceIdFollowsTheHeater(unittest.TestCase):
+    """The MQTT device id is derived from the heater's BLE address, so it moves when the address
+    does. Nothing recomputed it: `addr` wrote NVS and the client kept publishing under the old
+    id. Measured 2026-11-13 - a bogus aa:bb:cc:dd:ee:ff left 22 retained discovery documents in
+    place, and Home Assistant grew a second device that could never update again.
+
+    Three things have to hold together, and each one alone is not enough: the old id is captured
+    before the address is overwritten, the retained documents under it are deleted, and the
+    client is restarted so it publishes under the new one.
+    """
+
+    def setUp(self):
+        self.main = (ROOT / "firmware" / "bridge" / "src" / "main.cpp").read_text(encoding="utf-8")
+        self.src = MQTT_CLIENT_CPP.read_text(encoding="utf-8")
+        self.hdr = (ROOT / "firmware" / "bridge" / "src" / "net" / "mqtt_client.h").read_text(
+            encoding="utf-8")
+
+    def _addr_block(self):
+        start = self.main.index('low.startsWith("addr ")')
+        return self.main[start:start + 1600]
+
+    def test_old_id_is_read_before_the_address_is_overwritten(self):
+        block = self._addr_block()
+        capture = block.index("deviceIdFromAddress(gCfg.heater, oldId")
+        write = block.index("strncpy(gCfg.heater")
+        self.assertLess(capture, write,
+                        "the old device id must be read before gCfg.heater is overwritten")
+
+    def test_old_id_is_forgotten_before_the_client_restarts(self):
+        block = self._addr_block()
+        self.assertIn("mqttForgetDevice(oldId)", block,
+                      "addr must delete the retained documents of the id it is leaving")
+        self.assertLess(block.index("mqttForgetDevice(oldId)"), block.index("startMqtt()"),
+                        "begin() drops the socket, so the deletions have to go first")
+
+    def test_forget_only_runs_when_the_derived_id_changes(self):
+        block = self._addr_block()
+        self.assertIn("strcmp(oldId, newId) != 0", block,
+                      "an address edit that keeps the last three bytes must not churn the client")
+
+    def test_deletion_covers_discovery_and_retained_state(self):
+        body = self.src[self.src.index("size_t clearRetained("):]
+        body = body[:body.index("return cleared;")]
+        self.assertIn("discovery::entityTopic", body,
+                      "the discovery configs are what create the device; they must be deleted")
+        self.assertIn('publishRaw(topic, "", 0, true)', body,
+                      "deletion is an empty payload with the retain flag")
+        for tail in ("availability", "link", "update/state"):
+            self.assertIn(tail, body,
+                          "retained %s survives the id change and keeps a dead device alive" % tail)
+
+    def test_forget_flushes_before_the_socket_closes(self):
+        body = self.src[self.src.index("bool mqttForgetDevice("):]
+        body = body[:body.index("return true;")]
+        self.assertIn("gState != kUp", body,
+                      "offline there is nothing retained by us to delete, so report that")
+        self.assertIn("flush()", body,
+                      "the socket is closed right after; the deletions must reach the network first")
+        self.assertIn("gForgetPending = true", body,
+                      "the will fires after this socket dies, so the id has to be remembered")
+
+    def test_the_header_declares_it(self):
+        self.assertIn("mqttForgetDevice", self.hdr,
+                      "mqtt_client.cpp defines it; main.cpp calls it through the header")
+
+    def test_the_deletion_runs_again_after_the_next_connect(self):
+        # The socket is closed without a DISCONNECT, so the broker fires this connection's last
+        # will - availability=offline, retained, on the id we just left - AFTER the deletion.
+        # Measured 2026-11-14: 25 documents cleared, then 1 (availability) came back. The second
+        # pass on CONNACK is what closes it, so it must stay ahead of publishDiscovery().
+        body = self.src[self.src.index("void onConnected()"):]
+        body = body[:body.index("Serial.printf(\"[MQTT] + connected")]
+        self.assertIn("gForgetPending", body, "onConnected no longer finishes a pending deletion")
+        self.assertLess(body.index("clearRetained(gForgetId)"), body.index("publishDiscovery()"),
+                        "the ghost has to be deleted before the new id's discovery goes out")
+        self.assertIn("gForgetPending = false", body, "the pending flag must be cleared once done")
+
+
+class TestNoHomeNetworkInTheRepository(unittest.TestCase):
+    """Sample addresses in a public repository should be documentation addresses.
+
+    Measured 2026-11-14: the portal placeholder, the LAN-mode example and two self-test vectors
+    all carried the author's own broker address. Harmless to the firmware, wrong in a repository
+    other people read and fork. 192.0.2.0/24 is reserved for exactly this (RFC 5737).
+
+    The one private address allowed to stay is 192.168.4.1: it is the ESP32 SoftAP gateway, and
+    the captive portal has to redirect there.
+    """
+
+    ALLOWED = "192.168.4.1"
+    SCAN = ("firmware/bridge/src", "docs", "python", "spec")
+
+    def test_only_the_softap_gateway_is_private(self):
+        hits = []
+        for rel in self.SCAN:
+            for path in sorted((ROOT / rel).rglob("*")):
+                if not path.is_file() or path.suffix not in (".h", ".cpp", ".md", ".py", ".json"):
+                    continue
+                for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                    for found in re.findall(r"192\.168\.\d+\.\d+", line):
+                        if found != self.ALLOWED:
+                            hits.append("%s:%d  %s" % (path.relative_to(ROOT), lineno, found))
+        self.assertEqual(hits, [], "private network addresses belong in config, not in the source")
+
+
 if __name__ == "__main__":
     unittest.main()

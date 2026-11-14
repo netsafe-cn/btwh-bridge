@@ -260,7 +260,7 @@ http://192.168.4.1/
 
 | 字段 | 填什么 | 例子 |
 |---|---|---|
-| `Broker address` | HA 那台机器的 IP（跑 Mosquitto 的那个） | `192.168.9.206` 或 `192.168.9.206:1883` |
+| `Broker address` | HA 那台机器的 IP（跑 Mosquitto 的那个） | `192.0.2.10` 或 `192.0.2.10:1883` |
 | `Username` / `Password` | MQTT 账号密码，没设就留空 | `btwh` / 你的密码 |
 
 保存后，板子会自己向 HA 申报 **1 个设备 + 22 个实体**，不需要你在 HA 里配置任何 YAML：
@@ -332,7 +332,7 @@ http://192.168.4.1/
 4. 板子会在你家局域网里开一个配置页，串口会打印类似：
 
 ```
-[PORTAL] LAN mode: http://192.168.9.55/  (same network, nothing to switch)
+[PORTAL] LAN mode: http://192.0.2.55/  (same network, nothing to switch)
 ```
 
 5. 用浏览器打开这个地址，就是第 4 节那张表，改完保存

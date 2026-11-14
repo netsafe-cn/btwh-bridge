@@ -7,7 +7,7 @@ one-process-per-command.
 Usage:
   python serial_console.py                          # listen only, 5 s
   python serial_console.py --cmd status --cmd selftest --wait 12
-  python serial_console.py --cmd "broker 192.168.1.5" --wait 8 --log session.txt
+  python serial_console.py --cmd "broker 192.0.2.10" --wait 8 --log session.txt
 
 The port defaults to the first CH343 device found, because the number is not
 stable across machines (COM3 at the office, COM8 here).

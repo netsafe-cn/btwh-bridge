@@ -748,7 +748,7 @@ teardown on the next tick, when `handleClient()` has returned and the response h
 
 **Known gap, recorded rather than papered over**: this covers "cannot associate". It does not
 cover "associated with the wrong network". The 2026-11-12 incident was that shape — a laptop
-hotspot sharing the SSID `LSBK 3523`, board joined to `192.168.137.20`, broker unreachable —
+hotspot sharing the SSID `HomeNet-2G`, board joined to `192.0.2.20`, broker unreachable —
 and `stationUp` is honestly true there, so the policy stays quiet. The fix belongs on the router
 (reserve the address) or in a separate broker-reachability signal, not in a second way to
 invalidate a working configuration.

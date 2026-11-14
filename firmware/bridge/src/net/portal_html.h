@@ -75,7 +75,7 @@ static const char PAGE[] PROGMEM = R"HTML(<!DOCTYPE html>
 
   <div class="step">4 &middot; MQTT broker (optional)</div>
   <label for="broker">Broker address</label>
-  <input name="broker" id="broker" placeholder="192.168.9.206 or 192.168.9.206:1883"
+  <input name="broker" id="broker" placeholder="192.0.2.10 or 192.0.2.10:1883"
          autocomplete="off">
   <label for="mqttuser">Username</label>
   <input name="mqttuser" id="mqttuser" autocomplete="off">
