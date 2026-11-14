@@ -73,15 +73,18 @@ static const char PAGE[] PROGMEM = R"HTML(<!DOCTYPE html>
   <div class="hint">Heater panel &rarr; clear pairing &rarr; a new six-digit code appears.
     Enter it while it is still on the panel. Leave empty to keep the existing pairing.</div>
 
-  <div class="step">4 &middot; MQTT broker (optional)</div>
+  <div class="step">4 &middot; Home Assistant (skip for other brokers)</div>
   <label for="broker">Broker address</label>
-  <input name="broker" id="broker" placeholder="192.0.2.10 or 192.0.2.10:1883"
+  <input name="broker" id="broker" placeholder="empty = find it automatically"
          autocomplete="off">
   <label for="mqttuser">Username</label>
   <input name="mqttuser" id="mqttuser" autocomplete="off">
   <label for="mqttpass">Password</label>
   <input name="mqttpass" id="mqttpass" type="password" autocomplete="off">
-  <div class="hint">Where the telemetry goes. Leave everything empty to keep the current
+  <div class="hint">Where the readings go. The Home Assistant Mosquitto add-on <b>requires</b> a
+    username and password - it refuses anonymous connections - but the address may be left
+    empty: the bridge finds the broker on its own. Type one only for a broker elsewhere on the
+    network, e.g. 192.0.2.10 or 192.0.2.10:1883. Leaving everything empty keeps the current
     settings; the console command <b>broker -</b> removes the broker.</div>
 
   <input type="submit" value="Save and connect">
