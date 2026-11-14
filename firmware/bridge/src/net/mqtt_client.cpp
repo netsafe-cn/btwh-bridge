@@ -657,15 +657,27 @@ void mqttBegin(const char* broker, const char* deviceId) {
 // The one entry point main.cpp needs: mark the id as forgotten, delete what we can right now,
 // and let onConnected() finish the job once the old connection's will has fired.
 bool mqttForgetDevice(const char* deviceId) {
-  if (gState != kUp || !deviceId || !deviceId[0]) return false;
+  if (!deviceId || !deviceId[0]) return false;
+
+  // Recording the id is the contract, not deleting it. The caller changes the heater address and
+  // the id follows, but nothing says the client is connected at that moment: measured
+  // 2026-11-14, an `addr` typed four seconds after boot ran before the first CONNACK, the delete
+  // was skipped, and 22 stale discovery documents stayed behind as a ghost device. The pending id
+  // is kept in RAM until the next successful connect, which is where the deletion belongs anyway:
+  // only then is the previous connection's will provably behind us.
+  strncpy(gForgetId, deviceId, sizeof(gForgetId) - 1);
+  gForgetId[sizeof(gForgetId) - 1] = 0;
+  gForgetPending = true;
+
+  if (gState != kUp) {
+    Serial.printf("[MQTT] will clear %s once connected (client is down)\n", deviceId);
+    return true;
+  }
 
   const size_t cleared = clearRetained(deviceId);
   // The caller restarts the client straight after this, which closes the socket. flush() waits
   // for lwIP to hand the queue to the network, so the deletions are not lost in that close.
   gSock.flush();
-  strncpy(gForgetId, deviceId, sizeof(gForgetId) - 1);
-  gForgetId[sizeof(gForgetId) - 1] = 0;
-  gForgetPending = true;
   Serial.printf("[MQTT] cleared %u retained documents left by %s\n", (unsigned)cleared, deviceId);
   return true;
 }

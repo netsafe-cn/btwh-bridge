@@ -28,6 +28,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to another subnet that day and every stored address went dead at once). A typed address still
   wins, and `broker -` still means "no broker", so both stay predictable.
 
+  A failed lookup is retried every two minutes from `loop()`, and only while there is no address
+  at all. A power cut restarts this board and Home Assistant at the same moment, and HA needs a
+  minute or two longer: discovery at boot would find nothing and the bridge would stay silent
+  until somebody cycled power.
+
 ### Fixed
 
 - **The MQTT device id now follows the heater address.** The id is derived from the heater's BLE
@@ -43,6 +48,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and `flush()` runs first because the socket closes immediately after. It only runs when the
   derived id actually changes, so editing an address that keeps the last three bytes does not
   churn the connection.
+
+- **Changing the heater while the MQTT client is down no longer strands the old device id.** The
+  previous fix deleted the old id's retained documents immediately, which quietly required a live
+  connection. Measured 2026-11-14: an `addr` typed four seconds after boot ran before the first
+  CONNACK, the delete was skipped, and 22 stale discovery documents came back as a second device
+  in Home Assistant. Recording the id is now the contract and the deletion happens on the next
+  successful connect - which is also the only moment the previous connection's will is provably
+  behind us. The portal path (`onProvisioned`) forgot nothing at all and now follows the same rule.
 
 - **No private network addresses in the sources any more.** The portal's broker placeholder, the
   LAN-mode example in the getting-started guide and two self-test vectors all carried the

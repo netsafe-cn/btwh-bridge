@@ -278,13 +278,30 @@ class TestDeviceIdFollowsTheHeater(unittest.TestCase):
 
     def test_forget_flushes_before_the_socket_closes(self):
         body = self.src[self.src.index("bool mqttForgetDevice("):]
-        body = body[:body.index("return true;")]
-        self.assertIn("gState != kUp", body,
-                      "offline there is nothing retained by us to delete, so report that")
+        body = body[:body.index("\n}\n")]
         self.assertIn("flush()", body,
                       "the socket is closed right after; the deletions must reach the network first")
         self.assertIn("gForgetPending = true", body,
                       "the will fires after this socket dies, so the id has to be remembered")
+
+    def test_a_change_made_while_offline_is_still_honoured(self):
+        # Measured 2026-11-14: `addr` typed four seconds after boot ran before the first CONNACK.
+        # Requiring a live connection skipped the delete and left 22 documents behind as a ghost
+        # device. Recording the id has to happen before the offline early-return.
+        body = self.src[self.src.index("bool mqttForgetDevice("):]
+        body = body[:body.index("\n}\n")]
+        record = body.index("gForgetPending = true")
+        offline = body.index("if (gState != kUp)")
+        self.assertLess(record, offline,
+                        "the id must be remembered before the not-connected path returns")
+        self.assertIn("will clear", body, "the offline path has to say so in the log")
+
+    def test_the_portal_path_forgets_the_previous_id_too(self):
+        # re-pairing through the setup page is the path a buyer uses; it had the same gap.
+        body = self.main[self.main.index("onProvisioned"):]
+        body = body[:body.index("startMqtt();")]
+        self.assertIn("mqttForgetDevice(oldId)", body,
+                      "changing heater via the portal must forget the old device id")
 
     def test_the_header_declares_it(self):
         self.assertIn("mqttForgetDevice", self.hdr,
@@ -389,6 +406,17 @@ class TestBrokerDiscovery(unittest.TestCase):
                         "the config field has to be checked before the discovered address")
         self.assertIn("gAutoBroker[0] = 0;", self.main,
                       "typing a broker must clear a discovered one, or they fight")
+
+    def test_a_missing_broker_is_looked_for_again_from_loop(self):
+        # A power cut restarts this board and Home Assistant together; HA comes back a minute or
+        # two later, so the boot-time discovery finds nothing. Without a retry the bridge stays
+        # silent until somebody cycles power - the failure the heater ladder already fixed once.
+        loop = self.main[self.main.index("void loop()"):]
+        self.assertIn("runDiscovery(", loop, "loop() never retries discovery")
+        self.assertIn("gLastDiscoverMs", loop, "the retry needs a clock or it runs every tick")
+        guard = loop[loop.index("if (!gCfg.broker[0]"):][:220]
+        self.assertIn("!gAutoBroker[0]", guard,
+                      "the retry must stop once an address is known, typed or discovered")
 
     def test_the_discovered_address_is_not_persisted(self):
         # Storing it would recreate the staleness the feature exists to remove.

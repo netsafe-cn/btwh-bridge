@@ -89,6 +89,14 @@ static void banner(const char* s) { Serial.printf("\n===== %s =====\n", s); }
 static void startMqtt();   // defined below; the portal path can change the broker
 
 static const char* onProvisioned(void* /*ctx*/, const net::ProvisionRequest& r) {
+  // Same rule as the console `addr`: pick a different heater and the device id moves with it, so
+  // whatever the old id left retained has to go. The portal is the path a buyer actually uses,
+  // and it has the same "not connected yet" shape - the client restarts a few lines down.
+  char oldId[20];
+  char newId[20];
+  net::mqtt::deviceIdFromAddress(gCfg.heater, oldId, sizeof(oldId));
+  net::mqtt::deviceIdFromAddress(r.heater, newId, sizeof(newId));
+
   strncpy(gCfg.heater, r.heater, sizeof(gCfg.heater) - 1);
   gCfg.heater[sizeof(gCfg.heater) - 1] = 0;
   if (r.pairCode[0]) {
@@ -127,6 +135,7 @@ static const char* onProvisioned(void* /*ctx*/, const net::ProvisionRequest& r) 
 
   // The portal is the one place where the broker can change without a reboot, and the
   // client owns its socket: a fresh begin is how the new address takes effect at all.
+  if (strcmp(oldId, newId) != 0) net::mqttForgetDevice(oldId);
   startMqtt();
 
   if (!gCfg.pinValid()) return "saved (no code given; Wi-Fi only)";
@@ -288,9 +297,13 @@ static void refreshMqttInfo() {
 static char     gAutoBroker[24] = {0};
 static uint16_t gAutoPort       = 1883;
 
-// Resolves the broker once and caches it. Blocking for a second or two, so it runs at boot and
-// from the console command - never from loop().
+// Last discovery attempt, so loop() can keep asking without hammering mDNS.
+static uint32_t gLastDiscoverMs = 0;
+
+// Resolves the broker once and caches it. Blocking for a second or two, so it runs at boot, from
+// the console command, and from loop() only on the slow retry below.
 static bool runDiscovery(const char* why) {
+  gLastDiscoverMs = millis();
   char host[24];
   char how[72];
   uint16_t port = 1883;
@@ -883,6 +896,19 @@ void loop() {
                      && (millis() - st.lastA0Ms) < kLinkStaleMs;
   if (!fresh) gHaveSnap = false;
   net::setLinkAvailable(fresh);
+
+  // No broker address and none discovered: keep asking. A power cut brings this board and Home
+  // Assistant back at the same moment, and Home Assistant needs a minute or two longer - so the
+  // boot-time discovery finds nothing and, without this, the bridge stays silent until somebody
+  // cycles power. Measured need, not a precaution: the same shape as the heater ladder, where a
+  // retry is the difference between a device that recovers and one that waits for a human.
+  //
+  // Two minutes, and only while there is no address at all: once discovery has answered, or the
+  // user has typed one, this never runs again on that boot.
+  if (!gCfg.broker[0] && !gAutoBroker[0] && net::stationUp()
+      && (millis() - gLastDiscoverMs) > 120000u) {
+    if (runDiscovery("broker still not found")) startMqtt();
+  }
 
   net::mqttPoll(gHaveSnap ? &gSnap : nullptr, newFrame && gHaveSnap);
 
