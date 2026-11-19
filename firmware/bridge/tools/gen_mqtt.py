@@ -120,13 +120,26 @@ def round_half_away(x: float) -> int:
     return int(math.floor(abs(x) + 0.5)) * (-1 if x < 0 else 1)
 
 
-def render_state(fields: list[dict], sample: dict) -> str:
+def fault_text_for(code, table: dict | None) -> str:
+    """What `fault_text` must carry for a raw fault byte.
+
+    Zero means "no fault" and renders 'none', matching `fault`. A code with no row in the table
+    is echoed back as the code itself: the bridge does not invent a cause it has not verified,
+    and a reader can still search for the code.
+    """
+    if not code:
+        return "none"
+    hex_code = "%02X" % (int(code) & 0xFF)
+    return (table or {}).get(hex_code, hex_code)
+
+
+def render_state(fields: list[dict], sample: dict, fault_texts: dict | None = None) -> str:
     """The exact payload, built in contract order."""
     parts = []
     for f in fields:
         key = f["key"]
         kind = f["type"]
-        value = sample[key]
+        value = sample.get(key)
         if kind == "float":
             text = fmt_fixed(value, int(f.get("precision") or 1))
         elif kind == "int":
@@ -135,6 +148,9 @@ def render_state(fields: list[dict], sample: dict) -> str:
             text = "true" if value else "false"
         elif kind == "enum":
             text = '"%s"' % MODE_TEXT.get(int(value), "unknown")
+        elif key == "fault_text":
+            # Derived from `fault`, never carried in the snapshot: one source of truth for it.
+            text = '"%s"' % fault_text_for(sample.get("fault"), fault_texts)
         else:                                   # string
             text = '"none"' if value in (0, None) else '"%02X"' % int(value)
         parts.append('"%s":%s' % (key, text))
@@ -215,6 +231,32 @@ struct FieldDesc {
                       f.get("state_class") or "", c_str(f.get("label") or "")))
     out.append("};\nstatic const size_t kFieldCount = %d;\n\n" % len(fields))
 
+    # Fault code -> text. Validated here rather than trusted: a lowercase or three-character key
+    # would generate a table row that can never match the two-digit hex the formatter emits, and
+    # a quote or backslash in the text would break the JSON string it ends up inside.
+    fault_texts = (doc.get("fault_texts") or {}).get("codes") or {}
+    for code, text in fault_texts.items():
+        if len(code) != 2 or any(c not in "0123456789ABCDEF" for c in code):
+            raise ValueError("fault_texts: %r is not two upper-case hex digits" % code)
+        if '"' in text or "\\" in text:
+            raise ValueError("fault_texts[%s]: text must not contain a quote or backslash" % code)
+
+    out.append("""\
+// Fault code -> plain text, generated from spec/mqtt.json fault_texts.codes. Only codes seen
+// on a real heater belong here; `fault_text` falls back to the code itself for anything else,
+// so a missing row costs a reader a lookup, never a wrong diagnosis.
+struct FaultText {
+  uint8_t     code;
+  const char* text;
+};
+static const FaultText kFaultTexts[] = {
+""")
+    for code, text in sorted(fault_texts.items()):
+        out.append('  {0x%s, "%s"},\n' % (code, c_str(text)))
+    if not fault_texts:
+        out.append('  {0x00, ""},\n')   # C++ has no zero-length arrays; count stays 0
+    out.append("};\nstatic const size_t kFaultTextCount = %d;\n\n" % len(fault_texts))
+
     out.append("""\
 // The self test renders this snapshot and compares against kGoldenState below.
 struct GoldenSample {
@@ -229,6 +271,7 @@ struct GoldenSample {
   bool     flame;
   int      mode;      // 0 idle, 1 burning, 2 comfort, anything else -> "unknown"
   int      fault;     // 0 -> "none", otherwise two upper-case hex digits
+                      // fault_text is derived from this one, so it is not a member here
   int64_t  ts;        // epoch seconds; 0 means "not known yet", and the key is then omitted
 };
 
@@ -241,7 +284,7 @@ struct GoldenSample {
                   "true" if SAMPLE["flame"] else "false",
                   SAMPLE["mode"], SAMPLE["fault"], SAMPLE["ts"]))
     # The payload as a C++ literal: the JSON quotes need escaping, the bytes must not change.
-    golden = render_state(fields, SAMPLE).replace('"', '\\"')
+    golden = render_state(fields, SAMPLE, fault_texts).replace('"', '\\"')
     out.append('\nconstexpr const char* kGoldenState =\n    "%s";\n\n' % golden)
     out.append("}  // namespace contract\n}  // namespace net\n\n"
                "#endif  // BTWH_NET_MQTT_CONTRACT_H\n")

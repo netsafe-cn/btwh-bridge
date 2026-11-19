@@ -219,7 +219,7 @@ Pushed by the device on its own; the app **never requests it** (it reads a cache
 | `[8]` | (flow/10 in Type0; always 0 in Type1) | — | 🔶 |
 | `[9]` | (power in Type0; always 0 in Type1) | — | 🔶 |
 | `[10]` | Ionisation / flame detection bit | `& 0x10` | ✅ measured §6.4 |
-| `[11]` | **Active fault code** | 0 = no fault | 🔶 |
+| `[11]` | **Active fault code** | 0 = no fault; `0xEA` = ignition failed, no gas (field-verified 2026-11-17) | ✅ |
 | `[12]` | Gas ratio (0–7) | — | 🔶 |
 | **`[13]`** | **Burner power %** (`[14]` is the fraction) | 0–100 | ✅ measured |
 | `[14]` | Power fraction | `/100` | ✅ |
@@ -409,8 +409,15 @@ Ideas for probing:
 
 1. Work through `D2` with `paramType = 2 / 6 / 30` (30 not yet tried)
 2. Try the untouched `D`-range commands (`D4`, `D5`, `D9`–`DF`) with parameters `01` / `00`
-3. **Provoke a fault on purpose** (close the gas valve to force an ignition failure) while
-   scanning A0 to see which bytes move
+3. ~~**Provoke a fault on purpose** (close the gas valve to force an ignition failure) while
+   scanning A0 to see which bytes move~~ **Done by accident, 2026-11-17.** A real gas outage
+   (supply cut outside the house) produced the first field-verified fault code: water opened at
+   07:04, burner power climbed to 34 % while the outlet temperature *fell* 22.1 → 16.6 ℃ - the
+   fan and ignition sequence ran without any heat - and `A0[11] = 0xEA` appeared at 07:05:10,
+   clearing at 07:37:19 (32 minutes). The homeowner confirmed the cause was the gas supply.
+   So `0xEA` in `[11]` is a genuine active fault code, and it is **not** the `0xEA` status marker
+   discussed in §13 for the D7 history frame - different frame, different field. Other codes are
+   still unknown and are published as the code itself rather than guessed at.
 4. Diagnostic mode probably maps to some `Dx` command plus a specific parameter
 
 ### 12.2 Medium value: consumption and run statistics

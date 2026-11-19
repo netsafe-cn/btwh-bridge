@@ -62,9 +62,22 @@ static const FieldDesc kFields[] = {
   {"flame", "bool", 0, "", "running", "", "Flame detected"},
   {"mode", "enum", 0, "", "", "", "Operating mode"},
   {"fault", "string", 0, "", "", "", "Active fault code"},
+  {"fault_text", "string", 0, "", "", "", "Active fault description"},
   {"ts", "int", 0, "s", "", "", "Bridge timestamp (epoch)"},
 };
-static const size_t kFieldCount = 12;
+static const size_t kFieldCount = 13;
+
+// Fault code -> plain text, generated from spec/mqtt.json fault_texts.codes. Only codes seen
+// on a real heater belong here; `fault_text` falls back to the code itself for anything else,
+// so a missing row costs a reader a lookup, never a wrong diagnosis.
+struct FaultText {
+  uint8_t     code;
+  const char* text;
+};
+static const FaultText kFaultTexts[] = {
+  {0xEA, "ignition failed - no gas (supply off, empty cylinder, or air in the line)"},
+};
+static const size_t kFaultTextCount = 1;
 
 // The self test renders this snapshot and compares against kGoldenState below.
 struct GoldenSample {
@@ -79,13 +92,14 @@ struct GoldenSample {
   bool     flame;
   int      mode;      // 0 idle, 1 burning, 2 comfort, anything else -> "unknown"
   int      fault;     // 0 -> "none", otherwise two upper-case hex digits
+                      // fault_text is derived from this one, so it is not a member here
   int64_t  ts;        // epoch seconds; 0 means "not known yet", and the key is then omitted
 };
 
 constexpr GoldenSample kGolden = {42.3, 15.0, 42.3, 24.0, 42, 11.5, 47, 1612, true, 1, 0, 1762584000LL};
 
 constexpr const char* kGoldenState =
-    "{\"temp_out\":42.3,\"temp_in\":15.0,\"chamber\":42.3,\"temp_box\":24.0,\"setpoint\":42,\"water_flow\":11.5,\"burner_power\":47,\"fan_speed\":1612,\"flame\":true,\"mode\":\"burning\",\"fault\":\"none\",\"ts\":1762584000}";
+    "{\"temp_out\":42.3,\"temp_in\":15.0,\"chamber\":42.3,\"temp_box\":24.0,\"setpoint\":42,\"water_flow\":11.5,\"burner_power\":47,\"fan_speed\":1612,\"flame\":true,\"mode\":\"burning\",\"fault\":\"none\",\"fault_text\":\"none\",\"ts\":1762584000}";
 
 }  // namespace contract
 }  // namespace net

@@ -75,6 +75,20 @@ const char* modeText(int mode) {
   }
 }
 
+// Plain-language text for a fault byte: "none" when there is no fault, the table row when the
+// code has been verified on a real heater, and nullptr otherwise so the caller can fall back to
+// the code itself. Returning nullptr rather than "unknown fault" keeps the payload honest - a
+// consumer sees the code and can look it up, instead of reading a cause nobody confirmed.
+const char* faultText(int fault) {
+  if (fault == 0) return "none";
+  for (size_t i = 0; i < contract::kFaultTextCount; i++) {
+    if (contract::kFaultTexts[i].code == (uint8_t)(fault & 0xFF)) {
+      return contract::kFaultTexts[i].text;
+    }
+  }
+  return nullptr;
+}
+
 size_t buildStateJson(char* out, size_t cap, const Snapshot& s) {
   if (!out || cap == 0) return 0;
   out[0] = 0;
@@ -127,6 +141,12 @@ size_t buildStateJson(char* out, size_t cap, const Snapshot& s) {
       // Contract: two upper-case hex digits, or "none". Never an empty string.
       ok = (s.fault == 0)
              ? appendRaw(out, cap, len, "\"none\"")
+             : appendf(out, cap, len, "\"%02lX\"", (long)(s.fault & 0xFF));
+    } else if (strcmp(key, "fault_text") == 0) {
+      // Same value, said in words, so a notification can report what broke instead of a code.
+      const char* text = faultText(s.fault);
+      ok = text
+             ? appendf(out, cap, len, "\"%s\"", text)
              : appendf(out, cap, len, "\"%02lX\"", (long)(s.fault & 0xFF));
     } else if (strcmp(key, "ts") == 0) {
       ok = appendf(out, cap, len, "%lld", (long long)s.ts);

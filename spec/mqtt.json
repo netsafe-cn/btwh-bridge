@@ -240,6 +240,13 @@
       "source": "DeviceState.failure_text"
     },
     {
+      "key": "fault_text",
+      "type": "string",
+      "label": "Active fault description",
+      "note": "Plain-language reading of `fault`, so a notification can say what broke instead of dropping a code on the reader: 'ignition failed - no gas' rather than 'EA'. 'none' when the heater reports no fault, matching `fault`. A code the bridge has no verified text for is echoed back unchanged rather than guessed at - an invented cause is worse than a code. The table lives in `fault_texts`; only codes confirmed against the real heater belong in it.",
+      "source": "DeviceState.failure_text"
+    },
+    {
       "key": "ts",
       "type": "int",
       "unit": "s",
@@ -248,6 +255,12 @@
       "source": null
     }
   ],
+  "fault_texts": {
+    "note": "Fault code -> plain text, for the `fault_text` state field. Add a row only when the code has been observed on a real heater and its cause is known; a wrong explanation sends someone to the wrong part of the machine. Codes absent from this table are published as the code itself, which is honest and still searchable.",
+    "codes": {
+      "EA": "ignition failed - no gas (supply off, empty cylinder, or air in the line)"
+    }
+  },
   "attributes_fields": [
     {
       "key": "fw",

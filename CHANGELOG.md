@@ -33,6 +33,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   minute or two longer: discovery at boot would find nothing and the bridge would stay silent
   until somebody cycled power.
 
+- **A fault says what broke, not just its code.** `fault_text` is the plain-language reading of
+  `fault`: `EA` becomes "ignition failed - no gas (supply off, empty cylinder, or air in the
+  line)" instead of a two-character code the reader has to look up. The table lives in
+  `spec/mqtt.json` (`fault_texts.codes`) and is generated into the firmware, so there is exactly
+  one copy. A code with no row is published as the code itself rather than a guess — a confident
+  wrong cause sends someone to the wrong part of the machine.
+
+  Motivated by a real outage. On 2026-11-17 07:05 the test heater lost its gas supply, the bridge
+  published `EA` for 32 minutes, and the only way to learn what it meant was to search for it.
+  The same event is the first field verification of `A0[11]` as an active fault code (see
+  `docs/BLE_PROTOCOL.md` §12.1): burner power climbed to 34 % while the outlet temperature *fell*
+  22.1 → 16.6 ℃ — ignition without heat — and the code cleared at 07:37 when the gas came back.
+  22 → 23 entities.
+
 ### Fixed
 
 - **The MQTT device id now follows the heater address.** The id is derived from the heater's BLE

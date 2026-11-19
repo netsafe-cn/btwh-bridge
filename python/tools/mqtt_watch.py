@@ -66,7 +66,8 @@ def golden_payload(spec: dict) -> str:
     from gen_mqtt import SAMPLE, render_state      # noqa: E402 - path set above
     sample = dict(SAMPLE)
     sample["ts"] = int(time.time())
-    return render_state(spec["state_fields"], sample)
+    fault_texts = (spec.get("fault_texts") or {}).get("codes") or {}
+    return render_state(spec["state_fields"], sample, fault_texts)
 
 
 def fmt_state(payload: str) -> str:

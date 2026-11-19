@@ -60,7 +60,7 @@ reflash — which is what keeps the Home Assistant entities alive across an upda
 ```json
 {"temp_out":42.3,"temp_in":15.0,"chamber":42.3,"temp_box":24.0,"setpoint":42,
  "water_flow":11.5,"burner_power":47,"fan_speed":1612,"flame":true,
- "mode":"burning","fault":"none","ts":1762584000}
+ "mode":"burning","fault":"none","fault_text":"none","ts":1762584000}
 ```
 
 Rules a consumer must honour (they are in `consumer_rules` in the contract):
@@ -68,6 +68,11 @@ Rules a consumer must honour (they are in `consumer_rules` in the contract):
 - **A missing field means "not reported yet".** Printing it as 0 makes an unreachable bridge look
   like a cold heater.
 - **`fault` is `"none"` or two upper-case hex digits.** Never an empty string.
+- **`fault_text` is the same fact in words, and it never guesses.** `"none"` when there is no
+  fault; a code with a verified row in `fault_texts` becomes its explanation (`EA` →
+  "ignition failed - no gas (supply off, empty cylinder, or air in the line)"); any other code is
+  echoed back unchanged. A notification can therefore print `fault_text` directly, and a code the
+  bridge does not recognise still reaches the reader instead of disappearing behind "unknown".
 - **Liveness and freshness are two claims, and a reading needs both.** `availability` says the
   bridge process is running; `link` says the heater answered inside the 90 s window. Either one
   `offline` means the numbers are not measurements of now: show `unavailable`, do not keep
