@@ -32,6 +32,11 @@ struct Status {
   int      reply07;
   int      reply08;
   uint32_t a0Count;
+  // Frames whose outlet temperature was physically impossible: the 0xFF/0x63 filler seen on
+  // some broadcasts decodes to 256.8 C / 99.9 C through `d[i] + d[i+1]/100`. They are dropped
+  // rather than published, and counted here so the console shows the guard working instead of
+  // silently hiding a sensor that really is failing.
+  uint32_t outRejects;
   // millis() of the most recent A0 frame, 0 until one arrives. Reset at every session start,
   // so it answers "is there data, and how old is it" where a0Count only answers "how many
   // frames this session" - the freshness question the MQTT contract's link topic asks.

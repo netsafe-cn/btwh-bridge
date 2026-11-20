@@ -314,6 +314,12 @@
       "nullable": true,
       "label": "Last MQTT disconnect time",
       "note": "null = the broker link has not dropped since boot. This is the broker link, not the BLE link. The wire value is epoch seconds - the label deliberately does not say so, because the Home Assistant entity renders ISO 8601: device_class timestamp parses ISO 8601 and rejects a bare integer, so the template formats with timestamp_custom. A label promising 'epoch' next to an ISO 8601 value is a small lie a user reads every time they open the device page."
+    },
+    {
+      "key": "boot_reason",
+      "type": "string",
+      "label": "Last boot reason",
+      "note": "Why this boot happened: power_on, sw_restart, task_wdt, int_wdt, panic, brownout, deep_sleep, external, sdio, unknown. Read from esp_reset_reason() once at start and never updated, so it describes how the board arrived, not what it is doing. This is the field that separates a watchdog reset from a power cut - without it both look like 'uptime went back to zero' and the cause is lost."
     }
   ],
   "home_assistant": {

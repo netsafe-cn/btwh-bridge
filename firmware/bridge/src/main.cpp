@@ -7,9 +7,11 @@
  *   1) connect to the heater and finish SMP pairing (the panel code is the BLE pin)
  *   2) A2/07 submits the MAC, A2/08 submits the pairing code, authorisation follows
  *   3) A0 broadcasts arrive and every field parses correctly
- * Since then (phase two): Wi-Fi + portal, MQTT + HA discovery (22 entities),
+ * Since then (phase two): Wi-Fi + portal, MQTT + HA discovery (24 entities),
  * broker credentials, and OTA reflashing over this file's own MQTT link.
  * Latest: the setup page comes back by itself when the stored Wi-Fi stops working (ADR-018).
+ * Product pass (2.9.0-ota12): task watchdog, published reset reason, BOOT-hold factory reset,
+ * and a plausibility guard on the outlet temperature.
  *
  * This file is only the board boundary: setup(), loop() and the serial console. The work lives
  * in the layers below it (ADR-008), each of which compiles on its own terms:
@@ -36,6 +38,7 @@
 
 #include <Arduino.h>
 #include <ctype.h>
+#include <esp_task_wdt.h>
 #include <string.h>
 
 #include "app/config.h"
@@ -418,8 +421,9 @@ static void printStatus() {
   Serial.printf("  phase      : %s\n", phaseText(s.phase));
   Serial.printf("  link       : %s / encrypted=%s\n",
                 s.linkUp ? "up" : "down", s.encrypted ? "yes" : "no");
-  Serial.printf("  A2/07=%d  A2/08=%d  A0 frames=%u  raw=%s\n",
-                s.reply07, s.reply08, (unsigned)s.a0Count, s.raw ? "on" : "off");
+  Serial.printf("  A2/07=%d  A2/08=%d  A0 frames=%u  raw=%s  rejected=%u\n",
+                s.reply07, s.reply08, (unsigned)s.a0Count, s.raw ? "on" : "off",
+                (unsigned)s.outRejects);
   if (s.lastA0Ms) {
     Serial.printf("  data age   : %lus (link goes stale at %lus)\n",
                   (unsigned long)((millis() - s.lastA0Ms) / 1000),
@@ -686,6 +690,59 @@ static void pollSerial() {
   }
 }
 
+// ---------------------------------------------------------------- boot button
+
+// GPIO0 is the BOOT key on this board, and nothing else uses a GPIO: proto/, ble/, app/ and
+// net/ are frame bytes, radio, NVS and sockets. Holding the key five seconds wipes the stored
+// configuration - the only way back to a fresh board when there is no serial console, which is
+// the normal state once this bridge sits on a charger next to the heater.
+//
+// The heater keeps its own pairing record, so the panel must still be cleared by hand; the
+// portal says so on the page. Nothing here runs during setup(): a key held at reset is the
+// ROM's download mode, and stepping on that would break flashing entirely.
+static constexpr int      kBootPin        = 0;
+static constexpr uint32_t kBootHoldMs     = 5000;
+static constexpr uint32_t kBootArmDelayMs = 3000;  // a key still held from the reset is no press
+static uint32_t gBootDownMs  = 0;
+static uint32_t gBootArmedMs = 0;
+
+static void pollBootButton() {
+  const uint32_t now = millis();
+  if (gBootArmedMs == 0) gBootArmedMs = now | 1;   // |1: never store 0, which means "not armed"
+  if (digitalRead(kBootPin) != LOW) { gBootDownMs = 0; return; }
+  if (now - gBootArmedMs < kBootArmDelayMs) return;
+
+  if (gBootDownMs == 0) {
+    gBootDownMs = now | 1;
+    Serial.println("[RESET] BOOT pressed: hold 5 s to wipe Wi-Fi, broker and pairing settings");
+    return;
+  }
+  if (now - gBootDownMs < kBootHoldMs) return;
+
+  Serial.println("[RESET] BOOT held 5 s: wiping configuration, restarting into the setup portal");
+  gCfg.wipe();
+  delay(300);            // let the line reach the console before the reset pulls the UART down
+  ESP.restart();
+}
+
+// ---------------------------------------------------------------- watchdog
+
+// Armed only at the end of setup(). The cold-boot path is this firmware's longest blocking run:
+// Wi-Fi join (up to ~20 s), mDNS discovery, MQTT connect, then the BLE login ladder with five
+// retries. A watchdog armed before it would reset a board that is working correctly.
+//
+// 120 s, not 30: this watchdog exists for the case where the loop stops running at all. A
+// threshold that fires during a slow-but-progressing start teaches the operator to ignore it,
+// and an ignored watchdog is worse than none - it costs a reboot and hides the real fault.
+static constexpr uint32_t kWatchdogSec = 120;
+
+static void armWatchdog() {
+  esp_task_wdt_init(kWatchdogSec, true);   // core 2.0.x signature: (seconds, panic on timeout)
+  esp_task_wdt_add(NULL);                  // the Arduino loop task
+  Serial.printf("[BOOT] watchdog armed: %lu s, panic on timeout (reset reason will read task_wdt)\n",
+                (unsigned long)kWatchdogSec);
+}
+
 // ---------------------------------------------------------------- Arduino
 void setup() {
   Serial.begin(115200);
@@ -693,7 +750,8 @@ void setup() {
   banner("Bosch heater ESP32 gateway - Waveshare ESP32-S3-DEV-KIT-N8R8");
   // The version comes from the one constant MQTT publishes, not from a second hand-typed
   // string: the banner and the attributes payload cannot disagree if they share a source.
-  Serial.printf("[BOOT] firmware %s\n", net::kFirmwareVersion);
+  Serial.printf("[BOOT] firmware %s  reset=%s\n", net::kFirmwareVersion, net::bootReason());
+  pinMode(kBootPin, INPUT_PULLUP);   // BOOT key: polled in loop(), never read during setup
 
   gCfg.load();
 
@@ -758,12 +816,18 @@ void setup() {
   // MQTT comes after Wi-Fi, for the same reason: the client needs an IP to do anything at all,
   // and starting it earlier only produces a failed attempt on the boot log.
   startMqtt();
+
+  // Deliberately the last statement in setup(): everything above may block for tens of seconds
+  // while the board is doing exactly what it should. From here on, a loop that stops running is
+  // a fault, and the only way out of it is a reset.
+  armWatchdog();
 }
 
 void loop() {
   pollSerial();
   net::portalPoll();
   app::poll();
+  pollBootButton();
 
   // Wi-Fi recovery (ADR-018): retry the stored network, and when it stops working altogether,
   // offer the setup page again. The policy and every boundary in it live in net/recover.h; this
@@ -912,5 +976,8 @@ void loop() {
 
   net::mqttPoll(gHaveSnap ? &gSnap : nullptr, newFrame && gHaveSnap);
 
+  // Reachable end of an iteration. A call above that never returns never gets here, which is
+  // exactly the condition the watchdog is looking for.
+  esp_task_wdt_reset();
   delay(10);
 }

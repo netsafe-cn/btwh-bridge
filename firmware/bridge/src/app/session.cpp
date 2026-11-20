@@ -25,6 +25,11 @@ auth::Result gLast       = auth::kOk;
 volatile int      gReply07 = -1;
 volatile int      gReply08 = -1;
 volatile uint32_t gA0Count = 0;
+
+// Frames the plausibility guard rejected. Per session, like the counter above: "did this link
+// ever deliver a sane reading" is the question worth asking after a reconnect.
+volatile uint32_t gOutRejects = 0;
+
 // When the last A0 arrived, on the millis() clock. The counter above is per session and
 // restarts at 0, so it cannot answer "is this data current?" - a session that reconnects
 // would look like it just delivered a frame when it has delivered none. This stamp can.
@@ -194,6 +199,7 @@ bool start(bool forceRebond) {
   gReply07      = -1;
   gReply08      = -1;
   gA0Count      = 0;
+  gOutRejects   = 0;
   // A new session has delivered no frames yet. Keeping the previous session's snapshot here
   // is what let a reconnect republish old heater readings as if they had just been measured.
   gLastA0Ms     = 0;
@@ -304,6 +310,7 @@ Status status() {
   s.reply07   = gReply07;
   s.reply08   = gReply08;
   s.a0Count   = gA0Count;
+  s.outRejects = gOutRejects;
   s.lastA0Ms  = gLastA0Ms;
   s.sessionMs = gSessionStart ? (millis() - gSessionStart) : 0;
   s.raw       = gRaw;
@@ -348,10 +355,34 @@ bool setSetpoint(int celsius) {
   return ok;
 }
 
+// Outlet temperatures outside this window are not measurements. The setpoint is capped at 60 C
+// by the contract and a gas unit overshoots by a few degrees at most, so 85 leaves room for a
+// probe that reads high while still refusing the 256.8 / 99.9 that filler bytes decode to.
+static constexpr float kOutletMinC = -10.0f;
+static constexpr float kOutletMaxC =  85.0f;
+
 void onState(const uint8_t* payload, size_t len) {
   gA0Count++;
   gLastA0Ms = millis();
-  gLastState = proto::parseA0(payload, len);
+
+  proto::A0State next = proto::parseA0(payload, len);
+
+  // Reject, do not publish. Over 5.2 days (2026-11-14..19) 83 frames carried 0xFF / 0x63 filler
+  // that decodes to 256.8 C and 99.9 C, every one an isolated single sample: the value before
+  // and after was normal. Forwarding them put an impossible number into Home Assistant's
+  // statistics and now into InfluxDB, where it is permanent. Keeping the previous good value is
+  // the honest reading - the outlet did not jump to 257 C and back inside one second - and the
+  // raw bytes are logged so the filler can still be identified later.
+  if (next.temp_out < kOutletMinC || next.temp_out > kOutletMaxC) {
+    gOutRejects++;
+    Serial.printf("[A0] rejected temp_out=%.1f (keeping %.1f) raw=",
+                  next.temp_out, gLastState.temp_out);
+    for (size_t i = 0; i < len && i < 40; i++) Serial.printf("%02x", payload[i]);
+    Serial.println();
+    next.temp_out = gLastState.temp_out;
+  }
+
+  gLastState = next;
   gHaveState = true;
   printA0(gLastState);
   if (gRaw) {

@@ -72,7 +72,7 @@ namespace net {
 //       here", "the password was rejected"), a failed attempt prints both codes and the
 //       sentence, a success prints ip/gw/mask/dns/rssi/channel/bssid, and the setup page shows
 //       the same sentence. Diagnostics only: no topic, payload key or command changed shape.
-constexpr const char* kFirmwareVersion = "2.9.0-ota11";
+constexpr const char* kFirmwareVersion = "2.9.0-ota12";
 
 // Slow-changing metadata, published on every connect and refreshed on the attributes heartbeat.
 // Live-only like state: uptime and RSSI are readings, not configuration.
@@ -121,6 +121,11 @@ void mqttPoll(const Snapshot* snap, bool newFrame);
 // a consumer that restarts learns the current freshness instead of guessing. Cheap to call
 // every loop iteration: it returns immediately when nothing changed.
 void setLinkAvailable(bool fresh);
+
+// Why this board last restarted, as a short token: power_on, sw_restart, task_wdt, int_wdt,
+// panic, brownout, deep_sleep, external, sdio, unknown. Read once from esp_reset_reason() and
+// used both in the attributes payload and in the boot banner.
+const char* bootReason();
 
 // Forces the next poll to publish (the `refresh` command; also the console).
 void mqttRequestPublish();

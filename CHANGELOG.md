@@ -47,7 +47,37 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   22.1 → 16.6 ℃ — ignition without heat — and the code cleared at 07:37 when the gas came back.
   22 → 23 entities.
 
+- **A stuck loop now resets the board instead of hanging.** The task watchdog is armed at the end
+  of `setup()` with a 120 s timeout and reset once per `loop()` iteration. Nothing in this
+  firmware could previously recover from a call that never returned: the BLE stack, the Wi-Fi
+  join and the MQTT socket all block, and a deadlock in any of them left a board that was
+  powered, silent and invisible. 120 s rather than 30 because the cold-boot path legitimately
+  blocks for tens of seconds — a watchdog that fires during a slow but healthy start is worse
+  than no watchdog, because it teaches the operator to ignore the one signal that matters.
+
+- **The reset reason is published, not guessed.** `boot_reason` in the attributes payload says
+  whether the last start was `power_on`, `task_wdt`, `panic`, `brownout`, `sw_restart` or one of
+  five other values, read once from `esp_reset_reason()`. Without it a watchdog reset and a power
+  cut are indistinguishable from outside — both leave "uptime went back to zero" as the only
+  symptom, which is exactly the report nobody can act on.
+
+- **BOOT held five seconds wipes the configuration.** `Config::wipe()` existed and `config.h`
+  already documented the intent, but no code ever called it: once the bridge sits on a charger
+  there is no console, so a lost pairing code meant plugging the board back into a PC. GPIO0 is
+  polled in `loop()` only — a key held at reset is the ROM's download mode and must stay
+  untouched — and presses are ignored for the first 3 s so a key released after a manual reset is
+  not mistaken for a wipe. The heater keeps its own pairing record, so the panel still has to be
+  cleared by hand; the portal page says so.
+
 ### Fixed
+
+- **Impossible outlet temperatures are no longer published.** 83 frames in 5.2 days carried
+  0xFF / 0x63 filler that `d[i] + d[i+1]/100` decodes to 256.8 ℃ and 99.9 ℃, every one an
+  isolated single sample between two normal readings. They are now rejected, the previous good
+  value is kept, and the raw bytes go to the console with a per-session `rejected=` count. Keeping
+  the last good value is the honest reading — the outlet did not jump to 257 ℃ and back inside one
+  second — but the guard treats the symptom: the filler still needs a raw frame to identify, and
+  `raw=on` plus the logged bytes is how that will happen during the soak.
 
 - **The MQTT device id now follows the heater address.** The id is derived from the heater's BLE
   address (`btwh_` + last three bytes), but nothing recomputed it: `addr` wrote NVS while the

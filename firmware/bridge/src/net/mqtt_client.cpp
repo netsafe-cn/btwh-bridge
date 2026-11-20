@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <esp_system.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -173,13 +174,14 @@ void publishAttributes() {
   if (gLastDropAt) snprintf(dropAt, sizeof(dropAt), "%lld", (long long)gLastDropAt);
   else snprintf(dropAt, sizeof(dropAt), "null");
 
-  char json[340];
+  char json[400];
   snprintf(json, sizeof(json),
            "{\"fw\":\"%s\",\"hw\":\"%s\",\"heater\":\"%s\",\"pair_state\":\"%s\","
-           "\"uptime\":%lu,\"rssi\":%s,\"last_disconnect\":\"%s\",\"last_disconnect_at\":%s}",
+           "\"uptime\":%lu,\"rssi\":%s,\"last_disconnect\":\"%s\",\"last_disconnect_at\":%s,"
+           "\"boot_reason\":\"%s\"}",
            kFirmwareVersion, gInfo.hardware ? gInfo.hardware : "esp32s3",
            gInfo.heater ? gInfo.heater : "-", gInfo.pairState ? gInfo.pairState : "unpaired",
-           (unsigned long)(millis() / 1000), rssi, gWhy, dropAt);
+           (unsigned long)(millis() / 1000), rssi, gWhy, dropAt, bootReason());
   publishText("attributes", json, false);
 }
 
@@ -615,6 +617,26 @@ void drainSocket() {
 }  // namespace
 
 // ---------------------------------------------------------------- public
+
+// Why this board arrived here. esp_reset_reason() reads a value the ROM leaves in RTC memory,
+// so it survives the very reset it describes - and it is the only way to tell a watchdog
+// timeout from a power cut once uptime has already gone back to zero. The tokens are this
+// file's own literals (no quotes, no backslashes), so the attributes JSON needs no escaping.
+const char* bootReason() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:   return "power_on";
+    case ESP_RST_EXT:       return "external";
+    case ESP_RST_SW:        return "sw_restart";
+    case ESP_RST_PANIC:     return "panic";
+    case ESP_RST_INT_WDT:   return "int_wdt";
+    case ESP_RST_TASK_WDT:  return "task_wdt";
+    case ESP_RST_WDT:       return "wdt";
+    case ESP_RST_DEEPSLEEP: return "deep_sleep";
+    case ESP_RST_BROWNOUT:  return "brownout";
+    case ESP_RST_SDIO:      return "sdio";
+    default:                return "unknown";
+  }
+}
 
 // Defined outside the anonymous namespace above because loop() calls it: everything up there is
 // internal linkage by design (one translation unit, no name to collide with), and a public
