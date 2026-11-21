@@ -32,17 +32,18 @@ class HostSelftest(unittest.TestCase):
                          % (self.proc.returncode, self.proc.stdout, self.proc.stderr))
 
     def test_totals_match_the_board(self):
-        # proto 64 + net 16 + mqtt 41 + rules 76 + provision 19 + discovery 170 + recover 25,
-        # printed by the runner's last line. If these drift, update this number AND the board
-        # result in AGENTS.md - the two must stay in lockstep or one of them is no longer
-        # running what it claims.
+        # proto 64 + net 16 + mqtt 45 + rules 76 + provision 19 + discovery 184 + recover 25
+        # + wifistat 42 = 471, printed by the runner's last line. If these drift, update this
+        # number AND the board result in AGENTS.md - the two must stay in lockstep or one of
+        # them is no longer running what it claims.
         #
-        # The previous value here was 295 (discovery 79). Both were stale: the discovery suite
-        # had grown by two per-entity checks (the link/availability wiring and the real PUBLISH
-        # packet) and nobody noticed, because this file skips when no host compiler is present -
-        # which is exactly the machine a contributor runs `run_tests.py` on. Measured with
-        # ziglang on 2026-11-12.
-        self.assertIn("host selftest passed: 453 checks", self.proc.stdout)
+        # The previous value here was 453. It went stale when fault_text and boot_reason were
+        # added: discovery checks each entity's topic, state topic and availability wiring, so
+        # two new entities add 14, and the payload gained a field each in net and mqtt (+4).
+        # Nobody saw it locally because this file skips when no host compiler is present -
+        # which is exactly the machine a contributor runs `run_tests.py` on. Measured on the
+        # runner, 2026-11-21: 471.
+        self.assertIn("host selftest passed: 471 checks", self.proc.stdout)
 
 
 if __name__ == "__main__":

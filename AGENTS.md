@@ -47,8 +47,8 @@ python firmware/bridge/tools/gen_vectors.py                # after changing spec
 python firmware/bridge/tools/gen_profiles.py               # after changing spec/profiles.json
 python firmware/bridge/tools/gen_mqtt.py                   # after changing spec/mqtt.json (cross-checks profiles.json)
 python firmware/bridge/tools/gen_ha.py                     # after changing spec/mqtt.json
-python firmware/bridge/tools/host_selftest.py              # the seven C++ suites, on the host
-# then flash and type: selftest                            # the same seven suites, on the board
+python firmware/bridge/tools/host_selftest.py              # the eight C++ suites, on the host
+# then flash and type: selftest                            # the same eight suites, on the board
 ```
 
 The seven C++ suites (proto 64 / net 16 / mqtt 41 / rules 76 / provision 19 / discovery 170 /
