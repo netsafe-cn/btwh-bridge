@@ -484,7 +484,11 @@ class TestReferencePublisher(unittest.TestCase):
         sys.path.insert(0, str(tools))
         try:
             import mqtt_watch                                   # noqa: F401 - needs paho
-        except ImportError as exc:                              # pragma: no cover
+        except (ImportError, SystemExit) as exc:
+            # mqtt_watch is a CLI and reports the missing package with sys.exit(), which raises
+            # SystemExit - a BaseException, so `except ImportError` never saw it. On a runner
+            # without paho that turned this whole class into an error instead of a skip, and CI
+            # spent months failing for a dependency the tested code does not use.
             raise unittest.SkipTest("paho-mqtt is a tool dependency: %s" % exc)
 
     def test_it_emits_exactly_the_generated_entity_set(self):
