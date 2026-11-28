@@ -31,40 +31,46 @@ void emitFrame(const uint8_t* frame, size_t len) {
 void onFrameSink(void* /*ctx*/, const uint8_t* frame, size_t len) { emitFrame(frame, len); }
 
 // FIFO and CREDITS share this callback, exactly as Python _on_notify does.
-void onNotify(NimBLERemoteCharacteristic* /*ch*/, uint8_t* data, size_t len, bool /*isNotify*/) {
+// 2.x changed the callback shape: instead of (data, len, isNotify) it hands over a
+// NimBLEAttValue, which owns its bytes and carries the length. Same bytes, different envelope.
+void onNotify(NimBLERemoteCharacteristic* /*ch*/, NimBLEAttValue value) {
+  const size_t len = value.size();
   if (len == 0 || len > 64) return;
-  if (proto::streamPush(&gRx, data, len, onFrameSink, nullptr) < 0) {
+  if (proto::streamPush(&gRx, value.data(), len, onFrameSink, nullptr) < 0) {
     Serial.println("[RX ] buffer overflow, clearing to resync");
   }
 }
 
 // KEY: the panel code is also the BLE passkey. While the window is open the device asks for
 // PROVIDE_PIN, and this must answer with the six digits, or SMP fails and A2/08 says 00.
-class Security : public NimBLESecurityCallbacks {
-  uint32_t onPassKeyRequest() override {
-    Serial.printf("[SMP] device asks for the PIN -> returning %06u\n", (unsigned)gPasskey);
-    return gPasskey;
+//
+// NimBLE-Arduino 2.x folded the security callbacks into the client callbacks and changed their
+// shape: onPassKeyRequest that *returned* the pin became onPassKeyEntry that *receives* a
+// NimBLEConnInfo and expects the answer to be injected. The behaviour required by the heater is
+// identical; the wiring is not. When this is wrong the symptom is not an error, it is A2/08
+// answering 00 - which reads like a wrong code.
+class Security : public NimBLEClientCallbacks {
+  void onPassKeyEntry(NimBLEConnInfo& connInfo) override {
+    Serial.printf("[SMP] device asks for the PIN -> injecting %06u\n", (unsigned)gPasskey);
+    NimBLEDevice::injectPassKey(connInfo, gPasskey);
   }
-  void onPassKeyNotify(uint32_t pass_key) override {
-    Serial.printf("[SMP] device displays PIN %06u (should match the panel)\n", (unsigned)pass_key);
-  }
-  bool onSecurityRequest() override {
-    Serial.println("[SMP] device requests encryption -> accepting");
-    return true;
-  }
-  bool onConfirmPIN(uint32_t pin) override {
+  void onConfirmPasskey(NimBLEConnInfo& connInfo, uint32_t pin) override {
     Serial.printf("[SMP] numeric comparison PIN=%06u -> accepting\n", (unsigned)pin);
-    return true;
+    NimBLEDevice::injectConfirmPasskey(connInfo, true);
   }
-  void onAuthenticationComplete(ble_gap_conn_desc* desc) override {
-    gEncrypted = desc && desc->sec_state.encrypted;
-    gBonded    = desc && desc->sec_state.bonded;
+  void onAuthenticationComplete(NimBLEConnInfo& connInfo) override {
+    gEncrypted = connInfo.isEncrypted();
+    gBonded    = connInfo.isBonded();
     Serial.printf("[SMP] authentication complete: %s%s\n",
                   gEncrypted ? "link encrypted" : "not encrypted / failed",
                   gBonded ? ", bonded" : "");
     if (gHooks.onSecurity) gHooks.onSecurity(gHooks.ctx, gEncrypted, gBonded);
   }
 };
+
+// setCallbacks() takes a reference and the client does not own it, so this has to outlive every
+// client. One instance for the whole firmware; there is only ever one BLE link anyway.
+Security gSecurity;
 
 }  // namespace
 
@@ -74,7 +80,8 @@ void begin(const char* deviceName) {
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_KEYBOARD_ONLY);
   NimBLEDevice::setSecurityAuth(true, false, true);   // bonding, no forced MITM, Secure Conn.
   NimBLEDevice::setSecurityPasskey(gPasskey);
-  NimBLEDevice::setSecurityCallbacks(new Security());
+  // 2.x has no device-level security callbacks - they belong to each client now, so they are
+  // attached in connect() where the client is created.
 }
 
 void setPasskey(uint32_t pin) {
@@ -116,6 +123,7 @@ bool connect(const char* heaterMac, uint8_t timeoutSec) {
   NimBLEAddress addr((std::string)heaterMac, BLE_ADDR_PUBLIC);
   gClient = NimBLEDevice::createClient();
   gClient->setConnectTimeout(timeoutSec);
+  gClient->setCallbacks(gSecurity);   // reference, not ownership: see gSecurity's comment
 
   Serial.printf("[CONN] connecting to %s ...\n", heaterMac);
   if (!gClient->connect(addr)) {
@@ -124,7 +132,9 @@ bool connect(const char* heaterMac, uint8_t timeoutSec) {
   }
   Serial.println("[CONN] + link established [1/5]");
 
-  // The device may ask for encryption itself; trigger once so SMP definitely runs
+  // The device may ask for encryption itself; trigger once so SMP definitely runs. This is
+  // still a client method in 2.x - startSecurity() is the server-side equivalent, and switching
+  // to it here would compile and then never pair.
   Serial.printf("[SMP ] starting pairing (IOCap=KeyboardOnly, PIN=%06u)... [2/5]\n",
                 (unsigned)gPasskey);
   bool sec = gClient->secureConnection();
@@ -196,18 +206,21 @@ int scan(ScanEntry* out, int maxEntries, uint8_t seconds) {
   s->setActiveScan(true);
   s->setInterval(100);
   s->setWindow(99);
-  NimBLEScanResults r = s->start(seconds, false);
+  // 2.x: getResults() takes milliseconds and blocks; the old start(seconds, false) is gone.
+  // getDevice() now returns a pointer into the results rather than a copy.
+  NimBLEScanResults r = s->getResults((uint32_t)seconds * 1000u, false);
   Serial.printf("[SCAN] found %d devices:\n", r.getCount());
 
   int n = 0;
   for (int i = 0; i < r.getCount() && n < maxEntries; i++) {
-    NimBLEAdvertisedDevice d = r.getDevice(i);   // 1.4.x returns an object, not a pointer
-    strncpy(out[n].addr, d.getAddress().toString().c_str(), sizeof(out[n].addr) - 1);
+    const NimBLEAdvertisedDevice* d = r.getDevice(i);
+    if (!d) continue;
+    strncpy(out[n].addr, d->getAddress().toString().c_str(), sizeof(out[n].addr) - 1);
     out[n].addr[sizeof(out[n].addr) - 1] = 0;
-    const char* name = d.haveName() ? d.getName().c_str() : "";
+    const char* name = d->haveName() ? d->getName().c_str() : "";
     strncpy(out[n].name, name, sizeof(out[n].name) - 1);
     out[n].name[sizeof(out[n].name) - 1] = 0;
-    out[n].rssi = d.getRSSI();
+    out[n].rssi = d->getRSSI();
     n++;
   }
   s->clearResults();

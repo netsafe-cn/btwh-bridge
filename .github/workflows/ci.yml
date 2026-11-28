@@ -227,3 +227,32 @@ jobs:
           name: bridge-app-${{ github.sha }}
           path: dist-ci/*.bin
           if-no-files-found: error
+
+  # The same build on the core major version this project is migrating to. Kept as a separate job
+  # rather than a matrix entry: the two NimBLE majors cannot coexist, and a red run here must not
+  # be confused with a red run on the version that actually ships today.
+  firmware_core3:
+    name: firmware compiles (esp32s3, 3.3.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v2
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.arduino15
+            ~/Arduino/libraries
+          key: arduino-${{ runner.os }}-esp32-3.3.12-nimble-2.5.2-v1
+          restore-keys: arduino-${{ runner.os }}-esp32-3.3.12-
+      - name: install the pinned core and library
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls \
+            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.3.12
+          # 2.x is required by core 3.x: the security and notify callback signatures changed.
+          arduino-cli lib install "NimBLE-Arduino@2.5.2"
+      - name: build
+        run: python3 firmware/bridge/tools/gateway_cli.py --build --no-monitor
