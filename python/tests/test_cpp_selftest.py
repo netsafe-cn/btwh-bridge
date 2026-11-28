@@ -43,7 +43,7 @@ class HostSelftest(unittest.TestCase):
         # fault_text and boot_reason (two entities, +14) plus a field each in net and mqtt (+4).
         # This case never fails locally because it skips when no host compiler is present -
         # which is exactly the machine a contributor runs `run_tests.py` on, so only CI sees it.
-        self.assertIn("host selftest passed: 482 checks", self.proc.stdout)
+        self.assertIn("host selftest passed: 489 checks", self.proc.stdout)
 
 
 if __name__ == "__main__":
