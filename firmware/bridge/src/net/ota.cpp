@@ -1,5 +1,7 @@
 #include "net/ota.h"
 
+#include "net/boot_guard.h"
+
 #include <Arduino.h>
 #include <HTTPClient.h>
 #include <Update.h>
@@ -184,6 +186,9 @@ bool install(const char* host, uint16_t port, const char* path) {
   http.end();
   Serial.printf("[OTA] + %u bytes written and validated in %lu ms, ready to reboot\n",
                 (unsigned)written, (unsigned long)(millis() - t0));
+  // Armed here rather than by the caller: the whole point is that it must not be forgotten, and
+  // this is the only place that knows a swap just happened.
+  bootguard::armBeforeReboot();
   return true;
 }
 

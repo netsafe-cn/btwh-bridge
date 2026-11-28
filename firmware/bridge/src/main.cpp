@@ -46,6 +46,7 @@
 #include "app/session.h"
 #include "auth/login.h"
 #include "ble/link.h"
+#include "net/boot_guard.h"
 #include "net/discover.h"
 #include "net/portal.h"
 #include "net/discovery.h"
@@ -463,6 +464,7 @@ static void printStatus() {
   Serial.printf("  telnet     : %s\n", gCfg.telnet ? "on (port 23, read-only)" : "off");
   Serial.printf("  slot       : %s (%s)\n", net::ota::runningSlot(), net::ota::runningState());
   if (gCfg.otaHost[0]) Serial.printf("  ota host   : %s (extra allowlist entry)\n", gCfg.otaHost);
+  Serial.printf("  ota guard  : %s\n", net::bootguard::stateText());
   Serial.printf("  phase      : %s\n", phaseText(s.phase));
   Serial.printf("  link       : %s / encrypted=%s\n",
                 s.linkUp ? "up" : "down", s.encrypted ? "yes" : "no");
@@ -992,6 +994,10 @@ void setup() {
 
   gCfg.load();
 
+  // Before the radio: if the previous boot was an armed OTA attempt that never reached the
+  // broker, this either counts the attempt or points the boot partition back and restarts.
+  net::bootguard::checkAtBoot();
+
   ble::begin("BoschGW");
   ble::setPasskey(gCfg.pinValue());
   ble::Hooks hooks;
@@ -1070,6 +1076,7 @@ void loop() {
   pollSerial();
   net::portalPoll();
   net::telnet::poll();
+  net::bootguard::poll(millis());
   app::poll();
   pollBootButton();
 

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "net/boot_guard.h"
 #include "net/discover.h"        // mDNS: setHostname, broker discovery
 #include "net/discovery.h"
 #include "net/mqtt_contract.h"
@@ -285,6 +286,10 @@ void onConnected() {
   // moment this firmware has shown it can do its actual job - config read, WiFi joined, MQTT
   // handshake accepted, subscriptions placed - and it deliberately does not wait for the heater,
   // which can stay asleep for hours and would roll back a perfectly good image.
+  // A CONNACK is the health signal the boot guard waits for: whatever else is wrong, an image
+  // that cannot reach the broker cannot do this job.
+  bootguard::markHealthy();
+
   static bool sBootConfirmed = false;
   if (!sBootConfirmed && ota::confirmBoot()) {
     sBootConfirmed = true;
