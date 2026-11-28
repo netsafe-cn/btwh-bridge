@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "net/discover.h"        // mDNS: setHostname, broker discovery
 #include "net/discovery.h"
 #include "net/mqtt_contract.h"
 #include "net/mqtt_rules.h"
