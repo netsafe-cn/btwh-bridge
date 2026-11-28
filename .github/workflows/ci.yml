@@ -177,7 +177,7 @@ jobs:
             echo "OK: $f"
           done
 
-  # Ships from 3.3.12 since v2.9.0. The 2.0.17 job is gone with the migration: this image uses
+  # Ships from 3.3.12 since v1.0.0. The 2.0.17 job is gone with the migration: this image uses
   # NimBLE 2.x calls that 1.4.3 cannot compile, so keeping both would mean one permanently red
   # job that says nothing about the code under test. The old core is still one git checkout away
   # if a rollback is ever needed.
