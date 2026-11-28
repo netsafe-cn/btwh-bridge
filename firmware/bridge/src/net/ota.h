@@ -31,6 +31,12 @@ namespace ota {
 // host/port/path are the outputs of rules::parseOtaUrl (already validated: host
 // non-empty, port 1..65535, path starts with '/'). Returns true when the image is
 // fully written and Update's checksum validated; the caller reboots.
+// Adds one host to the built-in allowlist, or clears it when given null/empty. The list exists
+// so a URL published to the MQTT broker cannot point the flasher anywhere; this entry is set
+// from the serial console, which is physical access, so the trust argument still holds.
+void setExtraHost(const char* host);
+const char* extraHost();
+
 bool install(const char* host, uint16_t port, const char* path);
 
 // Rollback is compiled into this build (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y in the 3.3.12

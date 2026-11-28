@@ -37,6 +37,11 @@ struct Config {
   // plaintext, so a neighbour reads it off the air without connecting. Turn it on per unit when
   // a fault needs the last 60 lines and no cable can reach the board.
   bool telnet;
+  // One extra OTA source, empty by default. The flasher's built-in allowlist only names the
+  // release hosts, so a rehearsal from a machine on the LAN - or a mirror that is reachable when
+  // GitHub is not - needs a second entry. It is set from the serial console, which already means
+  // physical access, so it does not widen what a network attacker can reach.
+  char otaHost[40];
 
   // Reads NVS; fills in placeholders when a key is absent.
   void load();

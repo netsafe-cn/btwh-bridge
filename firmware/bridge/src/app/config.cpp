@@ -46,6 +46,7 @@ void Config::load() {
   copyTo(mqttUser, sizeof(mqttUser), u.c_str());
   copyTo(mqttPass, sizeof(mqttPass), pw.c_str());
   telnet = prefs().getBool("telnet", false);
+  copyTo(otaHost, sizeof(otaHost), prefs().getString("otahost", "").c_str());
 }
 
 void Config::save() const {
@@ -62,6 +63,7 @@ void Config::saveNetwork() const {
   prefs().putString("mqttuser", mqttUser);
   prefs().putString("mqttpass", mqttPass);
   prefs().putBool("telnet", telnet);
+  prefs().putString("otahost", otaHost);
 }
 
 void Config::wipe() {
@@ -76,6 +78,8 @@ void Config::wipe() {
   broker[0] = 0;
   mqttUser[0] = 0;
   mqttPass[0] = 0;
+  otaHost[0] = 0;
+  telnet = false;
 }
 
 bool Config::pinValid() const {

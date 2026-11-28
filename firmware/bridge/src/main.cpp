@@ -435,6 +435,7 @@ static void printHelp() {
   Serial.println("  log               dump the recent log ring (works without the network)");
   Serial.println("  heap              free / lowest / largest block, and PSRAM");
   Serial.println("  telnet [on|off]   read-only log over port 23 (off by default)");
+  Serial.println("  otahost [host]    allow one extra OTA source, 'off' to clear");
   Serial.println("  profile [ID]      list or select the spec/profiles.json row this board uses");
   Serial.println("  reboot            reboot");
   Serial.println("  help              this help");
@@ -461,6 +462,7 @@ static void printStatus() {
   Serial.printf("  profile    : %s\n", gCfg.profile[0] ? gCfg.profile : "(built-in default)");
   Serial.printf("  telnet     : %s\n", gCfg.telnet ? "on (port 23, read-only)" : "off");
   Serial.printf("  slot       : %s (%s)\n", net::ota::runningSlot(), net::ota::runningState());
+  if (gCfg.otaHost[0]) Serial.printf("  ota host   : %s (extra allowlist entry)\n", gCfg.otaHost);
   Serial.printf("  phase      : %s\n", phaseText(s.phase));
   Serial.printf("  link       : %s / encrypted=%s\n",
                 s.linkUp ? "up" : "down", s.encrypted ? "yes" : "no");
@@ -660,6 +662,29 @@ static void handleCommand(String line) {
     net::telnet::setEnabled(on);
     Serial.printf("[CFG] telnet %s%s\n", on ? "ON" : "off",
                   on ? " (unauthenticated port 23; turn it off when done)" : "");
+    return;
+  }
+  if (low == "otahost" || low.startsWith("otahost ")) {
+    String a = line.length() > 8 ? line.substring(8) : String();
+    a.trim();
+    if (!a.length()) {
+      Serial.printf("[CFG] ota extra host = %s\n",
+                    gCfg.otaHost[0] ? gCfg.otaHost : "(none; release hosts only)");
+      return;
+    }
+    if (a == "off" || a == "-") {
+      gCfg.otaHost[0] = 0;
+    } else if (a.length() >= (int)sizeof(gCfg.otaHost)) {
+      Serial.printf("[CFG] host too long (max %u)\n", (unsigned)sizeof(gCfg.otaHost) - 1);
+      return;
+    } else {
+      strncpy(gCfg.otaHost, a.c_str(), sizeof(gCfg.otaHost) - 1);
+      gCfg.otaHost[sizeof(gCfg.otaHost) - 1] = 0;
+    }
+    gCfg.save();
+    net::ota::setExtraHost(gCfg.otaHost);
+    Serial.printf("[CFG] ota extra host = %s\n",
+                  gCfg.otaHost[0] ? gCfg.otaHost : "(cleared; release hosts only)");
     return;
   }
   if (low == "profile" || low.startsWith("profile ")) {
@@ -976,6 +1001,7 @@ void setup() {
   ble::setHooks(hooks);
   // Ship-closed unless the unit opted in; see config.h for why the default matters.
   net::telnet::setEnabled(gCfg.telnet);
+  net::ota::setExtraHost(gCfg.otaHost);
 
   app::begin(&gCfg);
 

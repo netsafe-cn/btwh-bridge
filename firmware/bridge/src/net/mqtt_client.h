@@ -72,7 +72,7 @@ namespace net {
 //       here", "the password was rejected"), a failed attempt prints both codes and the
 //       sentence, a success prints ip/gw/mask/dns/rssi/channel/bssid, and the setup page shows
 //       the same sentence. Diagnostics only: no topic, payload key or command changed shape.
-constexpr const char* kFirmwareVersion = "2.9.0-ota12";
+constexpr const char* kFirmwareVersion = "2.9.0-ota13";
 
 // Slow-changing metadata, published on every connect and refreshed on the attributes heartbeat.
 // Live-only like state: uptime and RSSI are readings, not configuration.

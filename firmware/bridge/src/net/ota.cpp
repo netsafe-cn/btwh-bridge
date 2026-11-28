@@ -7,6 +7,7 @@
 #include <esp_task_wdt.h>
 #include <WiFi.h>
 #include <ctype.h>
+#include <string.h>
 
 namespace net {
 namespace ota {
@@ -26,6 +27,22 @@ constexpr uint32_t kReportMs    = 2000;
 // check, "ota install" is a remote code execution primitive: point it at any server and the board
 // flashes whatever comes back. Only the release hosts this project actually publishes to are
 // accepted, and the check runs before a socket is opened.
+// Set from the serial console; empty means the built-in list is the whole list.
+static char gExtraHost[40] = "";
+
+void setExtraHost(const char* host) {
+  const char* v = host ? host : "";
+  strncpy(gExtraHost, v, sizeof(gExtraHost) - 1);
+  gExtraHost[sizeof(gExtraHost) - 1] = 0;
+}
+
+const char* extraHost() { return gExtraHost; }
+
+static bool equalsNoCase(const char* a, const char* b) {
+  while (*a && *b && tolower((unsigned char)*a) == tolower((unsigned char)*b)) { a++; b++; }
+  return *a == 0 && *b == 0;
+}
+
 static bool allowedHost(const char* host) {
   static const char* kAllowed[] = {
     "raw.githubusercontent.com",
@@ -33,11 +50,9 @@ static bool allowedHost(const char* host) {
     "github.com",
     "codeload.github.com",
   };
+  if (gExtraHost[0] && equalsNoCase(host, gExtraHost)) return true;
   for (size_t i = 0; i < sizeof(kAllowed) / sizeof(kAllowed[0]); i++) {
-    const char* a = kAllowed[i];
-    const char* b = host;
-    while (*a && *b && tolower((unsigned char)*a) == tolower((unsigned char)*b)) { a++; b++; }
-    if (*a == 0 && *b == 0) return true;
+    if (equalsNoCase(kAllowed[i], host)) return true;
   }
   return false;
 }
