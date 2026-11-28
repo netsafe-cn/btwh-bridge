@@ -85,6 +85,8 @@ struct MqttInfo {
   // dropping over days is a leak with a number attached, and one that settles is the headroom
   // this board actually has. 0 means "not sampled yet", which renders as null, not as "no memory".
   uint32_t    minFreeHeap;
+  // DHCP moves this; publishing it is what lets someone find the board without the router page.
+  const char* ip;
 };
 
 // A consumer asked for a new setpoint. The callback returns nothing: the echo that confirms it

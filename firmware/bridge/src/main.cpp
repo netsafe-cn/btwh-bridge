@@ -313,6 +313,9 @@ static void refreshMqttInfo() {
                                              : "unpaired";
   info.rssi = ble::rssi();
   info.minFreeHeap = (uint32_t)ESP.getMinFreeHeap();
+  static char sIp[16];
+  snprintf(sIp, sizeof(sIp), "%s", WiFi.localIP().toString().c_str());
+  info.ip = sIp;
   net::mqttSetInfo(info);
 }
 

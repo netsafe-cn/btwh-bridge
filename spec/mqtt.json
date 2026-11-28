@@ -294,6 +294,12 @@
       "label": "Bridge uptime"
     },
     {
+      "key": "ip",
+      "type": "string",
+      "label": "LAN address",
+      "note": "The board is on DHCP, so its address changes when the lease renews. Publishing it here means Home Assistant always shows the current one without anyone opening the router page or plugging in a cable. Empty until WiFi is up."
+    },
+    {
       "key": "rssi",
       "type": "int",
       "unit": "dBm",

@@ -180,15 +180,15 @@ void publishAttributes() {
   if (gInfo.minFreeHeap) snprintf(heapField, sizeof(heapField), "%lu", (unsigned long)gInfo.minFreeHeap);
   else snprintf(heapField, sizeof(heapField), "null");
 
-  char json[460];
+  char json[500];
   snprintf(json, sizeof(json),
            "{\"fw\":\"%s\",\"hw\":\"%s\",\"heater\":\"%s\",\"pair_state\":\"%s\","
            "\"uptime\":%lu,\"rssi\":%s,\"last_disconnect\":\"%s\",\"last_disconnect_at\":%s,"
-           "\"boot_reason\":\"%s\",\"min_free_heap\":%s}",
+           "\"boot_reason\":\"%s\",\"min_free_heap\":%s,\"ip\":\"%s\"}",
            kFirmwareVersion, gInfo.hardware ? gInfo.hardware : "unknown",
            gInfo.heater ? gInfo.heater : "-", gInfo.pairState ? gInfo.pairState : "unpaired",
            (unsigned long)(millis() / 1000), rssi, gWhy, dropAt, bootReason(),
-           heapField);
+           heapField, gInfo.ip ? gInfo.ip : "");
   publishText("attributes", json, false);
 }
 
