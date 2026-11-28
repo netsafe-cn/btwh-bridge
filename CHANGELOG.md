@@ -7,7 +7,37 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-_Nothing yet. 1.0.0 is the baseline; work after it starts here._
+_Nothing yet._
+
+## [1.0.1] - 2026-11-28
+
+### Fixed
+
+- **The setup page no longer says "Saved" before anything has been tried.** The form used to be
+  answered with an acknowledgement, the hotspot was torn down in the same tick, and the result of
+  the join was written to the serial console where the person holding the phone could not read
+  it. A wrong password therefore looked exactly like success, with the hotspot gone and the board
+  offline until the fallback re-opened it minutes later. The hotspot now stays up (AP+STA) while
+  the join runs, the page polls `/result`, and it ends on either "Connected, reachable at
+  <address>, hotspot closes in 10 s" or "Could not join <network>" with the driver's reason and a
+  link back to the form.
+- **The login MAC is no longer a written-down placeholder.** It is only an identifier the heater
+  records, so any stable unique value works - and the shipped constant made every unit look like
+  the same device. It now comes from the board's own station MAC, which is also the address the
+  router shows, so the heater's list and the DHCP lease agree.
+
+### Changed
+
+- **The setup hotspot is open.** It was WPA2 with `bridge123` written in the firmware: that kept
+  out nobody who could read the source, and it cost every customer a password prompt plus typing
+  `192.168.4.1` by hand, because a secured AP rarely raises the "sign in to this network" sheet.
+  What bounds the exposure is time, not a password - the hotspot exists only while the unit has
+  no network, or for ten idle minutes after `portal` is typed on the console.
+
+### Added
+
+- `wififorget` on the console: drops the Wi-Fi network and reopens the hotspot without touching
+  the pairing code or the broker account. The BOOT-hold wipe remains the full reset.
 
 ## [1.0.0] - 2026-11-28
 
@@ -878,7 +908,8 @@ _Nothing yet. 1.0.0 is the baseline; work after it starts here._
 - A pairing code remains valid for reconnection after the pairing window has closed
   (verified 11 minutes later; the upper bound is still unknown)
 
-[Unreleased]: https://github.com/netsafe-cn/btwh-bridge/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/netsafe-cn/btwh-bridge/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/netsafe-cn/btwh-bridge/releases/tag/v1.0.1
 [1.0.0]: https://github.com/netsafe-cn/btwh-bridge/releases/tag/v1.0.0
 [0.2.0]: https://github.com/netsafe-cn/btwh-bridge/releases/tag/v0.2.0
 [0.1.0]: https://github.com/netsafe-cn/btwh-bridge/releases/tag/v0.1.0

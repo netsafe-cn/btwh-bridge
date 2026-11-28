@@ -40,6 +40,7 @@
 #include <Arduino.h>
 #include <ctype.h>
 #include <esp_log.h>
+#include <esp_mac.h>
 #include <esp_task_wdt.h>
 #include <string.h>
 
@@ -124,11 +125,21 @@ static const char* onProvisioned(void* /*ctx*/, const net::ProvisionRequest& r) 
     strncpy(gCfg.pin, r.pairCode, sizeof(gCfg.pin) - 1);
     gCfg.pin[sizeof(gCfg.pin) - 1] = 0;
   }
+  // An empty password means two different things depending on the network, and the difference
+  // is not a detail: "keep what is stored" is right when the same SSID is re-submitted (editing
+  // the broker should not force the password to be retyped), and it is wrong when the SSID
+  // changes, because a network that takes no password - an open IoT SSID is the common case -
+  // could then never be selected at all. Measured 2026-11-28: submitting an empty password for
+  // an open AP kept WPA2 credentials and the join failed with NO_AP_FOUND_W_COMPATIBLE_SECURITY.
+  const bool sameNetwork = strcmp(r.ssid, gCfg.ssid) == 0;
+  const bool clearsPass  = r.wifiPass[0] == 0 && !sameNetwork;
   strncpy(gCfg.ssid, r.ssid, sizeof(gCfg.ssid) - 1);
   gCfg.ssid[sizeof(gCfg.ssid) - 1] = 0;
   if (r.wifiPass[0]) {
     strncpy(gCfg.wifiPass, r.wifiPass, sizeof(gCfg.wifiPass) - 1);
     gCfg.wifiPass[sizeof(gCfg.wifiPass) - 1] = 0;
+  } else if (clearsPass) {
+    gCfg.wifiPass[0] = 0;
   }
   // Same "empty keeps the stored value" rule as the Wi-Fi password above, for the same
   // reason: re-pairing or moving networks must not silently erase the broker settings.
@@ -147,7 +158,18 @@ static const char* onProvisioned(void* /*ctx*/, const net::ProvisionRequest& r) 
   gCfg.save();
   gCfg.saveNetwork();
 
-  bool wifiOk = net::stationConnect(gCfg.ssid, gCfg.wifiPass);
+  // Pair before joining the network, and only when a code came with the form. The code lives in
+  // a window that the panel opens for a short time, while a Wi-Fi join can block for fifteen
+  // seconds - joining first is how a correct code expires before it is ever used.
+  bool paired = false;
+  if (r.pairCode[0]) {
+    paired = app::start(false);
+    Serial.printf("[PORTAL] pairing first (code window): %s\n", paired ? "ok" : "failed");
+  }
+
+  // Keep the hotspot up only when there is one: a LAN-mode page needs no AP, and asking for
+  // AP+STA there would start a stray open access point on a unit that is already online.
+  bool wifiOk = net::stationConnect(gCfg.ssid, gCfg.wifiPass, !net::portalOnLan());
   // The credentials are new and an attempt was just made: reset both clocks so the fallback
   // measures this failure and not the outage the form was opened for.
   gLastAttemptMs  = millis();
@@ -160,6 +182,7 @@ static const char* onProvisioned(void* /*ctx*/, const net::ProvisionRequest& r) 
   startMqtt();
 
   if (!gCfg.pinValid()) return "saved (no code given; Wi-Fi only)";
+  if (r.pairCode[0]) return paired ? "paired" : "paired? - code window may have closed, see log";
   return app::start(false) ? "paired" : "pairing failed - see the serial log";
 }
 
@@ -430,6 +453,7 @@ static void printHelp() {
   Serial.println("  ota               print how to update firmware over MQTT");
   Serial.println("  portal            start the setup portal by hand (LAN page if online, else AP)");
   Serial.println("  wifi SSID PASS    join a network and save it (open network: wifi SSID -)");
+  Serial.println("  wififorget        forget the network only, then reopen the hotspot");
   Serial.println("  raw on / raw off  show / hide raw A0 bytes");
   Serial.println("  guard 99.9        ask the plausibility guard about one value (no side effects)");
   Serial.println("  inject 01 00 ...   feed hex straight to the parser (bypasses the link)");
@@ -768,6 +792,20 @@ static void handleCommand(String line) {
     Serial.println("      mosquitto_pub -h <broker> -t btwh/<device>/ota -m http://<host>[:port]/firmware.bin");
     return;
   }
+  if (low == "wififorget") {
+    // Drops the network and nothing else. The BOOT-hold wipe also erases the pairing code and
+    // the broker account, which turns "the Wi-Fi changed" into "re-pair the heater" - too much
+    // for the one thing that actually needs forgetting.
+    gCfg.ssid[0] = 0;
+    gCfg.wifiPass[0] = 0;
+    gCfg.saveNetwork();
+    Serial.println("[CFG] Wi-Fi forgotten; rebooting into the setup hotspot "
+                   "(broker and pairing code are kept)");
+    Serial.flush();
+    delay(100);
+    ESP.restart();
+    return;
+  }
   if (low.startsWith("wifi")) {
     // `wifi <ssid> <password>` writes NVS and joins immediately. The SSID keeps its case and
     // may contain spaces (the split is on the last space), so `low` is used only to detect the
@@ -1000,6 +1038,21 @@ void setup() {
 
   gCfg.load();
 
+  // The login MAC is an identifier the heater records, not a credential: unique per unit and
+  // stable is the entire requirement. Fresh boards used to carry a written-down placeholder, so
+  // every unit looked like the same device in the heater's list and in any log. Derive it from
+  // this board's station MAC instead - that is the address the router already shows, so the two
+  // records match when somebody is standing at the panel with a phone in hand.
+  if (!gCfg.login[0] || strcmp(gCfg.login, "11:22:33:44:55:66") == 0) {
+    uint8_t mac[6] = {0};
+    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK) {
+      snprintf(gCfg.login, sizeof(gCfg.login), "%02X:%02X:%02X:%02X:%02X:%02X",
+               mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+      gCfg.save();
+      Serial.printf("[BOOT] login MAC taken from this board: %s\n", gCfg.login);
+    }
+  }
+
   // Before the radio: if the previous boot was an armed OTA attempt that never reached the
   // broker, this either counts the attempt or points the boot partition back and restarts.
   net::bootguard::checkAtBoot();
@@ -1036,17 +1089,19 @@ void setup() {
   // Power-cycle recovery: reconnect once when NVS holds a six-digit code.
   // Basis (measured 2026-11-07): a code that paired successfully is kept by the device
   // and still works after the window closes (A2/07=01 -> A2/08=01). On failure, fall back.
-  if (gCfg.pinValid()) {
+  // No network is checked first, and it outranks having a code. A bridge with a stored code but
+  // no Wi-Fi can pair all it likes and still publish nowhere, and the person holding the phone
+  // cannot reach a page that was never started - which is how `wififorget` used to end with a
+  // board that only the console could bring back.
+  if (net::portalNeeded(gCfg.ssid)) {
+    Serial.println("\n[BOOT] no Wi-Fi credentials: starting the setup portal");
+    Serial.println("       connect to the BTWH-Bridge-XXXX network and follow the page");
+    net::startPortal(onProvisioned, nullptr);
+  } else if (gCfg.pinValid()) {
     Serial.printf("\n[BOOT] stored code %s, reconnecting automatically (type a new one if it fails)\n",
                   maskedPin());
     app::start(false);
     Serial.println("[BOOT] if that fails, type a new code");
-  } else if (net::portalNeeded(gCfg.ssid)) {
-    // Fresh board (or a wipe): no Wi-Fi and no code. Offer the portal instead of asking for
-    // a serial console nobody has. The console path stays for development.
-    Serial.println("\n[BOOT] no Wi-Fi credentials: starting the setup portal");
-    Serial.println("       connect to the BTWH-Bridge-XXXX network and follow the page");
-    net::startPortal(onProvisioned, nullptr);
   } else {
     Serial.println("\nwaiting for input...");
   }

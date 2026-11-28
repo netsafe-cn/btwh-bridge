@@ -26,7 +26,9 @@ namespace net {
 // Joins `ssid` with `pass` and starts SNTP. Returns false only when the association itself
 // failed within the budget (wrong password, no such network, timeout). An open network takes
 // an empty pass. Blocks up to ~15 s.
-bool stationConnect(const char* ssid, const char* pass);
+// keepSoftAp joins in AP+STA mode so a provisioning hotspot stays up while the credentials are
+// being tested: the phone that submitted them has no other way to learn the outcome.
+bool stationConnect(const char* ssid, const char* pass, bool keepSoftAp = false);
 
 // Whether the station interface has an IP right now.
 bool stationUp();
