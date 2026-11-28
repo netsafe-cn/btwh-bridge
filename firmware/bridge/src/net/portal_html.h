@@ -64,6 +64,8 @@ static const char PAGE[] PROGMEM = R"HTML(<!DOCTYPE html>
          style="display:none; margin-top:6px">
   <label for="wifipass">Password</label>
   <input name="wifipass" id="wifipass" type="password" autocomplete="off">
+  <p class="hint">Leave empty to keep the saved password. Empty also means "no password",
+     so only clear it when the network is open.</p>
   <div class="hint">Leave empty to keep the current settings when only re-pairing.</div>
 
   <div class="step">3 &middot; Pairing code</div>
