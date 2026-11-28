@@ -355,7 +355,12 @@ void startPortal(ProvisionedFn onProvisioned, void* ctx, bool automatic) {
   // completes DHCP, while the same hardware joins a WPA2 one cleanly. The passcode is printed
   // below and spoken in the manual; it is a speed bump, not a lock - the provisioning form is
   // what carries the real credentials.
-  bool ap = WiFi.softAP(apName, "bridge123");
+  // Open on purpose. The old password was `bridge123` - written in the firmware and searchable
+  // online, so it kept out nobody who wanted in, while making every customer type it and then
+  // type an address as well, because a secured AP does not reliably raise the "sign in to this
+  // network" sheet. What actually protects the window is that the hotspot only exists while the
+  // unit has no network, or for ten idle minutes after someone asks for it on the console.
+  bool ap = WiFi.softAP(apName);
   Serial.printf("[PORTAL] AP up: %s  ->  http://%s/  (softAP=%d ch=%d)\n",
                 apName, WiFi.softAPIP().toString().c_str(), (int)ap,
                 (int)WiFi.channel());

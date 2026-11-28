@@ -1069,17 +1069,19 @@ void setup() {
   // Power-cycle recovery: reconnect once when NVS holds a six-digit code.
   // Basis (measured 2026-11-07): a code that paired successfully is kept by the device
   // and still works after the window closes (A2/07=01 -> A2/08=01). On failure, fall back.
-  if (gCfg.pinValid()) {
+  // No network is checked first, and it outranks having a code. A bridge with a stored code but
+  // no Wi-Fi can pair all it likes and still publish nowhere, and the person holding the phone
+  // cannot reach a page that was never started - which is how `wififorget` used to end with a
+  // board that only the console could bring back.
+  if (net::portalNeeded(gCfg.ssid)) {
+    Serial.println("\n[BOOT] no Wi-Fi credentials: starting the setup portal");
+    Serial.println("       connect to the BTWH-Bridge-XXXX network and follow the page");
+    net::startPortal(onProvisioned, nullptr);
+  } else if (gCfg.pinValid()) {
     Serial.printf("\n[BOOT] stored code %s, reconnecting automatically (type a new one if it fails)\n",
                   maskedPin());
     app::start(false);
     Serial.println("[BOOT] if that fails, type a new code");
-  } else if (net::portalNeeded(gCfg.ssid)) {
-    // Fresh board (or a wipe): no Wi-Fi and no code. Offer the portal instead of asking for
-    // a serial console nobody has. The console path stays for development.
-    Serial.println("\n[BOOT] no Wi-Fi credentials: starting the setup portal");
-    Serial.println("       connect to the BTWH-Bridge-XXXX network and follow the page");
-    net::startPortal(onProvisioned, nullptr);
   } else {
     Serial.println("\nwaiting for input...");
   }

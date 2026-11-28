@@ -26,6 +26,14 @@ _Nothing yet._
   the same device. It now comes from the board's own station MAC, which is also the address the
   router shows, so the heater's list and the DHCP lease agree.
 
+### Changed
+
+- **The setup hotspot is open.** It was WPA2 with `bridge123` written in the firmware: that kept
+  out nobody who could read the source, and it cost every customer a password prompt plus typing
+  `192.168.4.1` by hand, because a secured AP rarely raises the "sign in to this network" sheet.
+  What bounds the exposure is time, not a password - the hotspot exists only while the unit has
+  no network, or for ten idle minutes after `portal` is typed on the console.
+
 ### Added
 
 - `wififorget` on the console: drops the Wi-Fi network and reopens the hotspot without touching
