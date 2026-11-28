@@ -122,7 +122,7 @@ size_t clearRetained(const char* deviceId) {
   size_t cleared = 0;
   char topic[120];
   for (size_t i = 0; i < discovery::entityCount(); i++) {
-    if (!discovery::expand(discovery::entityTopic(i), deviceId, topic, sizeof(topic))) continue;
+    if (!discovery::expand(discovery::entityTopic(i), deviceId, nullptr, topic, sizeof(topic))) continue;
     if (publishRaw(topic, "", 0, true)) cleared++;
   }
   static const char* const kRetained[] = {"availability", "link", "update/state"};
@@ -215,10 +215,14 @@ void publishUpdateState() {
 void publishDiscovery() {
   static char topic[96];
   static char payload[1280];
+  // configuration_url carries the live address: the board is on DHCP, so a name would not
+  // resolve on Windows and a build-time address would be wrong by the time it is read.
+  static char ipBuf[16];
+  snprintf(ipBuf, sizeof(ipBuf), "%s", WiFi.localIP().toString().c_str());
   size_t sent = 0;
   for (size_t i = 0; i < discovery::entityCount(); i++) {
-    if (!discovery::expand(discovery::entityTopic(i), gDeviceId, topic, sizeof(topic))) continue;
-    if (!discovery::expand(discovery::entityPayload(i), gDeviceId, payload, sizeof(payload))) continue;
+    if (!discovery::expand(discovery::entityTopic(i), gDeviceId, nullptr, topic, sizeof(topic))) continue;
+    if (!discovery::expand(discovery::entityPayload(i), gDeviceId, ipBuf, payload, sizeof(payload))) continue;
     const size_t n = wire::buildPublish(gTx, sizeof(gTx), topic, payload, strlen(payload), true);
     if (n && gSock.write(gTx, n) == n) sent++;
   }

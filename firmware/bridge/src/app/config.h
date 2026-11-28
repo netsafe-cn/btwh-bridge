@@ -32,6 +32,11 @@ struct Config {
   char broker[129];  // host[:port]; empty = discovery only, no external broker
   char mqttUser[33]; // broker account, empty = anonymous
   char mqttPass[65]; // broker password, empty = no password (user may still be sent)
+  // Off by default and shipped that way. Port 23 unauthenticated on a LAN is a reconnaissance
+  // surface: the log carries the SSID, the LAN address and the panel-code tail, and telnet is
+  // plaintext, so a neighbour reads it off the air without connecting. Turn it on per unit when
+  // a fault needs the last 60 lines and no cable can reach the board.
+  bool telnet;
 
   // Reads NVS; fills in placeholders when a key is absent.
   void load();

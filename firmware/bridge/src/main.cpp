@@ -432,6 +432,7 @@ static void printHelp() {
   Serial.println("  loglevel LVL      error | warn | info | debug, for the ring and Serial");
   Serial.println("  log               dump the recent log ring (works without the network)");
   Serial.println("  heap              free / lowest / largest block, and PSRAM");
+  Serial.println("  telnet [on|off]   read-only log over port 23 (off by default)");
   Serial.println("  profile [ID]      list or select the spec/profiles.json row this board uses");
   Serial.println("  reboot            reboot");
   Serial.println("  help              this help");
@@ -456,6 +457,7 @@ static void printStatus() {
   // to confirm "yes, that is the one on the panel" without handing over the credential.
   Serial.printf("  panel code : %s  (masked; it is also the BLE PIN)\n", maskedPin());
   Serial.printf("  profile    : %s\n", gCfg.profile[0] ? gCfg.profile : "(built-in default)");
+  Serial.printf("  telnet     : %s\n", gCfg.telnet ? "on (port 23, read-only)" : "off");
   Serial.printf("  phase      : %s\n", phaseText(s.phase));
   Serial.printf("  link       : %s / encrypted=%s\n",
                 s.linkUp ? "up" : "down", s.encrypted ? "yes" : "no");
@@ -640,6 +642,23 @@ static void handleCommand(String line) {
   if (low.startsWith("loglevel "))  { setLogLevel(line.substring(9)); return; }
   if (low == "log")                 { doLogDump(); return; }
   if (low == "heap")                { printHeap(); return; }
+  if (low == "telnet" || low.startsWith("telnet ")) {
+    String a = line.length() > 7 ? line.substring(7) : String();
+    a.trim();
+    if (!a.length()) {
+      Serial.printf("[CFG] telnet is %s (port 23, read-only, no auth)\n",
+                    gCfg.telnet ? "ON" : "off");
+      return;
+    }
+    const bool on = (a == "on");
+    if (!on && a != "off") { Serial.println("[CFG] telnet on|off"); return; }
+    gCfg.telnet = on;
+    gCfg.save();
+    net::telnet::setEnabled(on);
+    Serial.printf("[CFG] telnet %s%s\n", on ? "ON" : "off",
+                  on ? " (unauthenticated port 23; turn it off when done)" : "");
+    return;
+  }
   if (low == "profile" || low.startsWith("profile ")) {
     setProfile(line.length() > 7 ? line.substring(7) : String());
     return;
@@ -947,6 +966,9 @@ void setup() {
   hooks.onSecurity = onSecurity;
   hooks.ctx        = nullptr;
   ble::setHooks(hooks);
+  // Ship-closed unless the unit opted in; see config.h for why the default matters.
+  net::telnet::setEnabled(gCfg.telnet);
+
   app::begin(&gCfg);
 
   Serial.printf("[BOOT] Chip=%s  Flash=%uMB  PSRAM=%u bytes\n",

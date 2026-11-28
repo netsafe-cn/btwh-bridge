@@ -14,6 +14,11 @@ namespace net {
 namespace telnet {
 
 // Starts listening once the station has an address. Safe to call every loop iteration.
+// Ship-closed. poll() returns immediately until this is set, so no socket is ever bound on a unit
+// that has not opted in.
+void setEnabled(bool on);
+bool enabled();
+
 void poll();
 
 // True while a client is attached - lets the caller skip expensive work when nobody is reading.

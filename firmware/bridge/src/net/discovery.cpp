@@ -10,33 +10,42 @@ namespace net {
 namespace discovery {
 namespace {
 
-const char* const kToken = "@DEV@";
-constexpr size_t kTokenLen = 5;
+const char* const kDevToken = "@DEV@";
+constexpr size_t  kDevLen   = 5;
+const char* const kIpToken  = "@IP@";
+constexpr size_t  kIpLen    = 4;
 
 }  // namespace
 
-size_t expand(const char* tmpl, const char* deviceId, char* out, size_t cap) {
+size_t expand(const char* tmpl, const char* deviceId, const char* ip, char* out, size_t cap) {
   if (!tmpl || !deviceId || !out || cap == 0) return 0;
   out[0] = 0;
 
-  const size_t devLen = strlen(deviceId);
   size_t at = 0;
   const char* p = tmpl;
 
   while (*p) {
-    const char* hit = strstr(p, kToken);
-    const size_t run = hit ? (size_t)(hit - p) : strlen(p);
+    // Whichever token comes first in the remaining text wins; a template may contain both.
+    const char* dev = strstr(p, kDevToken);
+    const char* iph = strstr(p, kIpToken);
+    const char* hit = nullptr;
+    const char* val = nullptr;
+    size_t      tokLen = 0;
+    if (dev && (!iph || dev < iph)) { hit = dev; val = deviceId; tokLen = kDevLen; }
+    else if (iph)                   { hit = iph; val = ip ? ip : ""; tokLen = kIpLen; }
 
+    const size_t run = hit ? (size_t)(hit - p) : strlen(p);
     if (at + run + 1 > cap) return 0;                  // +1 for the terminator
     memcpy(out + at, p, run);
     at += run;
 
     if (!hit) break;
 
-    if (at + devLen + 1 > cap) return 0;
-    memcpy(out + at, deviceId, devLen);
-    at += devLen;
-    p = hit + kTokenLen;
+    const size_t vlen = strlen(val);
+    if (at + vlen + 1 > cap) return 0;
+    memcpy(out + at, val, vlen);
+    at += vlen;
+    p = hit + tokLen;
   }
   out[at] = 0;
   return at;
@@ -83,22 +92,30 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
   char buf[1280];
 
   // 1. The substitution itself, including a token that appears more than once.
-  size_t n = expand("btwh/@DEV@/state", "btwh_eb6f5f", buf, sizeof(buf));
+  size_t n = expand("btwh/@DEV@/state", "btwh_eb6f5f", nullptr, buf, sizeof(buf));
   check(c, n == strlen("btwh/btwh_eb6f5f/state"), "expand replaces the token", nullptr);
   check(c, strcmp(buf, "btwh/btwh_eb6f5f/state") == 0, "expanded text is exact", buf);
 
-  n = expand("@DEV@@DEV@", "ab", buf, sizeof(buf));
+  n = expand("@DEV@@DEV@", "ab", nullptr, buf, sizeof(buf));
   check(c, strcmp(buf, "abab") == 0, "expand handles repeats", buf);
 
-  n = expand("no token here", "ab", buf, sizeof(buf));
+  n = expand("no token here", "ab", nullptr, buf, sizeof(buf));
   check(c, strcmp(buf, "no token here") == 0, "expand passes plain text through", buf);
 
   // 2. A buffer one byte short must refuse, not truncate. "btwh_eb6f5f" is 11 characters -
   //    the first on-board selftest run caught this pair asserting 10, which had never executed
   //    anywhere: the C++ suites only run on the target.
-  n = expand("@DEV@", "btwh_eb6f5f", buf, 12);       // 11 chars + terminator needs 12
+  n = expand("@DEV@", "btwh_eb6f5f", nullptr, buf, 12);       // 11 chars + terminator needs 12
+  // Both tokens in one template, in either order: configuration_url carries http://@IP@/ and
+  // the payload also holds @DEV@, so a single pass has to handle whichever comes first.
+  n = expand("http://@IP@/", "btwh_x", "10.0.0.5", buf, sizeof(buf));
+  check(c, strcmp(buf, "http://10.0.0.5/") == 0, "expands @IP@", buf);
+  n = expand("@DEV@|@IP@", "btwh_x", "10.0.0.5", buf, sizeof(buf));
+  check(c, strcmp(buf, "btwh_x|10.0.0.5") == 0, "expands both tokens in order", buf);
+  n = expand("x@IP@y", "btwh_x", nullptr, buf, sizeof(buf));
+  check(c, strcmp(buf, "xy") == 0, "null ip expands to nothing, not a literal", buf);
   check(c, n == 11, "expand fits exactly", nullptr);
-  n = expand("@DEV@", "btwh_eb6f5f", buf, 11);       // one byte short of the terminator
+  n = expand("@DEV@", "btwh_eb6f5f", nullptr, buf, 11);       // one byte short of the terminator
   check(c, n == 0 && buf[0] == 0, "expand refuses a short buffer", nullptr);
 
   // 3. The generated table is present and complete.
@@ -109,10 +126,10 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
   // 4. Golden pair: the first entity rendered for a known device id must match the generator
   //    byte for byte. That catches a template edited without regenerating, and any drift in the
   //    substitution.
-  n = expand(entityTopic(0), "btwh_eb6f5f", buf, sizeof(buf));
+  n = expand(entityTopic(0), "btwh_eb6f5f", nullptr, buf, sizeof(buf));
   check(c, n > 0 && strcmp(buf, kGoldenTopic) == 0, "golden discovery topic", buf);
 
-  n = expand(entityPayload(0), "btwh_eb6f5f", buf, sizeof(buf));
+  n = expand(entityPayload(0), "btwh_eb6f5f", nullptr, buf, sizeof(buf));
   check(c, n > 0 && strcmp(buf, kGoldenPayload) == 0, "golden discovery payload", buf);
 
   // 5. Every entity must name a state topic on this device: a discovery entry pointing

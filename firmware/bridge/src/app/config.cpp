@@ -45,6 +45,7 @@ void Config::load() {
   copyTo(broker, sizeof(broker), b.c_str());
   copyTo(mqttUser, sizeof(mqttUser), u.c_str());
   copyTo(mqttPass, sizeof(mqttPass), pw.c_str());
+  telnet = prefs().getBool("telnet", false);
 }
 
 void Config::save() const {
@@ -60,6 +61,7 @@ void Config::saveNetwork() const {
   prefs().putString("broker", broker);
   prefs().putString("mqttuser", mqttUser);
   prefs().putString("mqttpass", mqttPass);
+  prefs().putBool("telnet", telnet);
 }
 
 void Config::wipe() {

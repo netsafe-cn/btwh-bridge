@@ -16,6 +16,7 @@ constexpr size_t   kSendBufSize = 4224;   // ring + NUL + slack
 
 WiFiServer gServer(kPort);
 WiFiClient gClient;
+bool       gEnabled   = false;   // ship-closed; see config.h
 bool       gStarted   = false;
 uint32_t   gLastSeq   = 0;
 uint32_t   gLastPush  = 0;
@@ -40,7 +41,16 @@ void detach() {
 
 }  // namespace
 
+void setEnabled(bool on) { gEnabled = on; }
+bool enabled() { return gEnabled; }
+
 void poll() {
+  if (!gEnabled) {
+    // Turning it off must also close what is open: leaving a socket bound after the flag flips
+    // would keep the surface alive until reboot.
+    if (gStarted) { detach(); gServer.end(); gStarted = false; }
+    return;
+  }
   if (!stationUp()) {
     if (gStarted) { detach(); gServer.end(); gStarted = false; }
     return;

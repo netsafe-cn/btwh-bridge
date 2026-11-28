@@ -145,6 +145,10 @@ def device_block(doc: dict) -> dict:
         out["sw_version"] = firmware_version() if sw == FW_TOKEN else sw
     if spec.get("hw_version"):
         out["hw_version"] = spec["hw_version"]
+    if spec.get("configuration_url"):
+        # @IP@ survives generation and is substituted when the discovery message is sent - the
+        # address is not knowable at build time.
+        out["configuration_url"] = spec["configuration_url"]
     return out
 
 
