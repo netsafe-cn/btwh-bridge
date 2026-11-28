@@ -267,7 +267,11 @@ jobs:
       - name: keep the image for the artifact
         run: |
           mkdir -p dist-ci
-          cp ~/esp/build/arduino_sketch.ino.bin "dist-ci/btwh-bridge-core3-$(echo "$GITHUB_SHA" | cut -c1-7).bin"
+          # bootloader and partition table too: this image is IDF 5.x, whose bootloader is not
+          # compatible with the 4.4 one already on the board, so all three must be flashed.
+          cp ~/esp/build/arduino_sketch.ino.bootloader.bin dist-ci/bootloader.bin
+          cp ~/esp/build/arduino_sketch.ino.partitions.bin dist-ci/partitions.bin
+          cp ~/esp/build/arduino_sketch.ino.bin dist-ci/app.bin
       - uses: actions/upload-artifact@v4
         with:
           name: bridge-app-core3-${{ github.sha }}
