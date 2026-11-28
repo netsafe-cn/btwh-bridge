@@ -48,6 +48,8 @@
 #include "net/discover.h"
 #include "net/portal.h"
 #include "net/discovery.h"
+#include "net/logring.h"
+#include "net/telnet.h"
 #include "net/mqtt_client.h"
 #include "net/mqtt_rules.h"
 #include "net/mqtt_wire.h"
@@ -219,7 +221,11 @@ static bool makeSnapshot(net::Snapshot& s) {
   proto::A0State st;
   if (!app::lastState(st)) return false;
 
-  s.temp_out     = st.temp_out;
+  // Second check, outlet only. `s` is the live snapshot (the caller passes gSnap), so falling
+  // back to s.temp_out carries the last good value rather than dropping the whole frame - the
+  // remaining fields of a filler frame are harmless. On the very first call s is zeroed and 0 C
+  // is inside the window, so the fallback never invents a colder reading than physically exists.
+  s.temp_out     = app::outletPlausible(st.temp_out) ? st.temp_out : s.temp_out;
   s.temp_in      = st.temp_in;
   s.chamber      = st.chamber;
   s.temp_box     = st.temp_box;
@@ -288,6 +294,7 @@ static void refreshMqttInfo() {
                  : st.phase == app::kFailed  ? "reconnecting"
                                              : "unpaired";
   info.rssi = ble::rssi();
+  info.minFreeHeap = (uint32_t)ESP.getMinFreeHeap();
   net::mqttSetInfo(info);
 }
 
@@ -399,6 +406,11 @@ static void printHelp() {
   Serial.println("  portal            start the setup portal by hand (LAN page if online, else AP)");
   Serial.println("  wifi SSID PASS    join a network and save it (open network: wifi SSID -)");
   Serial.println("  raw on / raw off  show / hide raw A0 bytes");
+  Serial.println("  guard 99.9        ask the plausibility guard about one value (no side effects)");
+  Serial.println("  inject 01 00 ...   feed hex straight to the parser (bypasses the link)");
+  Serial.println("  loglevel LVL      error | warn | info | debug, for the ring and Serial");
+  Serial.println("  log               dump the recent log ring (works without the network)");
+  Serial.println("  heap              free / lowest / largest block, and PSRAM");
   Serial.println("  reboot            reboot");
   Serial.println("  help              this help");
 }
@@ -460,8 +472,98 @@ static void printStatus() {
   char mqtt[120];
   net::mqttStatusText(mqtt, sizeof(mqtt));
   Serial.printf("  mqtt       : %s\n", mqtt);
+  Serial.printf("  log ring   : %lu lines, %u/%u bytes, level=%s\n",
+                (unsigned long)net::logring::lineCount(),
+                (unsigned)net::logring::used(), (unsigned)4096,
+                net::logring::levelName(net::logring::level()));
+  Serial.printf("  telnet     : %s\n",
+                net::telnet::active() ? net::telnet::peer() : "no client (port 23)");
 }
 
+// ---------------------------------------------------------------- diagnostics
+
+// Memory, measured rather than assumed. min_free is the number a long soak needs: it only falls,
+// so a value that keeps dropping over days is a leak with a number attached, and one that settles
+// is the headroom left for the next feature. largest separates "little free" from "fragmented" -
+// a board can show 40 KB free and still fail a 20 KB allocation, which is what fragmentation
+// looks like from the outside.
+static void printHeap() {
+  Serial.printf("  free        : %u B\n", (unsigned)ESP.getFreeHeap());
+  Serial.printf("  min free    : %u B  (lowest since boot; resets on reboot)\n",
+                (unsigned)ESP.getMinFreeHeap());
+  Serial.printf("  largest     : %u B  (biggest single block)\n", (unsigned)ESP.getMaxAllocHeap());
+  Serial.printf("  psram free  : %u B / %u B  (unused by this firmware)\n",
+                (unsigned)ESP.getFreePsram(), (unsigned)ESP.getPsramSize());
+}
+
+// Dump the ring to Serial. The ring exists so history survives, but without an exit it is
+// write-only: telnet serves that over the network when the LAN allows it, and this is the path
+// that always works - a USB cable, which is what a field report usually has anyway.
+static void doLogDump() {
+  static char buf[4300];
+  const size_t n = net::logring::dump(buf, sizeof(buf));
+  Serial.printf("--- log ring: %lu lines, %u bytes shown ---\n",
+                (unsigned long)net::logring::lineCount(), (unsigned)n);
+  if (n) Serial.write((const uint8_t*)buf, n);
+  Serial.println("--- end of log ---");
+}
+
+// Runtime threshold for the ring. Serial follows the same threshold on purpose: two outputs
+// disagreeing about what is worth printing is how a field report becomes unverifiable.
+static void setLogLevel(const String& arg) {
+  String a = arg;
+  a.trim();
+  a.toLowerCase();
+  if (a == "error")      net::logring::setLevel(net::logring::Level::Error);
+  else if (a == "warn")  net::logring::setLevel(net::logring::Level::Warn);
+  else if (a == "info")  net::logring::setLevel(net::logring::Level::Info);
+  else if (a == "debug") net::logring::setLevel(net::logring::Level::Debug);
+  else { Serial.println("[CFG] loglevel error|warn|info|debug"); return; }
+  Serial.printf("[CFG] loglevel=%s\n", net::logring::levelName(net::logring::level()));
+}
+
+// The plausibility window is one comparison, so an answer that disagrees with the source means
+// the image is not the one in the tree. No side effects, and the first thing to run when a
+// 99.9 C reading reaches Home Assistant despite the guard.
+static void testGuard(const String& arg) {
+  const float t = arg.toFloat();
+  Serial.printf("[GUARD] %.2f -> %s   (window %.1f .. %.1f)\n", t,
+                app::outletPlausible(t) ? "accept" : "REJECT",
+                app::kOutletMinC, app::kOutletMaxC);
+}
+
+// Feeds a hex payload straight into the application layer, bypassing the link and its checksum.
+// This is the only way to exercise the reject path on demand: real filler frames turn up two to
+// five times a day, and waiting for one is exactly how the 99.9 C investigation stalled.
+//
+// It does publish one bogus reading when the guard fails to stop it, which is why the command
+// reports the reject counter before and after instead of doing it quietly.
+static void doInject(const String& hex) {
+  uint8_t buf[64];
+  size_t  n  = 0;
+  int     hi = -1;
+  for (size_t i = 0; i < hex.length() && n < sizeof(buf); i++) {
+    const char c = hex[i];
+    int v = -1;
+    if (c >= '0' && c <= '9')      v = c - '0';
+    else if (c >= 'a' && c <= 'f') v = c - 'a' + 10;
+    else if (c >= 'A' && c <= 'F') v = c - 'A' + 10;
+    if (v < 0) { hi = -1; continue; }          // any separator resets the nibble
+    if (hi < 0) hi = v;
+    else { buf[n++] = (uint8_t)((hi << 4) | v); hi = -1; }
+  }
+  if (n < 2) {
+    Serial.println("[INJECT] give hex bytes, e.g.  inject 01 00 ... 63 5a");
+    return;
+  }
+  const uint32_t before = app::status().outRejects;
+  Serial.printf("[INJECT] %u bytes -> parser (link untouched)\n", (unsigned)n);
+  app::onState(buf, n);
+  const uint32_t after = app::status().outRejects;
+  Serial.printf("[INJECT] done: rejected %u -> %u\n", (unsigned)before, (unsigned)after);
+}
+
+// ---------------------------------------------------------------- command dispatch
 static void handleCommand(String line) {
   line.trim();
   if (!line.length()) return;
@@ -479,6 +581,11 @@ static void handleCommand(String line) {
   if (low == "status")              { printStatus(); return; }
   if (low == "selftest")            { doSelfTest(); return; }
   if (low == "mqtt")                { printMqttPayload(); return; }
+  if (low.startsWith("guard "))     { testGuard(line.substring(6)); return; }
+  if (low.startsWith("inject "))    { doInject(line.substring(7)); return; }
+  if (low.startsWith("loglevel "))  { setLogLevel(line.substring(9)); return; }
+  if (low == "log")                 { doLogDump(); return; }
+  if (low == "heap")                { printHeap(); return; }
   if (low.startsWith("broker")) {
     String arg = line.substring(6);
     arg.trim();
@@ -741,6 +848,8 @@ static void armWatchdog() {
   esp_task_wdt_add(NULL);                  // the Arduino loop task
   Serial.printf("[BOOT] watchdog armed: %lu s, panic on timeout (reset reason will read task_wdt)\n",
                 (unsigned long)kWatchdogSec);
+  net::logring::write(net::logring::Level::Info, "BOOT",
+                      "watchdog armed: %lu s", (unsigned long)kWatchdogSec);
 }
 
 // ---------------------------------------------------------------- Arduino
@@ -750,7 +859,10 @@ void setup() {
   banner("Bosch heater ESP32 gateway - Waveshare ESP32-S3-DEV-KIT-N8R8");
   // The version comes from the one constant MQTT publishes, not from a second hand-typed
   // string: the banner and the attributes payload cannot disagree if they share a source.
-  Serial.printf("[BOOT] firmware %s  reset=%s\n", net::kFirmwareVersion, net::bootReason());
+  // Also into the ring: a board on a charger can then say how it booted, which is the first
+  // question every remote diagnosis starts with.
+  net::logring::write(net::logring::Level::Info, "BOOT",
+                      "firmware %s reset=%s", net::kFirmwareVersion, net::bootReason());
   pinMode(kBootPin, INPUT_PULLUP);   // BOOT key: polled in loop(), never read during setup
 
   gCfg.load();
@@ -826,6 +938,7 @@ void setup() {
 void loop() {
   pollSerial();
   net::portalPoll();
+  net::telnet::poll();
   app::poll();
   pollBootButton();
 

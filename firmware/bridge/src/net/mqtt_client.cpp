@@ -173,15 +173,21 @@ void publishAttributes() {
   char dropAt[24];
   if (gLastDropAt) snprintf(dropAt, sizeof(dropAt), "%lld", (long long)gLastDropAt);
   else snprintf(dropAt, sizeof(dropAt), "null");
+  // null until the first sample, for the same reason rssi is: 0 would be a number nobody
+  // measured, and "0 bytes free" reads like an emergency rather than "not taken yet".
+  char heapField[12];
+  if (gInfo.minFreeHeap) snprintf(heapField, sizeof(heapField), "%lu", (unsigned long)gInfo.minFreeHeap);
+  else snprintf(heapField, sizeof(heapField), "null");
 
-  char json[400];
+  char json[460];
   snprintf(json, sizeof(json),
            "{\"fw\":\"%s\",\"hw\":\"%s\",\"heater\":\"%s\",\"pair_state\":\"%s\","
            "\"uptime\":%lu,\"rssi\":%s,\"last_disconnect\":\"%s\",\"last_disconnect_at\":%s,"
-           "\"boot_reason\":\"%s\"}",
+           "\"boot_reason\":\"%s\",\"min_free_heap\":%s}",
            kFirmwareVersion, gInfo.hardware ? gInfo.hardware : "esp32s3",
            gInfo.heater ? gInfo.heater : "-", gInfo.pairState ? gInfo.pairState : "unpaired",
-           (unsigned long)(millis() / 1000), rssi, gWhy, dropAt, bootReason());
+           (unsigned long)(millis() / 1000), rssi, gWhy, dropAt, bootReason(),
+           heapField);
   publishText("attributes", json, false);
 }
 

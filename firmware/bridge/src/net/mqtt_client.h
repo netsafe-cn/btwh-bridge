@@ -81,6 +81,10 @@ struct MqttInfo {
   const char* pairState;   // "unpaired" | "paired" | "reconnecting"
   const char* hardware;    // board family, e.g. "esp32s3"
   int         rssi;        // BLE link, dBm; 0 = link down (a real reading is negative)
+  // Lowest free heap since boot, bytes. Monotonic - it only falls - so a value that keeps
+  // dropping over days is a leak with a number attached, and one that settles is the headroom
+  // this board actually has. 0 means "not sampled yet", which renders as null, not as "no memory".
+  uint32_t    minFreeHeap;
 };
 
 // A consumer asked for a new setpoint. The callback returns nothing: the echo that confirms it

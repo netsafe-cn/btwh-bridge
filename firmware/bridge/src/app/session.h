@@ -50,6 +50,16 @@ struct Status {
   uint32_t retryInMs;
 };
 
+// Outlet temperatures outside this window are not measurements. The setpoint is capped at 60 C
+// by the contract and a gas unit overshoots by a few degrees at most, so 85 refuses the 99.9 and
+// 256.8 that the 0x63 / 0xFF filler bytes decode to while still admitting a probe that reads
+// high. One definition, used by the session guard that drops the reading and by the snapshot
+// builder that publishes it - two independent checks on purpose, because a guard that silently
+// stops working is invisible from the outside (see the 99.9 C investigation).
+constexpr float kOutletMinC = -10.0f;
+constexpr float kOutletMaxC =  85.0f;
+inline bool outletPlausible(float t) { return t >= kOutletMinC && t <= kOutletMaxC; }
+
 void begin(Config* cfg);
 
 // A new panel code invalidates the old bond: the heater issues a fresh window for it.

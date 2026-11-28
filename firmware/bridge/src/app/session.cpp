@@ -1,9 +1,11 @@
 #include "app/session.h"
 
 #include <Arduino.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "ble/link.h"
+#include "net/logring.h"
 #include "proto/a0.h"
 #include "proto/frame.h"
 #include "proto/profiles_gen.h"
@@ -355,12 +357,6 @@ bool setSetpoint(int celsius) {
   return ok;
 }
 
-// Outlet temperatures outside this window are not measurements. The setpoint is capped at 60 C
-// by the contract and a gas unit overshoots by a few degrees at most, so 85 leaves room for a
-// probe that reads high while still refusing the 256.8 / 99.9 that filler bytes decode to.
-static constexpr float kOutletMinC = -10.0f;
-static constexpr float kOutletMaxC =  85.0f;
-
 void onState(const uint8_t* payload, size_t len) {
   gA0Count++;
   gLastA0Ms = millis();
@@ -373,12 +369,19 @@ void onState(const uint8_t* payload, size_t len) {
   // statistics and now into InfluxDB, where it is permanent. Keeping the previous good value is
   // the honest reading - the outlet did not jump to 257 C and back inside one second - and the
   // raw bytes are logged so the filler can still be identified later.
-  if (next.temp_out < kOutletMinC || next.temp_out > kOutletMaxC) {
+  if (!outletPlausible(next.temp_out)) {
     gOutRejects++;
-    Serial.printf("[A0] rejected temp_out=%.1f (keeping %.1f) raw=",
-                  next.temp_out, gLastState.temp_out);
-    for (size_t i = 0; i < len && i < 40; i++) Serial.printf("%02x", payload[i]);
-    Serial.println();
+    // Also into the ring: this is the one line a remote reader needs, and until now it existed
+    // only on the UART - which is exactly why the 99.9 C investigation had to wait for a laptop
+    // to be plugged in. logring::write echoes to Serial as well, so nothing is lost locally.
+    char hex[104];
+    int  hp = 0;
+    for (size_t i = 0; i < len && i < 32 && hp < (int)sizeof(hex) - 3; i++) {
+      hp += snprintf(hex + hp, sizeof(hex) - (size_t)hp, "%02x", payload[i]);
+    }
+    net::logring::write(net::logring::Level::Warn, "A0",
+                        "rejected temp_out=%.1f (keeping %.1f) raw=%s",
+                        next.temp_out, gLastState.temp_out, hex);
     next.temp_out = gLastState.temp_out;
   }
 

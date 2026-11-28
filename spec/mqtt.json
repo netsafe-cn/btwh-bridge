@@ -320,6 +320,13 @@
       "type": "string",
       "label": "Last boot reason",
       "note": "Why this boot happened: power_on, sw_restart, task_wdt, int_wdt, panic, brownout, deep_sleep, external, sdio, unknown. Read from esp_reset_reason() once at start and never updated, so it describes how the board arrived, not what it is doing. This is the field that separates a watchdog reset from a power cut - without it both look like 'uptime went back to zero' and the cause is lost."
+    },
+    {
+      "key": "min_free_heap",
+      "type": "int",
+      "unit": "B",
+      "label": "Lowest free heap since boot",
+      "note": "Monotonic: it only falls, and resets on reboot. A value that keeps falling over days is a leak with a number attached; a value that settles is the headroom this board really has. This is the field that answers 'can a cheaper chip run this' with evidence instead of a guess, and the reason it lives in attributes rather than a log line is that a log line needs someone watching."
     }
   ],
   "home_assistant": {
