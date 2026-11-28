@@ -424,19 +424,30 @@ void portalPoll() {
       stationIp(ip, sizeof(ip));
       gPhase = Phase::Done;
       snprintf(gTitle, sizeof(gTitle), "Connected");
-      snprintf(gDetail, sizeof(gDetail),
-               "The bridge joined %s and is reachable at %s. This hotspot closes in 10 seconds; "
-               "the device appears in Home Assistant shortly after. Detail: %s",
-               gSaved.ssid, ip, outcome ? outcome : "-");
-      gStopAtMs = millis() + 10000;
+      // Two different endings, because the same sentence is false in one of them: a hotspot
+      // closing is news at 192.168.4.1 and nonsense on a page served over the LAN.
+      if (gLanMode) {
+        snprintf(gDetail, sizeof(gDetail),
+                 "The bridge joined %s and is reachable at %s. This page closes in 10 seconds. "
+                 "If that is a different network from the one you are on, you will lose it - the "
+                 "device reappears in Home Assistant shortly. Detail: %s",
+                 gSaved.ssid, ip, outcome ? outcome : "-");
+        gStopAtMs = millis() + 10000;
+      } else {
+        snprintf(gDetail, sizeof(gDetail),
+                 "The bridge joined %s and is reachable at %s. This hotspot closes in 10 seconds; "
+                 "the device appears in Home Assistant shortly after. Detail: %s",
+                 gSaved.ssid, ip, outcome ? outcome : "-");
+        gStopAtMs = millis() + 10000;
+      }
     } else {
       gPhase = Phase::Failed;
       const char* why = stationLastFailure();
       snprintf(gTitle, sizeof(gTitle), "Could not join %s", gSaved.ssid);
       snprintf(gDetail, sizeof(gDetail),
                "The settings were saved, so only the password needs checking - and that the "
-               "network is 2.4 GHz and in range. The hotspot stays open: go back and try again. "
-               "%s%s",
+               "network is 2.4 GHz and in range. %s Go back and try again. %s%s",
+               gLanMode ? "The bridge is still on this network." : "The hotspot stays open.",
                (why && why[0]) ? "Driver says: " : "", (why && why[0]) ? why : "");
     }
   }
