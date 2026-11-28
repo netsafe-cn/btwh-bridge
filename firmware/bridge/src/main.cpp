@@ -903,7 +903,16 @@ static void armWatchdog() {
   twdt.timeout_ms     = kWatchdogSec * 1000;
   twdt.idle_core_mask = 0;
   twdt.trigger_panic  = true;
-  esp_task_wdt_init(&twdt);
+  // Core 3.x initialises the task watchdog before setup() runs, so a bare init() returns
+  // ESP_ERR_INVALID_STATE and silently leaves the 5 s default in place. Measured: the first BLE
+  // handshake blocked past 5 s and the board panicked mid-pairing. reconfigure is the call that
+  // actually takes effect in that state.
+  const esp_err_t wdtErr = esp_task_wdt_init(&twdt);
+  if (wdtErr == ESP_ERR_INVALID_STATE) {
+    esp_task_wdt_reconfigure(&twdt);
+  } else if (wdtErr != ESP_OK) {
+    Serial.printf("[BOOT] x watchdog init failed (%d); the 5 s default stays\n", (int)wdtErr);
+  }
   esp_task_wdt_add(NULL);                  // the Arduino loop task
   Serial.printf("[BOOT] watchdog armed: %lu s, panic on timeout (reset reason will read task_wdt)\n",
                 (unsigned long)kWatchdogSec);
