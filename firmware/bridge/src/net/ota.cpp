@@ -4,6 +4,7 @@
 #include <HTTPClient.h>
 #include <Update.h>
 #include <WiFi.h>
+#include <ctype.h>
 
 namespace net {
 namespace ota {
@@ -19,8 +20,32 @@ constexpr uint32_t kBudgetMs    = 120000;
 // speed is a per-second number, not a per-chunk one.
 constexpr uint32_t kReportMs    = 2000;
 
+// The URL arrives over MQTT, and anything on the LAN can publish to that broker. Without a host
+// check, "ota install" is a remote code execution primitive: point it at any server and the board
+// flashes whatever comes back. Only the release hosts this project actually publishes to are
+// accepted, and the check runs before a socket is opened.
+static bool allowedHost(const char* host) {
+  static const char* kAllowed[] = {
+    "raw.githubusercontent.com",
+    "objects.githubusercontent.com",
+    "github.com",
+    "codeload.github.com",
+  };
+  for (size_t i = 0; i < sizeof(kAllowed) / sizeof(kAllowed[0]); i++) {
+    const char* a = kAllowed[i];
+    const char* b = host;
+    while (*a && *b && tolower((unsigned char)*a) == tolower((unsigned char)*b)) { a++; b++; }
+    if (*a == 0 && *b == 0) return true;
+  }
+  return false;
+}
+
 bool install(const char* host, uint16_t port, const char* path) {
   if (!host || !host[0] || !path || !path[0]) return false;
+  if (!allowedHost(host)) {
+    Serial.printf("[OTA] x refused host '%s': not a release host\n", host);
+    return false;
+  }
 
   char url[128];
   snprintf(url, sizeof(url), "http://%s:%u%s", host, (unsigned)port, path);
