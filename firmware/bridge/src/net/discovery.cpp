@@ -106,6 +106,7 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
   //    the first on-board selftest run caught this pair asserting 10, which had never executed
   //    anywhere: the C++ suites only run on the target.
   n = expand("@DEV@", "btwh_eb6f5f", nullptr, buf, 12);       // 11 chars + terminator needs 12
+  check(c, n == 11, "expand fits exactly", nullptr);
   // Both tokens in one template, in either order: configuration_url carries http://@IP@/ and
   // the payload also holds @DEV@, so a single pass has to handle whichever comes first.
   n = expand("http://@IP@/", "btwh_x", "10.0.0.5", buf, sizeof(buf));
@@ -114,7 +115,7 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
   check(c, strcmp(buf, "btwh_x|10.0.0.5") == 0, "expands both tokens in order", buf);
   n = expand("x@IP@y", "btwh_x", nullptr, buf, sizeof(buf));
   check(c, strcmp(buf, "xy") == 0, "null ip expands to nothing, not a literal", buf);
-  check(c, n == 11, "expand fits exactly", nullptr);
+  check(c, n == 2, "null ip leaves a shorter result", nullptr);
   n = expand("@DEV@", "btwh_eb6f5f", nullptr, buf, 11);       // one byte short of the terminator
   check(c, n == 0 && buf[0] == 0, "expand refuses a short buffer", nullptr);
 
@@ -129,7 +130,7 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
   n = expand(entityTopic(0), "btwh_eb6f5f", nullptr, buf, sizeof(buf));
   check(c, n > 0 && strcmp(buf, kGoldenTopic) == 0, "golden discovery topic", buf);
 
-  n = expand(entityPayload(0), "btwh_eb6f5f", nullptr, buf, sizeof(buf));
+  n = expand(entityPayload(0), "btwh_eb6f5f", "10.0.0.5", buf, sizeof(buf));
   check(c, n > 0 && strcmp(buf, kGoldenPayload) == 0, "golden discovery payload", buf);
 
   // 5. Every entity must name a state topic on this device: a discovery entry pointing

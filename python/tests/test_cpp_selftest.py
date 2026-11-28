@@ -33,7 +33,7 @@ class HostSelftest(unittest.TestCase):
 
     def test_totals_match_the_board(self):
         # proto 64 + net 16 + mqtt 45 + rules 76 + provision 19 + discovery 191 + recover 25
-        # + wifistat 42 = 478, printed by the runner's last line. If these drift, update this
+        # + wifistat 42 = 478, then +4 for the @IP@ expander cases = 482. If these drift, update this
         # number AND the board result in AGENTS.md - the two must stay in lockstep or one of
         # them is no longer running what it claims.
         #
@@ -43,7 +43,7 @@ class HostSelftest(unittest.TestCase):
         # fault_text and boot_reason (two entities, +14) plus a field each in net and mqtt (+4).
         # This case never fails locally because it skips when no host compiler is present -
         # which is exactly the machine a contributor runs `run_tests.py` on, so only CI sees it.
-        self.assertIn("host selftest passed: 478 checks", self.proc.stdout)
+        self.assertIn("host selftest passed: 482 checks", self.proc.stdout)
 
 
 if __name__ == "__main__":
