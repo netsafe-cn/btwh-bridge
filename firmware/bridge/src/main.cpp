@@ -36,8 +36,10 @@
  * ============================================================================
  */
 
+#include <WiFi.h>
 #include <Arduino.h>
 #include <ctype.h>
+#include <esp_log.h>
 #include <esp_task_wdt.h>
 #include <string.h>
 
@@ -45,6 +47,7 @@
 #include "app/session.h"
 #include "auth/login.h"
 #include "ble/link.h"
+#include "net/boot_guard.h"
 #include "net/discover.h"
 #include "net/portal.h"
 #include "net/discovery.h"
@@ -53,6 +56,7 @@
 #include "net/mqtt_client.h"
 #include "net/mqtt_rules.h"
 #include "net/mqtt_wire.h"
+#include "net/ota.h"
 #include "net/recover.h"
 #include "net/station.h"
 #include "net/state_json.h"
@@ -304,13 +308,18 @@ static void onMqttCommand(void* /*ctx*/, const char* verb) {
 static void refreshMqttInfo() {
   net::MqttInfo info;
   info.heater   = gCfg.heater;
-  info.hardware = "esp32s3";
+  // Read from the chip, not a literal: this string ends up in Home Assistant and in every bug
+  // report, so a board swapped to a C3 would otherwise keep claiming to be an S3.
+  info.hardware = ESP.getChipModel();
   const app::Status st = app::status();
   info.pairState = st.phase == app::kRunning ? "paired"
                  : st.phase == app::kFailed  ? "reconnecting"
                                              : "unpaired";
   info.rssi = ble::rssi();
   info.minFreeHeap = (uint32_t)ESP.getMinFreeHeap();
+  static char sIp[16];
+  snprintf(sIp, sizeof(sIp), "%s", WiFi.localIP().toString().c_str());
+  info.ip = sIp;
   net::mqttSetInfo(info);
 }
 
@@ -427,6 +436,8 @@ static void printHelp() {
   Serial.println("  loglevel LVL      error | warn | info | debug, for the ring and Serial");
   Serial.println("  log               dump the recent log ring (works without the network)");
   Serial.println("  heap              free / lowest / largest block, and PSRAM");
+  Serial.println("  telnet [on|off]   read-only log over port 23 (off by default)");
+  Serial.println("  otahost [host]    allow one extra OTA source, 'off' to clear");
   Serial.println("  profile [ID]      list or select the spec/profiles.json row this board uses");
   Serial.println("  reboot            reboot");
   Serial.println("  help              this help");
@@ -451,6 +462,10 @@ static void printStatus() {
   // to confirm "yes, that is the one on the panel" without handing over the credential.
   Serial.printf("  panel code : %s  (masked; it is also the BLE PIN)\n", maskedPin());
   Serial.printf("  profile    : %s\n", gCfg.profile[0] ? gCfg.profile : "(built-in default)");
+  Serial.printf("  telnet     : %s\n", gCfg.telnet ? "on (port 23, read-only)" : "off");
+  Serial.printf("  slot       : %s (%s)\n", net::ota::runningSlot(), net::ota::runningState());
+  if (gCfg.otaHost[0]) Serial.printf("  ota host   : %s (extra allowlist entry)\n", gCfg.otaHost);
+  Serial.printf("  ota guard  : %s\n", net::bootguard::stateText());
   Serial.printf("  phase      : %s\n", phaseText(s.phase));
   Serial.printf("  link       : %s / encrypted=%s\n",
                 s.linkUp ? "up" : "down", s.encrypted ? "yes" : "no");
@@ -635,6 +650,46 @@ static void handleCommand(String line) {
   if (low.startsWith("loglevel "))  { setLogLevel(line.substring(9)); return; }
   if (low == "log")                 { doLogDump(); return; }
   if (low == "heap")                { printHeap(); return; }
+  if (low == "telnet" || low.startsWith("telnet ")) {
+    String a = line.length() > 7 ? line.substring(7) : String();
+    a.trim();
+    if (!a.length()) {
+      Serial.printf("[CFG] telnet is %s (port 23, read-only, no auth)\n",
+                    gCfg.telnet ? "ON" : "off");
+      return;
+    }
+    const bool on = (a == "on");
+    if (!on && a != "off") { Serial.println("[CFG] telnet on|off"); return; }
+    gCfg.telnet = on;
+    gCfg.save();
+    net::telnet::setEnabled(on);
+    Serial.printf("[CFG] telnet %s%s\n", on ? "ON" : "off",
+                  on ? " (unauthenticated port 23; turn it off when done)" : "");
+    return;
+  }
+  if (low == "otahost" || low.startsWith("otahost ")) {
+    String a = line.length() > 8 ? line.substring(8) : String();
+    a.trim();
+    if (!a.length()) {
+      Serial.printf("[CFG] ota extra host = %s\n",
+                    gCfg.otaHost[0] ? gCfg.otaHost : "(none; release hosts only)");
+      return;
+    }
+    if (a == "off" || a == "-") {
+      gCfg.otaHost[0] = 0;
+    } else if (a.length() >= (int)sizeof(gCfg.otaHost)) {
+      Serial.printf("[CFG] host too long (max %u)\n", (unsigned)sizeof(gCfg.otaHost) - 1);
+      return;
+    } else {
+      strncpy(gCfg.otaHost, a.c_str(), sizeof(gCfg.otaHost) - 1);
+      gCfg.otaHost[sizeof(gCfg.otaHost) - 1] = 0;
+    }
+    gCfg.save();
+    net::ota::setExtraHost(gCfg.otaHost);
+    Serial.printf("[CFG] ota extra host = %s\n",
+                  gCfg.otaHost[0] ? gCfg.otaHost : "(cleared; release hosts only)");
+    return;
+  }
   if (low == "profile" || low.startsWith("profile ")) {
     setProfile(line.length() > 7 ? line.substring(7) : String());
     return;
@@ -897,12 +952,37 @@ static void pollBootButton() {
 static constexpr uint32_t kWatchdogSec = 120;
 
 static void armWatchdog() {
-  esp_task_wdt_init(kWatchdogSec, true);   // core 2.0.x signature: (seconds, panic on timeout)
+  // IDF 5.x replaced the (seconds, panic) overload with a config struct. Same behaviour, and the
+  // value is still milliseconds here - passing seconds was a silent 120 ms watchdog.
+  esp_task_wdt_config_t twdt = {};
+  twdt.timeout_ms     = kWatchdogSec * 1000;
+  twdt.idle_core_mask = 0;
+  twdt.trigger_panic  = true;
+  // Core 3.x initialises the task watchdog before setup() runs, so a bare init() returns
+  // ESP_ERR_INVALID_STATE and silently leaves the 5 s default in place. Measured: the first BLE
+  // handshake blocked past 5 s and the board panicked mid-pairing. reconfigure is the call that
+  // actually takes effect in that state.
+  // Core 3.x arms the watchdog before setup(), so init() finds it already running and logs an
+  // ERROR-level "TWDT already initialized". That is not a fault - the reconfigure below is the
+  // intended path - but an E line at every boot teaches people to ignore E lines. Mute the tag
+  // for these two calls only, so a real watchdog problem elsewhere still shouts.
+  esp_log_level_set("task_wdt", ESP_LOG_NONE);
+  const esp_err_t wdtErr = esp_task_wdt_init(&twdt);
+  if (wdtErr == ESP_ERR_INVALID_STATE) esp_task_wdt_reconfigure(&twdt);
+  esp_log_level_set("task_wdt", ESP_LOG_ERROR);
+  if (wdtErr != ESP_OK && wdtErr != ESP_ERR_INVALID_STATE) {
+    Serial.printf("[BOOT] x watchdog init failed (%d); the 5 s default stays\n", (int)wdtErr);
+  }
   esp_task_wdt_add(NULL);                  // the Arduino loop task
   Serial.printf("[BOOT] watchdog armed: %lu s, panic on timeout (reset reason will read task_wdt)\n",
                 (unsigned long)kWatchdogSec);
   net::logring::write(net::logring::Level::Info, "BOOT",
                       "watchdog armed: %lu s", (unsigned long)kWatchdogSec);
+  // "pending" after an OTA is the boot that still has to prove itself; "direct" means this slot
+  // was written over USB and no swap has happened yet.
+  Serial.printf("[BOOT] slot %s state=%s\n", net::ota::runningSlot(), net::ota::runningState());
+  net::logring::write(net::logring::Level::Info, "BOOT", "slot %s state=%s",
+                      net::ota::runningSlot(), net::ota::runningState());
 }
 
 // ---------------------------------------------------------------- Arduino
@@ -920,6 +1000,10 @@ void setup() {
 
   gCfg.load();
 
+  // Before the radio: if the previous boot was an armed OTA attempt that never reached the
+  // broker, this either counts the attempt or points the boot partition back and restarts.
+  net::bootguard::checkAtBoot();
+
   ble::begin("BoschGW");
   ble::setPasskey(gCfg.pinValue());
   ble::Hooks hooks;
@@ -927,6 +1011,10 @@ void setup() {
   hooks.onSecurity = onSecurity;
   hooks.ctx        = nullptr;
   ble::setHooks(hooks);
+  // Ship-closed unless the unit opted in; see config.h for why the default matters.
+  net::telnet::setEnabled(gCfg.telnet);
+  net::ota::setExtraHost(gCfg.otaHost);
+
   app::begin(&gCfg);
 
   Serial.printf("[BOOT] Chip=%s  Flash=%uMB  PSRAM=%u bytes\n",
@@ -994,6 +1082,7 @@ void loop() {
   pollSerial();
   net::portalPoll();
   net::telnet::poll();
+  net::bootguard::poll(millis());
   app::poll();
   pollBootButton();
 

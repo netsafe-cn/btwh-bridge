@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "net/boot_guard.h"
+#include "net/discover.h"        // mDNS: setHostname, broker discovery
 #include "net/discovery.h"
 #include "net/mqtt_contract.h"
 #include "net/mqtt_rules.h"
@@ -41,7 +43,7 @@ char     gDeviceId[20];        // btwh_<last6>
 char     gUser[33];
 char     gPass[65];
 
-MqttInfo   gInfo{"-", "unpaired", "esp32s3", 0};
+MqttInfo   gInfo{"-", "unpaired", "", 0};   // hw filled from ESP.getChipModel() at boot
 SetpointFn gOnSetpoint = nullptr;
 CommandFn  gOnCommand  = nullptr;
 void*      gHookCtx    = nullptr;
@@ -121,7 +123,7 @@ size_t clearRetained(const char* deviceId) {
   size_t cleared = 0;
   char topic[120];
   for (size_t i = 0; i < discovery::entityCount(); i++) {
-    if (!discovery::expand(discovery::entityTopic(i), deviceId, topic, sizeof(topic))) continue;
+    if (!discovery::expand(discovery::entityTopic(i), deviceId, nullptr, topic, sizeof(topic))) continue;
     if (publishRaw(topic, "", 0, true)) cleared++;
   }
   static const char* const kRetained[] = {"availability", "link", "update/state"};
@@ -179,15 +181,15 @@ void publishAttributes() {
   if (gInfo.minFreeHeap) snprintf(heapField, sizeof(heapField), "%lu", (unsigned long)gInfo.minFreeHeap);
   else snprintf(heapField, sizeof(heapField), "null");
 
-  char json[460];
+  char json[500];
   snprintf(json, sizeof(json),
            "{\"fw\":\"%s\",\"hw\":\"%s\",\"heater\":\"%s\",\"pair_state\":\"%s\","
            "\"uptime\":%lu,\"rssi\":%s,\"last_disconnect\":\"%s\",\"last_disconnect_at\":%s,"
-           "\"boot_reason\":\"%s\",\"min_free_heap\":%s}",
-           kFirmwareVersion, gInfo.hardware ? gInfo.hardware : "esp32s3",
+           "\"boot_reason\":\"%s\",\"min_free_heap\":%s,\"ip\":\"%s\"}",
+           kFirmwareVersion, gInfo.hardware ? gInfo.hardware : "unknown",
            gInfo.heater ? gInfo.heater : "-", gInfo.pairState ? gInfo.pairState : "unpaired",
            (unsigned long)(millis() / 1000), rssi, gWhy, dropAt, bootReason(),
-           heapField);
+           heapField, gInfo.ip ? gInfo.ip : "");
   publishText("attributes", json, false);
 }
 
@@ -214,10 +216,14 @@ void publishUpdateState() {
 void publishDiscovery() {
   static char topic[96];
   static char payload[1280];
+  // configuration_url carries the live address: the board is on DHCP, so a name would not
+  // resolve on Windows and a build-time address would be wrong by the time it is read.
+  static char ipBuf[16];
+  snprintf(ipBuf, sizeof(ipBuf), "%s", WiFi.localIP().toString().c_str());
   size_t sent = 0;
   for (size_t i = 0; i < discovery::entityCount(); i++) {
-    if (!discovery::expand(discovery::entityTopic(i), gDeviceId, topic, sizeof(topic))) continue;
-    if (!discovery::expand(discovery::entityPayload(i), gDeviceId, payload, sizeof(payload))) continue;
+    if (!discovery::expand(discovery::entityTopic(i), gDeviceId, nullptr, topic, sizeof(topic))) continue;
+    if (!discovery::expand(discovery::entityPayload(i), gDeviceId, ipBuf, payload, sizeof(payload))) continue;
     const size_t n = wire::buildPublish(gTx, sizeof(gTx), topic, payload, strlen(payload), true);
     if (n && gSock.write(gTx, n) == n) sent++;
   }
@@ -275,6 +281,20 @@ void onConnected() {
   // there when it starts, and that announcement is what repairs a restarted consumer. See
   // handleHaStatus.
   subscribeFilter(contract::kHaStatusTopic);
+
+  // The bootloader rolls back an unconfirmed image at the next reset. A CONNACK is the first
+  // moment this firmware has shown it can do its actual job - config read, WiFi joined, MQTT
+  // handshake accepted, subscriptions placed - and it deliberately does not wait for the heater,
+  // which can stay asleep for hours and would roll back a perfectly good image.
+  // A CONNACK is the health signal the boot guard waits for: whatever else is wrong, an image
+  // that cannot reach the broker cannot do this job.
+  bootguard::markHealthy();
+
+  static bool sBootConfirmed = false;
+  if (!sBootConfirmed && ota::confirmBoot()) {
+    sBootConfirmed = true;
+    Serial.println("[OTA] + this image confirmed; a reset from here keeps it");
+  }
 
   Serial.printf("[MQTT] + connected to %s:%u as %s\n", gHost, (unsigned)gPort, gDeviceId);
 }
@@ -669,6 +689,13 @@ void mqttBegin(const char* broker, const char* deviceId) {
   gPort = port;
   strncpy(gDeviceId, deviceId && deviceId[0] ? deviceId : "btwh_000000", sizeof(gDeviceId) - 1);
   gDeviceId[sizeof(gDeviceId) - 1] = 0;
+
+  // mDNS name mirrors the device id with hyphens: an underscore is not legal in a hostname, and
+  // two bridges on one LAN must not both answer to plain "btwh-bridge".
+  char hname[24];
+  snprintf(hname, sizeof(hname), "%s", gDeviceId);
+  for (char* c = hname; *c; c++) { if (*c == '_') *c = '-'; }
+  setHostname(hname);   // net::setHostname, same namespace as this file
 
   // Credentials are deliberately NOT cleared here. begin() is called whenever the broker
   // address changes (console, portal, boot), and the caller follows it with

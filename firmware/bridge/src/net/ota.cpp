@@ -1,9 +1,15 @@
 #include "net/ota.h"
 
+#include "net/boot_guard.h"
+
 #include <Arduino.h>
 #include <HTTPClient.h>
 #include <Update.h>
+#include <esp_ota_ops.h>
+#include <esp_task_wdt.h>
 #include <WiFi.h>
+#include <ctype.h>
+#include <string.h>
 
 namespace net {
 namespace ota {
@@ -19,8 +25,46 @@ constexpr uint32_t kBudgetMs    = 120000;
 // speed is a per-second number, not a per-chunk one.
 constexpr uint32_t kReportMs    = 2000;
 
+// The URL arrives over MQTT, and anything on the LAN can publish to that broker. Without a host
+// check, "ota install" is a remote code execution primitive: point it at any server and the board
+// flashes whatever comes back. Only the release hosts this project actually publishes to are
+// accepted, and the check runs before a socket is opened.
+// Set from the serial console; empty means the built-in list is the whole list.
+static char gExtraHost[40] = "";
+
+void setExtraHost(const char* host) {
+  const char* v = host ? host : "";
+  strncpy(gExtraHost, v, sizeof(gExtraHost) - 1);
+  gExtraHost[sizeof(gExtraHost) - 1] = 0;
+}
+
+const char* extraHost() { return gExtraHost; }
+
+static bool equalsNoCase(const char* a, const char* b) {
+  while (*a && *b && tolower((unsigned char)*a) == tolower((unsigned char)*b)) { a++; b++; }
+  return *a == 0 && *b == 0;
+}
+
+static bool allowedHost(const char* host) {
+  static const char* kAllowed[] = {
+    "raw.githubusercontent.com",
+    "objects.githubusercontent.com",
+    "github.com",
+    "codeload.github.com",
+  };
+  if (gExtraHost[0] && equalsNoCase(host, gExtraHost)) return true;
+  for (size_t i = 0; i < sizeof(kAllowed) / sizeof(kAllowed[0]); i++) {
+    if (equalsNoCase(kAllowed[i], host)) return true;
+  }
+  return false;
+}
+
 bool install(const char* host, uint16_t port, const char* path) {
   if (!host || !host[0] || !path || !path[0]) return false;
+  if (!allowedHost(host)) {
+    Serial.printf("[OTA] x refused host '%s': not a release host\n", host);
+    return false;
+  }
 
   char url[128];
   snprintf(url, sizeof(url), "http://%s:%u%s", host, (unsigned)port, path);
@@ -71,6 +115,13 @@ bool install(const char* host, uint16_t port, const char* path) {
   uint32_t lastReportMs = 0;
 
   while (http.connected() && (len < 0 || (int)written < len)) {
+    // The task watchdog is armed for this loop task and install() owns it for the whole
+    // transfer, so a download slower than the watchdog period panics the board mid-write
+    // instead of ending at the budget below: the two timers are the same length and the panic
+    // wins the race. Measured on this project's link a 1.4 MB image can take 90 s, close enough
+    // that a bad minute on WiFi tips it over. Feeding here leaves the budget as the only thing
+    // that can stop a transfer - a clean abort with the running image untouched.
+    esp_task_wdt_reset();
     if (millis() - t0 > kBudgetMs) {
       Serial.printf("[OTA] x exceeded %lu ms budget at %u bytes\n",
                     (unsigned long)kBudgetMs, (unsigned)written);
@@ -135,6 +186,46 @@ bool install(const char* host, uint16_t port, const char* path) {
   http.end();
   Serial.printf("[OTA] + %u bytes written and validated in %lu ms, ready to reboot\n",
                 (unsigned)written, (unsigned long)(millis() - t0));
+  // Armed here rather than by the caller: the whole point is that it must not be forgotten, and
+  // this is the only place that knows a swap just happened.
+  bootguard::armBeforeReboot();
+  return true;
+}
+
+const char* runningSlot() {
+  const esp_partition_t* p = esp_ota_get_running_partition();
+  return p ? p->label : "?";
+}
+
+const char* runningState() {
+  const esp_partition_t* p = esp_ota_get_running_partition();
+  if (!p) return "?";
+  esp_ota_img_states_t st;
+  // ESP_ERR_NOT_SUPPORTED means rollback was compiled out; then no state is tracked at all and
+  // every image is implicitly valid, so say so rather than inventing a label.
+  if (esp_ota_get_state_partition(p, &st) != ESP_OK) return "valid";
+  switch (st) {
+    case ESP_OTA_IMG_NEW:            return "new";
+    case ESP_OTA_IMG_PENDING_VERIFY: return "pending";
+    case ESP_OTA_IMG_VALID:          return "valid";
+    case ESP_OTA_IMG_INVALID:        return "invalid";
+    case ESP_OTA_IMG_ABORTED:        return "aborted";
+    default:                         return "direct";   // no otadata entry: flashed over USB
+  }
+}
+
+bool confirmBoot() {
+  const esp_partition_t* p = esp_ota_get_running_partition();
+  if (!p) return false;
+  esp_ota_img_states_t st;
+  if (esp_ota_get_state_partition(p, &st) != ESP_OK) return false;
+  if (st != ESP_OTA_IMG_PENDING_VERIFY) return false;
+  const esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
+  if (err != ESP_OK) {
+    Serial.printf("[OTA] x could not confirm this image (%d); it rolls back on the next reset\n",
+                  (int)err);
+    return false;
+  }
   return true;
 }
 

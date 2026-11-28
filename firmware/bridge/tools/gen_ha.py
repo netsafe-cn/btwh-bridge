@@ -145,6 +145,10 @@ def device_block(doc: dict) -> dict:
         out["sw_version"] = firmware_version() if sw == FW_TOKEN else sw
     if spec.get("hw_version"):
         out["hw_version"] = spec["hw_version"]
+    if spec.get("configuration_url"):
+        # @IP@ survives generation and is substituted when the discovery message is sent - the
+        # address is not knowable at build time.
+        out["configuration_url"] = spec["configuration_url"]
     return out
 
 
@@ -454,8 +458,10 @@ static const EntityDesc kEntities[] = {
     out.append("// Golden pair for selftest: the first entity with a known device id substituted.\n")
     out.append('constexpr const char* kGoldenTopic =\n    "%s";\n'
                % c_str(discovery_topic(sample["component"], sample["key"], doc).replace(DEV, sample_dev)))
+    # @IP@ gets the same placeholder address the selftest uses, so the comparison is against a
+    # concrete string rather than a template.
     out.append('constexpr const char* kGoldenPayload =\n    "%s";\n\n'
-               % c_str(render_payload(sample["config"]).replace(DEV, sample_dev)))
+               % c_str(render_payload(sample["config"]).replace(DEV, sample_dev).replace("@IP@", "10.0.0.5")))
     out.append("}  // namespace discovery\n}  // namespace net\n\n"
                "#endif  // BTWH_NET_HA_DISCOVERY_GEN_H\n")
     return "".join(out)

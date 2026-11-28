@@ -72,7 +72,7 @@ namespace net {
 //       here", "the password was rejected"), a failed attempt prints both codes and the
 //       sentence, a success prints ip/gw/mask/dns/rssi/channel/bssid, and the setup page shows
 //       the same sentence. Diagnostics only: no topic, payload key or command changed shape.
-constexpr const char* kFirmwareVersion = "2.9.0-ota12";
+constexpr const char* kFirmwareVersion = "2.9.0-ota16";
 
 // Slow-changing metadata, published on every connect and refreshed on the attributes heartbeat.
 // Live-only like state: uptime and RSSI are readings, not configuration.
@@ -85,6 +85,8 @@ struct MqttInfo {
   // dropping over days is a leak with a number attached, and one that settles is the headroom
   // this board actually has. 0 means "not sampled yet", which renders as null, not as "no memory".
   uint32_t    minFreeHeap;
+  // DHCP moves this; publishing it is what lets someone find the board without the router page.
+  const char* ip;
 };
 
 // A consumer asked for a new setpoint. The callback returns nothing: the echo that confirms it

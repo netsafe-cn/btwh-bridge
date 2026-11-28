@@ -294,6 +294,12 @@
       "label": "Bridge uptime"
     },
     {
+      "key": "ip",
+      "type": "string",
+      "label": "LAN address",
+      "note": "The board is on DHCP, so its address changes when the lease renews. Publishing it here means Home Assistant always shows the current one without anyone opening the router page or plugging in a cable. Empty until WiFi is up."
+    },
+    {
       "key": "rssi",
       "type": "int",
       "unit": "dBm",
@@ -339,6 +345,8 @@
       "manufacturer": "Bosch",
       "model": "Therm 4800i",
       "name": "Water heater",
+      "configuration_url": "http://@IP@/",
+      "configuration_url_note": "Home Assistant renders this as \"Visit\" on the device page. @IP@ is replaced at runtime with the LAN address, because the board is on DHCP and a name would not resolve on Windows without Bonjour. This is what makes the setup page reachable without anyone writing an IP down.",
       "sw_version": "@FW@",
       "hw_version": "ESP32-S3",
       "version_note": "sw_version is the @FW@ token, replaced by gen_ha.py with kFirmwareVersion read out of firmware/bridge/src/net/mqtt_client.h - so the device page cannot claim a version the board is not running, and --check fails when the header is older than a bump. hw_version is the build target, which is fixed for this firmware. Both belong here rather than on diagnostic sensors: Home Assistant shows them on the device page, and they describe the hardware, not a measurement."

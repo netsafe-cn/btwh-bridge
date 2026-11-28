@@ -17,7 +17,10 @@ namespace discovery {
 // Replaces every @DEV@ in `tmpl` with `deviceId`. Returns the length written, or 0 when the
 // result would not fit - a truncated discovery payload would create a broken entity, so the
 // caller must skip it rather than publish half a document.
-size_t expand(const char* tmpl, const char* deviceId, char* out, size_t cap);
+// Substitutes @DEV@ (the device id) and @IP@ (the LAN address) in one pass.
+// ip may be null: @IP@ then expands to nothing rather than failing, because the retained-clear
+// path only needs the topic and has no address to offer.
+size_t expand(const char* tmpl, const char* deviceId, const char* ip, char* out, size_t cap);
 
 // Number of entities in the generated table.
 size_t entityCount();

@@ -16,6 +16,7 @@ constexpr size_t   kSendBufSize = 4224;   // ring + NUL + slack
 
 WiFiServer gServer(kPort);
 WiFiClient gClient;
+bool       gEnabled   = false;   // ship-closed; see config.h
 bool       gStarted   = false;
 uint32_t   gLastSeq   = 0;
 uint32_t   gLastPush  = 0;
@@ -40,7 +41,16 @@ void detach() {
 
 }  // namespace
 
+void setEnabled(bool on) { gEnabled = on; }
+bool enabled() { return gEnabled; }
+
 void poll() {
+  if (!gEnabled) {
+    // Turning it off must also close what is open: leaving a socket bound after the flag flips
+    // would keep the surface alive until reboot.
+    if (gStarted) { detach(); gServer.end(); gStarted = false; }
+    return;
+  }
   if (!stationUp()) {
     if (gStarted) { detach(); gServer.end(); gStarted = false; }
     return;
@@ -73,8 +83,12 @@ void poll() {
   // availableForWrite() is the only honest answer about whether a write will block. On a slow
   // or stalled client it returns 0, and the right move is to skip this tick rather than stall
   // the loop - the ring keeps the history, so the next poll catches up.
-  const int can = gClient.availableForWrite();
-  if (can <= 0) return;
+  // availableForWrite() reports 0 on this core even with room in the socket, which made the
+  // bridge accept the connection and then never speak: measured 2026-11-28, client attached,
+  // 75 s, zero bytes. Fall back to one MSS and let a short write block - the reader is a person
+  // staring at a terminal, not a machine that needs the loop kept free.
+  int can = gClient.availableForWrite();
+  if (can <= 0) can = 1460;
 
   const size_t send = (n < (size_t)can) ? n : (size_t)can;
   gClient.write((const uint8_t*)gSendBuf, send);

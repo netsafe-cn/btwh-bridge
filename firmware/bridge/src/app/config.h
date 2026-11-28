@@ -32,6 +32,16 @@ struct Config {
   char broker[129];  // host[:port]; empty = discovery only, no external broker
   char mqttUser[33]; // broker account, empty = anonymous
   char mqttPass[65]; // broker password, empty = no password (user may still be sent)
+  // Off by default and shipped that way. Port 23 unauthenticated on a LAN is a reconnaissance
+  // surface: the log carries the SSID, the LAN address and the panel-code tail, and telnet is
+  // plaintext, so a neighbour reads it off the air without connecting. Turn it on per unit when
+  // a fault needs the last 60 lines and no cable can reach the board.
+  bool telnet;
+  // One extra OTA source, empty by default. The flasher's built-in allowlist only names the
+  // release hosts, so a rehearsal from a machine on the LAN - or a mirror that is reachable when
+  // GitHub is not - needs a second entry. It is set from the serial console, which already means
+  // physical access, so it does not widen what a network attacker can reach.
+  char otaHost[40];
 
   // Reads NVS; fills in placeholders when a key is absent.
   void load();

@@ -45,6 +45,8 @@ void Config::load() {
   copyTo(broker, sizeof(broker), b.c_str());
   copyTo(mqttUser, sizeof(mqttUser), u.c_str());
   copyTo(mqttPass, sizeof(mqttPass), pw.c_str());
+  telnet = prefs().getBool("telnet", false);
+  copyTo(otaHost, sizeof(otaHost), prefs().getString("otahost", "").c_str());
 }
 
 void Config::save() const {
@@ -52,6 +54,12 @@ void Config::save() const {
   prefs().putString("loginmac", login);
   prefs().putString("pin", pin);
   prefs().putString("profile", profile);
+  // The two diagnostic switches are written here because this is what their own console
+  // commands call. They used to be written only by saveNetwork(), so `telnet on` reported
+  // success and then came back off after the next reboot - a setting that lies about itself is
+  // worse than one that cannot be set.
+  prefs().putBool("telnet", telnet);
+  prefs().putString("otahost", otaHost);
 }
 
 void Config::saveNetwork() const {
@@ -74,6 +82,8 @@ void Config::wipe() {
   broker[0] = 0;
   mqttUser[0] = 0;
   mqttPass[0] = 0;
+  otaHost[0] = 0;
+  telnet = false;
 }
 
 bool Config::pinValid() const {

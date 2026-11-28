@@ -13,7 +13,9 @@ LOGDIR = ROOT / "logs"
 
 # arduino-cli: prefer the one on PATH, fall back to the bundled toolchain/ (not committed)
 CLI = pathlib.Path(shutil.which("arduino-cli") or (TOOLCHAIN / "arduino-cli.exe"))
-CONFIG = TOOLCHAIN / "arduino-cli.yaml"
+# Overridable so a second toolchain can live beside the first: a core major version cannot share
+# one data directory, and the old one has to stay runnable for a rollback.
+CONFIG = pathlib.Path(os.environ.get("BTWH_CONFIG") or (TOOLCHAIN / "arduino-cli.yaml"))
 
 # Windows path limit: the build workspace must live on a short path; sources stay here.
 # Defaults to ~/esp, override with BTWH_WORK; --config-file is skipped when absent.

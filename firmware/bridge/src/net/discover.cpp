@@ -10,12 +10,16 @@ namespace {
 
 bool gStarted = false;
 
+// Default keeps the documented name for a single-device install; mqtt_client overrides it with
+// btwh-<id> as soon as the device id exists, so two bridges on one LAN do not collide.
+static char gHostname[24] = "btwh-bridge";
+
 bool ensureStarted() {
   if (gStarted) return true;
   // The API needs a name before it will answer anything. It also makes the bridge itself
-  // reachable as btwh-bridge.local, which is how a user can open the LAN-mode setup page without
+  // reachable as <hostname>.local, which is how a user can open the LAN-mode setup page without
   // being told an address either.
-  gStarted = MDNS.begin("btwh-bridge");
+  gStarted = MDNS.begin(gHostname);
   return gStarted;
 }
 
@@ -29,7 +33,7 @@ void writeIp(IPAddress ip, char* out, size_t cap) {
 // was found and the address came back as 0.0.0.0. The ESPmDNS examples resolve the SRV target
 // with a second query for exactly this reason.
 bool resolveResult(int idx, char* out, size_t cap) {
-  IPAddress ip = MDNS.IP(idx);
+  IPAddress ip = MDNS.address(idx);   // 3.x renamed IP() to address(); hostname() survived
   if (ip == IPAddress()) {
     String host = MDNS.hostname(idx);
     if (host.length()) ip = MDNS.queryHost(host.c_str(), 2000);
@@ -40,6 +44,14 @@ bool resolveResult(int idx, char* out, size_t cap) {
 }
 
 }  // namespace
+
+// Declared in discover.h, so it must live in net:: rather than the anonymous namespace above.
+void setHostname(const char* name) {
+  if (!name || !name[0]) return;
+  if (gStarted) return;                      // already answering under the old name; too late
+  strncpy(gHostname, name, sizeof(gHostname) - 1);
+  gHostname[sizeof(gHostname) - 1] = 0;
+}
 
 bool discoverBroker(char* out, size_t cap, uint16_t* port, char* how, size_t howCap) {
   if (!out || cap < 8 || !port) return false;
