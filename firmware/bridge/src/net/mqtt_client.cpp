@@ -676,7 +676,7 @@ void mqttBegin(const char* broker, const char* deviceId) {
   char hname[24];
   snprintf(hname, sizeof(hname), "%s", gDeviceId);
   for (char* c = hname; *c; c++) { if (*c == '_') *c = '-'; }
-  discover::setHostname(hname);
+  setHostname(hname);   // net::setHostname, same namespace as this file
 
   // Credentials are deliberately NOT cleared here. begin() is called whenever the broker
   // address changes (console, portal, boot), and the caller follows it with

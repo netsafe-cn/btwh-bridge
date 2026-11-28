@@ -14,13 +14,6 @@ bool gStarted = false;
 // btwh-<id> as soon as the device id exists, so two bridges on one LAN do not collide.
 static char gHostname[24] = "btwh-bridge";
 
-void setHostname(const char* name) {
-  if (!name || !name[0]) return;
-  if (gStarted) return;                      // already answering under the old name; too late
-  strncpy(gHostname, name, sizeof(gHostname) - 1);
-  gHostname[sizeof(gHostname) - 1] = 0;
-}
-
 bool ensureStarted() {
   if (gStarted) return true;
   // The API needs a name before it will answer anything. It also makes the bridge itself
@@ -51,6 +44,14 @@ bool resolveResult(int idx, char* out, size_t cap) {
 }
 
 }  // namespace
+
+// Declared in discover.h, so it must live in net:: rather than the anonymous namespace above.
+void setHostname(const char* name) {
+  if (!name || !name[0]) return;
+  if (gStarted) return;                      // already answering under the old name; too late
+  strncpy(gHostname, name, sizeof(gHostname) - 1);
+  gHostname[sizeof(gHostname) - 1] = 0;
+}
 
 bool discoverBroker(char* out, size_t cap, uint16_t* port, char* how, size_t howCap) {
   if (!out || cap < 8 || !port) return false;
