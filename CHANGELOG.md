@@ -9,6 +9,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _Nothing yet._
 
+## [1.0.2] - 2026-11-28
+
+### Fixed
+
+- **Opening the page to change one field no longer reconfigures another.** The Wi-Fi list never
+  marked the network the bridge was already on, so the browser submitted whichever row came
+  first: a visit to enter a pairing code silently moved the device to a different SSID, where an
+  empty password then meant "open network" and the join failed. The current network is now
+  `selected` and labelled `(current)`, which makes an untouched form a no-op.
+- The password field says what empty means. The rule - empty keeps the saved password, but only
+  for the same network - is right and was completely invisible.
+
 ## [1.0.1] - 2026-11-28
 
 ### Fixed

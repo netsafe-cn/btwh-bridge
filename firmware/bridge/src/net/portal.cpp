@@ -115,11 +115,19 @@ String wifiOptions(const char* storedSsid) {
     // The same name shows up once per BSSID (2.4 + 5 GHz, or a mesh node). One row is enough.
     if (out.indexOf("<option value=\"" + ssid + "\"") >= 0)
       continue;
-    if (storedSsid && ssid == storedSsid) storedSeen = true;
+    // Mark the network the bridge is already on. Without `selected` the browser submits the
+    // first row instead, so a page opened only to change the pairing code would quietly move
+    // the device to whatever SSID happened to sort first - measured 2026-11-28, and it cost a
+    // working link plus the stored password.
+    const bool isStored = storedSsid && storedSsid[0] && ssid == storedSsid;
+    if (isStored) storedSeen = true;
     out += "<option value=\"";
     appendEscaped(out, ssid.c_str());
-    out += "\">";
+    out += "\"";
+    if (isStored) out += " selected";
+    out += ">";
     appendEscaped(out, ssid.c_str());
+    if (isStored) out += " (current)";
     out += "</option>";
   }
   WiFi.scanDelete();
@@ -129,9 +137,9 @@ String wifiOptions(const char* storedSsid) {
   if (storedSsid && storedSsid[0] && !storedSeen) {
     String row = "<option value=\"";
     appendEscaped(row, storedSsid);
-    row += "\">";
+    row += "\" selected>";
     appendEscaped(row, storedSsid);
-    row += " (saved)</option>";
+    row += " (current)</option>";
     out = row + out;
   }
   out += "<option value=\"__other__\">Other network...</option>";
