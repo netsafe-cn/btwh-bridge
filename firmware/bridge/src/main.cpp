@@ -125,11 +125,21 @@ static const char* onProvisioned(void* /*ctx*/, const net::ProvisionRequest& r) 
     strncpy(gCfg.pin, r.pairCode, sizeof(gCfg.pin) - 1);
     gCfg.pin[sizeof(gCfg.pin) - 1] = 0;
   }
+  // An empty password means two different things depending on the network, and the difference
+  // is not a detail: "keep what is stored" is right when the same SSID is re-submitted (editing
+  // the broker should not force the password to be retyped), and it is wrong when the SSID
+  // changes, because a network that takes no password - an open IoT SSID is the common case -
+  // could then never be selected at all. Measured 2026-11-28: submitting an empty password for
+  // an open AP kept WPA2 credentials and the join failed with NO_AP_FOUND_W_COMPATIBLE_SECURITY.
+  const bool sameNetwork = strcmp(r.ssid, gCfg.ssid) == 0;
+  const bool clearsPass  = r.wifiPass[0] == 0 && !sameNetwork;
   strncpy(gCfg.ssid, r.ssid, sizeof(gCfg.ssid) - 1);
   gCfg.ssid[sizeof(gCfg.ssid) - 1] = 0;
   if (r.wifiPass[0]) {
     strncpy(gCfg.wifiPass, r.wifiPass, sizeof(gCfg.wifiPass) - 1);
     gCfg.wifiPass[sizeof(gCfg.wifiPass) - 1] = 0;
+  } else if (clearsPass) {
+    gCfg.wifiPass[0] = 0;
   }
   // Same "empty keeps the stored value" rule as the Wi-Fi password above, for the same
   // reason: re-pairing or moving networks must not silently erase the broker settings.
@@ -148,6 +158,15 @@ static const char* onProvisioned(void* /*ctx*/, const net::ProvisionRequest& r) 
   gCfg.save();
   gCfg.saveNetwork();
 
+  // Pair before joining the network, and only when a code came with the form. The code lives in
+  // a window that the panel opens for a short time, while a Wi-Fi join can block for fifteen
+  // seconds - joining first is how a correct code expires before it is ever used.
+  bool paired = false;
+  if (r.pairCode[0]) {
+    paired = app::start(false);
+    Serial.printf("[PORTAL] pairing first (code window): %s\n", paired ? "ok" : "failed");
+  }
+
   // Keep the hotspot up only when there is one: a LAN-mode page needs no AP, and asking for
   // AP+STA there would start a stray open access point on a unit that is already online.
   bool wifiOk = net::stationConnect(gCfg.ssid, gCfg.wifiPass, !net::portalOnLan());
@@ -163,6 +182,7 @@ static const char* onProvisioned(void* /*ctx*/, const net::ProvisionRequest& r) 
   startMqtt();
 
   if (!gCfg.pinValid()) return "saved (no code given; Wi-Fi only)";
+  if (r.pairCode[0]) return paired ? "paired" : "paired? - code window may have closed, see log";
   return app::start(false) ? "paired" : "pairing failed - see the serial log";
 }
 
