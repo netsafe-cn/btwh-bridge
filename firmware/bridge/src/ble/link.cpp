@@ -117,7 +117,10 @@ bool connect(const char* heaterMac, uint8_t timeoutSec) {
   disconnect();
   NimBLEAddress addr((std::string)heaterMac, BLE_ADDR_PUBLIC);
   gClient = NimBLEDevice::createClient();
-  gClient->setConnectTimeout(timeoutSec);
+  // 2.x takes milliseconds here; 1.4.3 took seconds. Passing the seconds value through turned a
+  // 10 s budget into 10 ms, which "worked" only when the advertisement happened to arrive inside
+  // it - the board mostly reported cannot-connect while the heater was wide awake.
+  gClient->setConnectTimeout((uint32_t)timeoutSec * 1000u);
   // 2.5.2's signature, not master's: setClientCallbacks(ptr, deleteCallbacks=true), so the client
   // owns this instance and frees it with itself. New per connection is intentional - the object
   // is tiny and this removes any question about who destroys it.
