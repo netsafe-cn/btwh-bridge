@@ -69,6 +69,23 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   not mistaken for a wipe. The heater keeps its own pairing record, so the panel still has to be
   cleared by hand; the portal page says so.
 
+- **The board can explain itself after the fact.** A 4 KB ring keeps the last ~60 log lines with
+  timestamps and levels; `log` dumps it over the serial console, and a read-only telnet on port 23
+  serves the same ring over the LAN when the network allows inbound traffic. Read-only is
+  deliberate: a writable console on a home LAN is an unauthenticated remote control for a device
+  wired to a gas appliance.
+
+- **Two diagnostics that do not require waiting for a fault.** `guard <celsius>` asks the
+  plausibility window directly; `inject <hex>` feeds a constructed frame to the parser, which is
+  the only way to exercise the reject path on demand — real filler frames arrive two to five times
+  a day, which is exactly how the 99.9 ℃ investigation stalled. `heap` and `loglevel` round it out.
+
+- **`min_free_heap` is published.** Monotonic, so a value that keeps falling over days is a leak
+  with a number attached, and one that settles is the real headroom. Measured on the board:
+  191,276 B free, 182,928 B lowest, 180,212 B largest block — the 11 KB gap says fragmentation is
+  not a problem here. PSRAM is untouched, which is why an R8 board is not required.
+  24 → 25 entities.
+
 ### Fixed
 
 - **Impossible outlet temperatures are no longer published.** 83 frames in 5.2 days carried
