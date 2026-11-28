@@ -304,7 +304,9 @@ static void onMqttCommand(void* /*ctx*/, const char* verb) {
 static void refreshMqttInfo() {
   net::MqttInfo info;
   info.heater   = gCfg.heater;
-  info.hardware = "esp32s3";
+  // Read from the chip, not a literal: this string ends up in Home Assistant and in every bug
+  // report, so a board swapped to a C3 would otherwise keep claiming to be an S3.
+  info.hardware = ESP.getChipModel();
   const app::Status st = app::status();
   info.pairState = st.phase == app::kRunning ? "paired"
                  : st.phase == app::kFailed  ? "reconnecting"

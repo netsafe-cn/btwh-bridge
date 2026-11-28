@@ -27,6 +27,11 @@ namespace net {
 // Fills `out` with a dotted-quad host and `port` with the port to use. `how` receives a short
 // human-readable reason. Returns false when the station is down, mDNS will not start, or nothing
 // was found - in which case the caller falls back to whatever the user configured.
+// The mDNS name the bridge answers to. Defaults to "btwh-bridge" so a single-device
+// install keeps the name its documentation uses; mqtt_client sets it to btwh-<id> once the
+// device id is known, because two bridges on one LAN would otherwise fight over one name.
+void setHostname(const char* name);
+
 bool discoverBroker(char* out, size_t cap, uint16_t* port, char* how, size_t howCap);
 
 }  // namespace net

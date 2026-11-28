@@ -10,12 +10,23 @@ namespace {
 
 bool gStarted = false;
 
+// Default keeps the documented name for a single-device install; mqtt_client overrides it with
+// btwh-<id> as soon as the device id exists, so two bridges on one LAN do not collide.
+static char gHostname[24] = "btwh-bridge";
+
+void setHostname(const char* name) {
+  if (!name || !name[0]) return;
+  if (gStarted) return;                      // already answering under the old name; too late
+  strncpy(gHostname, name, sizeof(gHostname) - 1);
+  gHostname[sizeof(gHostname) - 1] = 0;
+}
+
 bool ensureStarted() {
   if (gStarted) return true;
   // The API needs a name before it will answer anything. It also makes the bridge itself
-  // reachable as btwh-bridge.local, which is how a user can open the LAN-mode setup page without
+  // reachable as <hostname>.local, which is how a user can open the LAN-mode setup page without
   // being told an address either.
-  gStarted = MDNS.begin("btwh-bridge");
+  gStarted = MDNS.begin(gHostname);
   return gStarted;
 }
 

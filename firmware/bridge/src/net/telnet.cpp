@@ -73,8 +73,12 @@ void poll() {
   // availableForWrite() is the only honest answer about whether a write will block. On a slow
   // or stalled client it returns 0, and the right move is to skip this tick rather than stall
   // the loop - the ring keeps the history, so the next poll catches up.
-  const int can = gClient.availableForWrite();
-  if (can <= 0) return;
+  // availableForWrite() reports 0 on this core even with room in the socket, which made the
+  // bridge accept the connection and then never speak: measured 2026-11-28, client attached,
+  // 75 s, zero bytes. Fall back to one MSS and let a short write block - the reader is a person
+  // staring at a terminal, not a machine that needs the loop kept free.
+  int can = gClient.availableForWrite();
+  if (can <= 0) can = 1460;
 
   const size_t send = (n < (size_t)can) ? n : (size_t)can;
   gClient.write((const uint8_t*)gSendBuf, send);

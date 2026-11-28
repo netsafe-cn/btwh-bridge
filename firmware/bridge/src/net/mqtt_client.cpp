@@ -41,7 +41,7 @@ char     gDeviceId[20];        // btwh_<last6>
 char     gUser[33];
 char     gPass[65];
 
-MqttInfo   gInfo{"-", "unpaired", "esp32s3", 0};
+MqttInfo   gInfo{"-", "unpaired", "", 0};   // hw filled from ESP.getChipModel() at boot
 SetpointFn gOnSetpoint = nullptr;
 CommandFn  gOnCommand  = nullptr;
 void*      gHookCtx    = nullptr;
@@ -184,7 +184,7 @@ void publishAttributes() {
            "{\"fw\":\"%s\",\"hw\":\"%s\",\"heater\":\"%s\",\"pair_state\":\"%s\","
            "\"uptime\":%lu,\"rssi\":%s,\"last_disconnect\":\"%s\",\"last_disconnect_at\":%s,"
            "\"boot_reason\":\"%s\",\"min_free_heap\":%s}",
-           kFirmwareVersion, gInfo.hardware ? gInfo.hardware : "esp32s3",
+           kFirmwareVersion, gInfo.hardware ? gInfo.hardware : "unknown",
            gInfo.heater ? gInfo.heater : "-", gInfo.pairState ? gInfo.pairState : "unpaired",
            (unsigned long)(millis() / 1000), rssi, gWhy, dropAt, bootReason(),
            heapField);
@@ -669,6 +669,13 @@ void mqttBegin(const char* broker, const char* deviceId) {
   gPort = port;
   strncpy(gDeviceId, deviceId && deviceId[0] ? deviceId : "btwh_000000", sizeof(gDeviceId) - 1);
   gDeviceId[sizeof(gDeviceId) - 1] = 0;
+
+  // mDNS name mirrors the device id with hyphens: an underscore is not legal in a hostname, and
+  // two bridges on one LAN must not both answer to plain "btwh-bridge".
+  char hname[24];
+  snprintf(hname, sizeof(hname), "%s", gDeviceId);
+  for (char* c = hname; *c; c++) { if (*c == '_') *c = '-'; }
+  discover::setHostname(hname);
 
   // Credentials are deliberately NOT cleared here. begin() is called whenever the broker
   // address changes (console, portal, boot), and the caller follows it with
