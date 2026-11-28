@@ -40,6 +40,7 @@
 #include <Arduino.h>
 #include <ctype.h>
 #include <esp_log.h>
+#include <esp_mac.h>
 #include <esp_task_wdt.h>
 #include <string.h>
 
@@ -147,7 +148,9 @@ static const char* onProvisioned(void* /*ctx*/, const net::ProvisionRequest& r) 
   gCfg.save();
   gCfg.saveNetwork();
 
-  bool wifiOk = net::stationConnect(gCfg.ssid, gCfg.wifiPass);
+  // Keep the hotspot up only when there is one: a LAN-mode page needs no AP, and asking for
+  // AP+STA there would start a stray open access point on a unit that is already online.
+  bool wifiOk = net::stationConnect(gCfg.ssid, gCfg.wifiPass, !net::portalOnLan());
   // The credentials are new and an attempt was just made: reset both clocks so the fallback
   // measures this failure and not the outage the form was opened for.
   gLastAttemptMs  = millis();
@@ -430,6 +433,7 @@ static void printHelp() {
   Serial.println("  ota               print how to update firmware over MQTT");
   Serial.println("  portal            start the setup portal by hand (LAN page if online, else AP)");
   Serial.println("  wifi SSID PASS    join a network and save it (open network: wifi SSID -)");
+  Serial.println("  wififorget        forget the network only, then reopen the hotspot");
   Serial.println("  raw on / raw off  show / hide raw A0 bytes");
   Serial.println("  guard 99.9        ask the plausibility guard about one value (no side effects)");
   Serial.println("  inject 01 00 ...   feed hex straight to the parser (bypasses the link)");
@@ -768,6 +772,20 @@ static void handleCommand(String line) {
     Serial.println("      mosquitto_pub -h <broker> -t btwh/<device>/ota -m http://<host>[:port]/firmware.bin");
     return;
   }
+  if (low == "wififorget") {
+    // Drops the network and nothing else. The BOOT-hold wipe also erases the pairing code and
+    // the broker account, which turns "the Wi-Fi changed" into "re-pair the heater" - too much
+    // for the one thing that actually needs forgetting.
+    gCfg.ssid[0] = 0;
+    gCfg.wifiPass[0] = 0;
+    gCfg.saveNetwork();
+    Serial.println("[CFG] Wi-Fi forgotten; rebooting into the setup hotspot "
+                   "(broker and pairing code are kept)");
+    Serial.flush();
+    delay(100);
+    ESP.restart();
+    return;
+  }
   if (low.startsWith("wifi")) {
     // `wifi <ssid> <password>` writes NVS and joins immediately. The SSID keeps its case and
     // may contain spaces (the split is on the last space), so `low` is used only to detect the
@@ -999,6 +1017,21 @@ void setup() {
   pinMode(kBootPin, INPUT_PULLUP);   // BOOT key: polled in loop(), never read during setup
 
   gCfg.load();
+
+  // The login MAC is an identifier the heater records, not a credential: unique per unit and
+  // stable is the entire requirement. Fresh boards used to carry a written-down placeholder, so
+  // every unit looked like the same device in the heater's list and in any log. Derive it from
+  // this board's station MAC instead - that is the address the router already shows, so the two
+  // records match when somebody is standing at the panel with a phone in hand.
+  if (!gCfg.login[0] || strcmp(gCfg.login, "11:22:33:44:55:66") == 0) {
+    uint8_t mac[6] = {0};
+    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK) {
+      snprintf(gCfg.login, sizeof(gCfg.login), "%02X:%02X:%02X:%02X:%02X:%02X",
+               mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+      gCfg.save();
+      Serial.printf("[BOOT] login MAC taken from this board: %s\n", gCfg.login);
+    }
+  }
 
   // Before the radio: if the previous boot was an armed OTA attempt that never reached the
   // broker, this either counts the attempt or points the boot partition back and restarts.

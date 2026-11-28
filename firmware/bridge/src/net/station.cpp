@@ -42,7 +42,7 @@ void onWifiEvent(arduino_event_id_t event, arduino_event_info_t info) {
 const char* stationLastFailure() { return gLastFailure; }
 const char* stationLastAttemptSsid() { return gLastSsid; }
 
-bool stationConnect(const char* ssid, const char* pass) {
+bool stationConnect(const char* ssid, const char* pass, bool keepSoftAp) {
   if (!ssid || !ssid[0]) return false;
 
   snprintf(gLastSsid, sizeof(gLastSsid), "%s", ssid);
@@ -54,10 +54,12 @@ bool stationConnect(const char* ssid, const char* pass) {
     gReasonHookOn = true;
   }
 
-  WiFi.mode(WIFI_STA);
+  // AP+STA when a portal is holding the client: WIFI_STA alone tears the hotspot down in the
+  // same call that starts the join, which is what left the phone with a dead page and no answer.
+  WiFi.mode(keepSoftAp ? WIFI_AP_STA : WIFI_STA);
   WiFi.begin(ssid, pass ? pass : "");
 
-  Serial.printf("[WIFI] joining %s ...\n", ssid);
+  Serial.printf("[WIFI] joining %s%s ...\n", ssid, keepSoftAp ? " (hotspot kept up)" : "");
   const uint32_t t0 = millis();
 
   // No running commentary while the join is in flight.

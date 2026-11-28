@@ -36,6 +36,15 @@ bool gAutomatic = false;
 // The last validation error, shown on the form after a rejected submit.
 char gError[96] = {0};
 
+// Provisioning is a sequence, not a form post: the old code answered "Saved" before it had
+// tried anything, and the only thing the phone ever learned was that the text had arrived. The
+// phases below are what the result page reads while the join is in flight.
+enum class Phase : uint8_t { Form, Connecting, Done, Failed };
+Phase    gPhase      = Phase::Form;
+char     gTitle[64]  = {0};
+char     gDetail[224] = {0};
+uint32_t gStopAtMs   = 0;      // when to take the hotspot down after a success
+
 // ---------------------------------------------------------------- page assembly
 
 // Escapes what can break the <option> text: nothing in a BLE name or SSID can inject script
@@ -166,6 +175,30 @@ const char* storedSsidOrNull() {
 
 // ---------------------------------------------------------------- handlers
 
+// One page for every outcome, so the phone keeps a single address while the join runs.
+String renderResult() {
+  String p = "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">";
+  p += "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">";
+  // Only the connecting phase refreshes: a result the user is reading must not jump.
+  if (gPhase == Phase::Connecting) p += "<meta http-equiv=\"refresh\" content=\"2\">";
+  p += "<title>Water heater bridge</title><style>"
+       "body{font-family:system-ui,sans-serif;margin:0;background:#f5f6f8;color:#222}"
+       ".card{max-width:420px;margin:24px auto;background:#fff;border-radius:12px;"
+       "padding:22px;box-shadow:0 1px 4px rgba(0,0,0,.08)}"
+       "h2{margin:0 0 10px;font-size:19px}p{line-height:1.55;margin:8px 0;color:#333}"
+       ".muted{color:#666;font-size:14px}a.btn{display:inline-block;margin-top:16px;"
+       "background:#1a73e8;color:#fff;text-decoration:none;padding:11px 18px;"
+       "border-radius:8px;font-size:15px}"
+       "</style></head><body><div class=\"card\">";
+  p += "<h2>"; p += gTitle; p += "</h2>";
+  p += "<p>"; p += gDetail; p += "</p>";
+  if (gPhase == Phase::Failed) p += "<a class=\"btn\" href=\"/\">Back to the form</a>";
+  p += "</div></body></html>";
+  return p;
+}
+
+void handleResult() { gServer->send(200, "text/html", renderResult()); }
+
 void handleRoot() {
   // Both scans run here, so the page is always fresh; the portal has no other job.
   String heaters = heaterOptions();
@@ -207,14 +240,15 @@ void handleSave() {
   }
   gError[0] = 0;
 
-  // Acknowledge before tearing the AP down: the phone will lose its link to the board the
-  // moment we stop the soft AP, and an unanswered POST shows as an error page.
-  gServer->send(200, "text/html",
-                "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-                "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-                "<body style='font-family:system-ui;margin:40px auto;max-width:420px'>"
-                "<h2>Saved</h2><p>Connecting. This network will close in a few seconds; "
-                "the bridge appears on your Wi-Fi when it is done.</p></body></html>");
+  // Answer with a page that keeps the phone in the loop instead of a claim the board has not
+  // earned yet: the hotspot now stays up while the join is tested, and /result reports what
+  // actually happened. Everything below hands the work to portalPoll().
+  gPhase = Phase::Connecting;
+  snprintf(gTitle, sizeof(gTitle), "Connecting to %s", r.ssid);
+  snprintf(gDetail, sizeof(gDetail),
+           "This page updates by itself. Keep the phone on this hotspot for a few seconds; "
+           "nothing is decided until it says so.");
+  gServer->send(200, "text/html", renderResult());
 
   Serial.printf("[PORTAL] saved: heater=%s ssid=%s code=%s\n",
                 r.heater, r.ssid, r.pairCode[0] ? "****" : "(keep)");
@@ -238,11 +272,20 @@ void handleNotFound() {
 
 }  // namespace
 
+// A new portal always starts at the form, whatever the previous one ended on.
+void resetPhase() {
+  gPhase     = Phase::Form;
+  gStopAtMs  = 0;
+  gTitle[0]  = 0;
+  gDetail[0] = 0;
+}
+
 bool portalNeeded(const char* storedSsid) {
   return storedSsid == nullptr || storedSsid[0] == 0;
 }
 
 void startPortal(ProvisionedFn onProvisioned, void* ctx, bool automatic) {
+  resetPhase();
   if (gServer) return;                       // already up
 
   gOnProvisioned = onProvisioned;
@@ -264,6 +307,7 @@ void startPortal(ProvisionedFn onProvisioned, void* ctx, bool automatic) {
     gLanMode = true;
     gServer = new WebServer(80);
     gServer->on("/", HTTP_GET, handleRoot);
+    gServer->on("/result", HTTP_GET, handleResult);
     gServer->on("/save", HTTP_POST, handleSave);
     gServer->onNotFound(handleNotFound);
     gServer->begin();
@@ -321,6 +365,7 @@ void startPortal(ProvisionedFn onProvisioned, void* ctx, bool automatic) {
 
   gServer = new WebServer(80);
   gServer->on("/", HTTP_GET, handleRoot);
+  gServer->on("/result", HTTP_GET, handleResult);
   gServer->on("/save", HTTP_POST, handleSave);
   gServer->onNotFound(handleNotFound);
   gServer->begin();
@@ -329,6 +374,7 @@ void startPortal(ProvisionedFn onProvisioned, void* ctx, bool automatic) {
 void stopPortal() {
   gAutomatic = false;
   gSavePending = false;
+  gStopAtMs   = 0;
   if (gServer) { gServer->stop(); delete gServer; gServer = nullptr; }
   if (gDns)    { gDns->stop();    delete gDns;    gDns = nullptr; }
   if (gLanMode) {
@@ -350,6 +396,7 @@ void stopPortal() {
   WiFi.softAPdisconnect(false);
 }
 
+bool portalOnLan() { return gLanMode; }
 bool portalActive() { return gServer != nullptr; }
 
 bool portalAutomatic() { return gAutomatic; }
@@ -367,11 +414,38 @@ void portalPoll() {
   // returned, so deleting the server is safe, and the response it wrote has been flushed.
   if (gSavePending) {
     gSavePending = false;
-    stopPortal();
-    if (gOnProvisioned) {
-      const char* outcome = gOnProvisioned(gCtx, gSaved);
-      Serial.printf("[PORTAL] provision outcome: %s\n", outcome ? outcome : "?");
+    // The portal stays up across the join now, so the phone can be told what happened: the
+    // provisioner was handed keepSoftAp=true for the same reason.
+    const char* outcome = gOnProvisioned ? gOnProvisioned(gCtx, gSaved) : "?";
+    Serial.printf("[PORTAL] provision outcome: %s\n", outcome ? outcome : "?");
+
+    if (WiFi.status() == WL_CONNECTED) {
+      char ip[20] = {0};
+      stationIp(ip, sizeof(ip));
+      gPhase = Phase::Done;
+      snprintf(gTitle, sizeof(gTitle), "Connected");
+      snprintf(gDetail, sizeof(gDetail),
+               "The bridge joined %s and is reachable at %s. This hotspot closes in 10 seconds; "
+               "the device appears in Home Assistant shortly after. Detail: %s",
+               gSaved.ssid, ip, outcome ? outcome : "-");
+      gStopAtMs = millis() + 10000;
+    } else {
+      gPhase = Phase::Failed;
+      const char* why = stationLastFailure();
+      snprintf(gTitle, sizeof(gTitle), "Could not join %s", gSaved.ssid);
+      snprintf(gDetail, sizeof(gDetail),
+               "The settings were saved, so only the password needs checking - and that the "
+               "network is 2.4 GHz and in range. The hotspot stays open: go back and try again. "
+               "%s%s",
+               (why && why[0]) ? "Driver says: " : "", (why && why[0]) ? why : "");
     }
+  }
+
+  // A success closes the hotspot on a timer rather than instantly: the page carrying the
+  // address has to be readable first.
+  if (gStopAtMs && (int32_t)(millis() - gStopAtMs) >= 0) {
+    gStopAtMs = 0;
+    stopPortal();
   }
 }
 

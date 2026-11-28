@@ -37,6 +37,11 @@ typedef const char* (*ProvisionedFn)(void* ctx, const ProvisionRequest& r);
 
 void startPortal(ProvisionedFn onProvisioned, void* ctx, bool automatic = false);
 void stopPortal();
+// True when the page is being served over the LAN rather than its own hotspot. The provisioner
+// needs it: joining with AP+STA is right when a hotspot is holding the client, and wrong when
+// there is none - it would start a stray open AP on a unit that is already on the network.
+bool portalOnLan();
+
 bool portalActive();
 
 // Whether this is an automatic portal. False once it stops, and false for the console path.
