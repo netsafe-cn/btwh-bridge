@@ -33,6 +33,18 @@ namespace ota {
 // fully written and Update's checksum validated; the caller reboots.
 bool install(const char* host, uint16_t port, const char* path);
 
+// Rollback is compiled into this build (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y in the 3.3.12
+// sdkconfig). A freshly written image boots once in PENDING_VERIFY and is thrown away at the
+// next reset unless it answers. confirmBoot() is that answer: returns true only when this call
+// is the one that moved the slot to VALID.
+bool confirmBoot();
+
+// Which slot this binary is running from, and the state the bootloader has recorded for it.
+// "direct" means the slot was flashed over USB and no OTA has ever swapped it - there is no
+// otadata entry to report, which is a normal state and not an error.
+const char* runningSlot();
+const char* runningState();
+
 }  // namespace ota
 }  // namespace net
 

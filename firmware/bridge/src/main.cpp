@@ -54,6 +54,7 @@
 #include "net/mqtt_client.h"
 #include "net/mqtt_rules.h"
 #include "net/mqtt_wire.h"
+#include "net/ota.h"
 #include "net/recover.h"
 #include "net/station.h"
 #include "net/state_json.h"
@@ -459,6 +460,7 @@ static void printStatus() {
   Serial.printf("  panel code : %s  (masked; it is also the BLE PIN)\n", maskedPin());
   Serial.printf("  profile    : %s\n", gCfg.profile[0] ? gCfg.profile : "(built-in default)");
   Serial.printf("  telnet     : %s\n", gCfg.telnet ? "on (port 23, read-only)" : "off");
+  Serial.printf("  slot       : %s (%s)\n", net::ota::runningSlot(), net::ota::runningState());
   Serial.printf("  phase      : %s\n", phaseText(s.phase));
   Serial.printf("  link       : %s / encrypted=%s\n",
                 s.linkUp ? "up" : "down", s.encrypted ? "yes" : "no");
@@ -943,6 +945,11 @@ static void armWatchdog() {
                 (unsigned long)kWatchdogSec);
   net::logring::write(net::logring::Level::Info, "BOOT",
                       "watchdog armed: %lu s", (unsigned long)kWatchdogSec);
+  // "pending" after an OTA is the boot that still has to prove itself; "direct" means this slot
+  // was written over USB and no swap has happened yet.
+  Serial.printf("[BOOT] slot %s state=%s\n", net::ota::runningSlot(), net::ota::runningState());
+  net::logring::write(net::logring::Level::Info, "BOOT", "slot %s state=%s",
+                      net::ota::runningSlot(), net::ota::runningState());
 }
 
 // ---------------------------------------------------------------- Arduino

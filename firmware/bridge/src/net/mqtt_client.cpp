@@ -281,6 +281,16 @@ void onConnected() {
   // handleHaStatus.
   subscribeFilter(contract::kHaStatusTopic);
 
+  // The bootloader rolls back an unconfirmed image at the next reset. A CONNACK is the first
+  // moment this firmware has shown it can do its actual job - config read, WiFi joined, MQTT
+  // handshake accepted, subscriptions placed - and it deliberately does not wait for the heater,
+  // which can stay asleep for hours and would roll back a perfectly good image.
+  static bool sBootConfirmed = false;
+  if (!sBootConfirmed && ota::confirmBoot()) {
+    sBootConfirmed = true;
+    Serial.println("[OTA] + this image confirmed; a reset from here keeps it");
+  }
+
   Serial.printf("[MQTT] + connected to %s:%u as %s\n", gHost, (unsigned)gPort, gDeviceId);
 }
 

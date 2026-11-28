@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <HTTPClient.h>
 #include <Update.h>
+#include <esp_ota_ops.h>
 #include <WiFi.h>
 #include <ctype.h>
 
@@ -160,6 +161,43 @@ bool install(const char* host, uint16_t port, const char* path) {
   http.end();
   Serial.printf("[OTA] + %u bytes written and validated in %lu ms, ready to reboot\n",
                 (unsigned)written, (unsigned long)(millis() - t0));
+  return true;
+}
+
+const char* runningSlot() {
+  const esp_partition_t* p = esp_ota_get_running_partition();
+  return p ? p->label : "?";
+}
+
+const char* runningState() {
+  const esp_partition_t* p = esp_ota_get_running_partition();
+  if (!p) return "?";
+  esp_ota_img_states_t st;
+  // ESP_ERR_NOT_SUPPORTED means rollback was compiled out; then no state is tracked at all and
+  // every image is implicitly valid, so say so rather than inventing a label.
+  if (esp_ota_get_state_partition(p, &st) != ESP_OK) return "valid";
+  switch (st) {
+    case ESP_OTA_IMG_NEW:            return "new";
+    case ESP_OTA_IMG_PENDING_VERIFY: return "pending";
+    case ESP_OTA_IMG_VALID:          return "valid";
+    case ESP_OTA_IMG_INVALID:        return "invalid";
+    case ESP_OTA_IMG_ABORTED:        return "aborted";
+    default:                         return "direct";   // no otadata entry: flashed over USB
+  }
+}
+
+bool confirmBoot() {
+  const esp_partition_t* p = esp_ota_get_running_partition();
+  if (!p) return false;
+  esp_ota_img_states_t st;
+  if (esp_ota_get_state_partition(p, &st) != ESP_OK) return false;
+  if (st != ESP_OTA_IMG_PENDING_VERIFY) return false;
+  const esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
+  if (err != ESP_OK) {
+    Serial.printf("[OTA] x could not confirm this image (%d); it rolls back on the next reset\n",
+                  (int)err);
+    return false;
+  }
   return true;
 }
 
