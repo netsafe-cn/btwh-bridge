@@ -3,6 +3,7 @@
 #include <DNSServer.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <esp_mac.h>
 
 #include <string.h>
 
@@ -318,8 +319,12 @@ void startPortal(ProvisionedFn onProvisioned, void* ctx, bool automatic) {
 
   // AP name ties the unit to the heater it will serve: BTWH-Bridge-XXXX with the last two
   // MAC bytes, the same convention the heater itself uses.
-  uint8_t mac[6];
-  WiFi.macAddress(mac);
+  // Read the factory MAC rather than asking the driver: startPortal can run before the radio is
+  // initialised (console `portal`, or a boot with no network and no code), and WiFi.macAddress()
+  // then returns six zeroes - which is how a hotspot ends up called BTWH-Bridge-0000 and every
+  // unit in the room answers to the same name.
+  uint8_t mac[6] = {0};
+  esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
   char apName[24];
   snprintf(apName, sizeof(apName), "BTWH-Bridge-%02X%02X", mac[4], mac[5]);
 
