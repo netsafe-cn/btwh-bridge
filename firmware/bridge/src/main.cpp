@@ -897,7 +897,13 @@ static void pollBootButton() {
 static constexpr uint32_t kWatchdogSec = 120;
 
 static void armWatchdog() {
-  esp_task_wdt_init(kWatchdogSec, true);   // core 2.0.x signature: (seconds, panic on timeout)
+  // IDF 5.x replaced the (seconds, panic) overload with a config struct. Same behaviour, and the
+  // value is still milliseconds here - passing seconds was a silent 120 ms watchdog.
+  esp_task_wdt_config_t twdt = {};
+  twdt.timeout_ms     = kWatchdogSec * 1000;
+  twdt.idle_core_mask = 0;
+  twdt.trigger_panic  = true;
+  esp_task_wdt_init(&twdt);
   esp_task_wdt_add(NULL);                  // the Arduino loop task
   Serial.printf("[BOOT] watchdog armed: %lu s, panic on timeout (reset reason will read task_wdt)\n",
                 (unsigned long)kWatchdogSec);

@@ -29,7 +29,7 @@ void writeIp(IPAddress ip, char* out, size_t cap) {
 // was found and the address came back as 0.0.0.0. The ESPmDNS examples resolve the SRV target
 // with a second query for exactly this reason.
 bool resolveResult(int idx, char* out, size_t cap) {
-  IPAddress ip = MDNS.IP(idx);
+  IPAddress ip = MDNS.address(idx);   // 3.x renamed IP() to address(); hostname() survived
   if (ip == IPAddress()) {
     String host = MDNS.hostname(idx);
     if (host.length()) ip = MDNS.queryHost(host.c_str(), 2000);

@@ -31,12 +31,11 @@ void emitFrame(const uint8_t* frame, size_t len) {
 void onFrameSink(void* /*ctx*/, const uint8_t* frame, size_t len) { emitFrame(frame, len); }
 
 // FIFO and CREDITS share this callback, exactly as Python _on_notify does.
-// 2.x changed the callback shape: instead of (data, len, isNotify) it hands over a
-// NimBLEAttValue, which owns its bytes and carries the length. Same bytes, different envelope.
-void onNotify(NimBLERemoteCharacteristic* /*ch*/, NimBLEAttValue value) {
-  const size_t len = value.size();
+// 2.5.2 still uses the raw (data, len, isNotify) shape; the NimBLEAttValue version arrived after
+// it, in master. Compiling against the wrong one produces a "cannot convert" that names both.
+void onNotify(NimBLERemoteCharacteristic* /*ch*/, uint8_t* data, uint32_t len, bool /*isNotify*/) {
   if (len == 0 || len > 64) return;
-  if (proto::streamPush(&gRx, value.data(), len, onFrameSink, nullptr) < 0) {
+  if (proto::streamPush(&gRx, data, len, onFrameSink, nullptr) < 0) {
     Serial.println("[RX ] buffer overflow, clearing to resync");
   }
 }
@@ -67,10 +66,6 @@ class Security : public NimBLEClientCallbacks {
     if (gHooks.onSecurity) gHooks.onSecurity(gHooks.ctx, gEncrypted, gBonded);
   }
 };
-
-// setCallbacks() takes a reference and the client does not own it, so this has to outlive every
-// client. One instance for the whole firmware; there is only ever one BLE link anyway.
-Security gSecurity;
 
 }  // namespace
 
@@ -123,7 +118,10 @@ bool connect(const char* heaterMac, uint8_t timeoutSec) {
   NimBLEAddress addr((std::string)heaterMac, BLE_ADDR_PUBLIC);
   gClient = NimBLEDevice::createClient();
   gClient->setConnectTimeout(timeoutSec);
-  gClient->setCallbacks(gSecurity);   // reference, not ownership: see gSecurity's comment
+  // 2.5.2's signature, not master's: setClientCallbacks(ptr, deleteCallbacks=true), so the client
+  // owns this instance and frees it with itself. New per connection is intentional - the object
+  // is tiny and this removes any question about who destroys it.
+  gClient->setClientCallbacks(new Security());
 
   Serial.printf("[CONN] connecting to %s ...\n", heaterMac);
   if (!gClient->connect(addr)) {

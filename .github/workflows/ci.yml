@@ -186,6 +186,10 @@ jobs:
   # that on --build on purpose, since entering the bootloader resets the board).
   firmware:
     name: firmware compiles (esp32s3, 2.0.17)
+    # The migration branch carries NimBLE 2.x calls, which 1.4.3 cannot compile. Running this job
+    # there would only produce a red X that says nothing about the code being tested; the 3.3.12
+    # job below is the one that matters until this branch merges.
+    if: github.ref_name != 'feature/core3'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
