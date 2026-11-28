@@ -183,10 +183,6 @@ jobs:
   # if a rollback is ever needed.
   firmware:
     name: firmware compiles (esp32s3, 3.3.12)
-  # The same build on the core major version this project is migrating to. Kept as a separate job
-  # rather than a matrix entry: the two NimBLE majors cannot coexist, and a red run here must not
-  # be confused with a red run on the version that actually ships today.
-    name: firmware compiles (esp32s3, 3.3.12)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
