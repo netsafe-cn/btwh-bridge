@@ -54,6 +54,12 @@ void Config::save() const {
   prefs().putString("loginmac", login);
   prefs().putString("pin", pin);
   prefs().putString("profile", profile);
+  // The two diagnostic switches are written here because this is what their own console
+  // commands call. They used to be written only by saveNetwork(), so `telnet on` reported
+  // success and then came back off after the next reboot - a setting that lies about itself is
+  // worse than one that cannot be set.
+  prefs().putBool("telnet", telnet);
+  prefs().putString("otahost", otaHost);
 }
 
 void Config::saveNetwork() const {
@@ -62,8 +68,6 @@ void Config::saveNetwork() const {
   prefs().putString("broker", broker);
   prefs().putString("mqttuser", mqttUser);
   prefs().putString("mqttpass", mqttPass);
-  prefs().putBool("telnet", telnet);
-  prefs().putString("otahost", otaHost);
 }
 
 void Config::wipe() {
