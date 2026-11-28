@@ -36,6 +36,7 @@
  * ============================================================================
  */
 
+#include <WiFi.h>
 #include <Arduino.h>
 #include <ctype.h>
 #include <esp_task_wdt.h>

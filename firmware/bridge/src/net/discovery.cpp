@@ -211,9 +211,9 @@ SelfTestResult runSelfTest(LogFn log, void* ctx) {
   char topic[96];
   uint8_t packet[1280];
   for (size_t i = 0; i < entityCount(); i++) {
-    n = expand(entityTopic(i), "btwh_eb6f5f", topic, sizeof(topic));
+    n = expand(entityTopic(i), "btwh_eb6f5f", nullptr, topic, sizeof(topic));
     check(c, n > 0, "discovery topic fits", entityTopic(i));
-    n = expand(entityPayload(i), "btwh_eb6f5f", buf, sizeof(buf));
+    n = expand(entityPayload(i), "btwh_eb6f5f", nullptr, buf, sizeof(buf));
     check(c, n > 0, "payload fits the publish buffer", entityTopic(i));
     if (n > 0) {
       check(c, mqtt::buildPublish(packet, sizeof(packet), topic, buf, n, true) > 0,
