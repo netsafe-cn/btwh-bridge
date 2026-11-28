@@ -39,6 +39,7 @@
 #include <WiFi.h>
 #include <Arduino.h>
 #include <ctype.h>
+#include <esp_log.h>
 #include <esp_task_wdt.h>
 #include <string.h>
 
@@ -961,10 +962,15 @@ static void armWatchdog() {
   // ESP_ERR_INVALID_STATE and silently leaves the 5 s default in place. Measured: the first BLE
   // handshake blocked past 5 s and the board panicked mid-pairing. reconfigure is the call that
   // actually takes effect in that state.
+  // Core 3.x arms the watchdog before setup(), so init() finds it already running and logs an
+  // ERROR-level "TWDT already initialized". That is not a fault - the reconfigure below is the
+  // intended path - but an E line at every boot teaches people to ignore E lines. Mute the tag
+  // for these two calls only, so a real watchdog problem elsewhere still shouts.
+  esp_log_level_set("task_wdt", ESP_LOG_NONE);
   const esp_err_t wdtErr = esp_task_wdt_init(&twdt);
-  if (wdtErr == ESP_ERR_INVALID_STATE) {
-    esp_task_wdt_reconfigure(&twdt);
-  } else if (wdtErr != ESP_OK) {
+  if (wdtErr == ESP_ERR_INVALID_STATE) esp_task_wdt_reconfigure(&twdt);
+  esp_log_level_set("task_wdt", ESP_LOG_ERROR);
+  if (wdtErr != ESP_OK && wdtErr != ESP_ERR_INVALID_STATE) {
     Serial.printf("[BOOT] x watchdog init failed (%d); the 5 s default stays\n", (int)wdtErr);
   }
   esp_task_wdt_add(NULL);                  // the Arduino loop task

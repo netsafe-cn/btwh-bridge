@@ -72,8 +72,10 @@ void checkAtBoot() {
   if (!running) { gArmed = false; store(); return; }
 
   if (running->address != gTargetAddr) {
-    // The switch back already happened on an earlier boot; this is the old image running again.
-    Serial.printf("[BOOT] ota guard: running %s again (fallback done), disarming\n",
+    // Reachable when something other than this firmware moved the boot partition while the guard
+    // was armed - a USB flash of the other slot is the everyday case. Whatever runs now is not
+    // the image under test, so there is nothing to judge and the guard stands down.
+    Serial.printf("[BOOT] ota guard: running %s, not the slot under test - disarming\n",
                   running->label);
     gArmed    = false;
     gAttempts = 0;

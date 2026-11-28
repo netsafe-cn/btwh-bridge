@@ -177,65 +177,15 @@ jobs:
             echo "OK: $f"
           done
 
-  # Everything above tests the parts of the firmware that can run on a PC. This job compiles the
-  # other 37% - main.cpp, station, portal, mqtt_client, the BLE link, the session - which no
-  # other job touches, so before this existed a change to any of them could merge green and only
-  # fail on someone's desk.
-  #
-  # It builds, it does not flash: no board, no port, and no esptool probe (gateway_cli.py skips
-  # that on --build on purpose, since entering the bootloader resets the board).
+  # Ships from 3.3.12 since v2.9.0. The 2.0.17 job is gone with the migration: this image uses
+  # NimBLE 2.x calls that 1.4.3 cannot compile, so keeping both would mean one permanently red
+  # job that says nothing about the code under test. The old core is still one git checkout away
+  # if a rollback is ever needed.
   firmware:
-    name: firmware compiles (esp32s3, 2.0.17)
-    # The migration branch carries NimBLE 2.x calls, which 1.4.3 cannot compile. Running this job
-    # there would only produce a red X that says nothing about the code being tested; the 3.3.12
-    # job below is the one that matters until this branch merges.
-    if: github.ref_name != 'feature/core3'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: arduino/setup-arduino-cli@v2
-      # The core is ~1.5 GB unpacked and the pinned version never changes, so this cache is what
-      # keeps the job at a few minutes instead of fifteen. Bump the key when the core or the
-      # library moves; do not cache ~/esp/build - a stale object tree is the mixed-build bug
-      # gateway_cli.py documents at `--clean`.
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.arduino15
-            ~/Arduino/libraries
-          key: arduino-${{ runner.os }}-esp32-2.0.17-nimble-1.4.3-v1
-          restore-keys: arduino-${{ runner.os }}-esp32-2.0.17-
-      - name: install the pinned core and library
-        run: |
-          arduino-cli config init --overwrite
-          arduino-cli config add board_manager.additional_urls \
-            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-          arduino-cli core update-index
-          arduino-cli core install esp32:esp32@2.0.17
-          # 1.4.x is not a preference: 2.x changed the security and notify callback signatures,
-          # which is why platformio.ini pins it too.
-          arduino-cli lib install "NimBLE-Arduino@1.4.3"
-      - name: build
-        run: python3 firmware/bridge/tools/gateway_cli.py --build --no-monitor
-      - name: banner matches the tag, image still fits its OTA slot
-        run: python3 firmware/bridge/tools/check_image.py
-      # upload-artifact does not expand ~, and the build workspace lives outside the checkout
-      # (~/esp, chosen so Windows paths stay short). Copy it in, with a name worth downloading.
-      - name: keep the image for the artifact
-        run: |
-          mkdir -p dist-ci
-          cp ~/esp/build/arduino_sketch.ino.bin "dist-ci/btwh-bridge-app-$(echo "$GITHUB_SHA" | cut -c1-7).bin"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: bridge-app-${{ github.sha }}
-          path: dist-ci/*.bin
-          if-no-files-found: error
-
+    name: firmware compiles (esp32s3, 3.3.12)
   # The same build on the core major version this project is migrating to. Kept as a separate job
   # rather than a matrix entry: the two NimBLE majors cannot coexist, and a red run here must not
   # be confused with a red run on the version that actually ships today.
-  firmware_core3:
     name: firmware compiles (esp32s3, 3.3.12)
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -262,8 +212,9 @@ jobs:
         run: python3 firmware/bridge/tools/gateway_cli.py --build --no-monitor
       - name: banner matches the tag, image still fits its OTA slot
         run: python3 firmware/bridge/tools/check_image.py
-      # The local toolchain cannot finish this build on this machine, so the artifact from this
-      # job is the only way to get a 3.3.12 image onto the board for the BLE validation step.
+      # All three images, not just the app: an IDF 5.x bootloader is not compatible with the
+      # 4.4 one an older board is carrying, so a USB flash needs all three together. These are
+      # also what the OTA rehearsal serves as its source.
       - name: keep the image for the artifact
         run: |
           mkdir -p dist-ci
@@ -274,6 +225,6 @@ jobs:
           cp ~/esp/build/arduino_sketch.ino.bin dist-ci/app.bin
       - uses: actions/upload-artifact@v4
         with:
-          name: bridge-app-core3-${{ github.sha }}
+          name: bridge-app-${{ github.sha }}
           path: dist-ci/*.bin
           if-no-files-found: error
