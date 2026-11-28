@@ -7,6 +7,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+_Nothing yet. 1.0.0 is the baseline; work after it starts here._
+
+## [1.0.0] - 2026-11-28
+
 ### Added
 
 - **The broker can be found instead of typed.** An empty broker field now means "look for one":
@@ -874,6 +878,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A pairing code remains valid for reconnection after the pairing window has closed
   (verified 11 minutes later; the upper bound is still unknown)
 
-[Unreleased]: https://github.com/netsafe-cn/btwh-bridge/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/netsafe-cn/btwh-bridge/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/netsafe-cn/btwh-bridge/releases/tag/v1.0.0
 [0.2.0]: https://github.com/netsafe-cn/btwh-bridge/releases/tag/v0.2.0
 [0.1.0]: https://github.com/netsafe-cn/btwh-bridge/releases/tag/v0.1.0

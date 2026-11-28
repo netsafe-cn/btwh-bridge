@@ -140,7 +140,7 @@ comparing `installed_version` and `latest_version`. `spec/mqtt.json` claims HA c
 **strings**, which would make `2.10.0` look older than `2.9.0`. HA's MQTT update entity
 actually parses versions with its own version type, so the claim is probably stale — but it is
 unverified here, and a stale sentence in a contract file is worse than no sentence. Do one
-bench test with `installed=2.9.0, latest=2.10.0` before that release, then correct the note.
+bench test with `installed=1.9.0, latest=1.10.0` before that release, then correct the note.
 
 ---
 
@@ -150,20 +150,20 @@ The goal is one command from a tag to a bridge that shows "update available", wi
 editing of versions.
 
 ```
-tag v2.9.0
+tag v1.0.0
   └─ CI: build → assert version literal == tag → sha256 firmware.bin
       └─ GitHub release: firmware.bin + manifest.json
           └─ operator (or HA automation): publish the release manifest to the broker
               └─ bridge: update/state → HA update entity "on"
-                  └─ Install → live 'install' on ota → flash → reboot → 2.9.0
+                  └─ Install → live 'install' on ota → flash → reboot → 1.0.0
 ```
 
 `manifest.json` is a release artefact, not a new contract:
 
 ```json
 {
-  "version": "2.9.0",
-  "url": "https://github.com/<owner>/<repo>/releases/download/v2.9.0/firmware.bin",
+  "version": "1.0.0",
+  "url": "https://github.com/<owner>/<repo>/releases/download/v1.0.0/firmware.bin",
   "sha256": "…64 hex…",
   "size": 1216512
 }
