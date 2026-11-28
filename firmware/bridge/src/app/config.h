@@ -20,6 +20,10 @@ struct Config {
   char heater[18];   // heater BLE address, e.g. 4C:EB:D6:xx:xx:xx
   char login[18];    // host MAC on the heater whitelist (any value the panel accepts)
   char pin[8];       // six digits, or empty
+  // Row id from spec/profiles.json. Empty means "the row this image was built for", which is
+  // what every board did before this field existed. Being able to name another row is what
+  // keeps one image usable on a second model without a rebuild.
+  char profile[24];
 
   // Provisioning fields. Written by the portal (or the wifi console command), read at boot:
   // no ssid means "never provisioned", which is what turns the hotspot on.

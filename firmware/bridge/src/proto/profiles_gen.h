@@ -40,6 +40,21 @@ static const size_t kProfileCount = 1;
 constexpr size_t kDefaultIndex = 0;
 constexpr const HeaterProfile& defaultProfile() { return kProfiles[kDefaultIndex]; }
 
+// Finds a row by its stable id, without <string.h>: this header is included by
+// code that must stay framework-free, so the comparison is spelled out. Returns
+// nullptr rather than a default on purpose - a board configured for a row this
+// image does not carry must not silently run another model's setpoint limits.
+inline const HeaterProfile* profileById(const char* id) {
+  if (!id || !*id) return nullptr;
+  for (size_t i = 0; i < kProfileCount; i++) {
+    const char* a = kProfiles[i].id;
+    const char* b = id;
+    while (*a && *a == *b) { a++; b++; }
+    if (*a == 0 && *b == 0) return &kProfiles[i];
+  }
+  return nullptr;
+}
+
 }  // namespace profiles
 }  // namespace proto
 

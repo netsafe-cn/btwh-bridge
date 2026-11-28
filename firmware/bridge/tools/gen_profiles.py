@@ -108,6 +108,20 @@ struct HeaterProfile {
                "// later without changing this table.\n")
     out.append("constexpr size_t kDefaultIndex = %d;\n" % default_index)
     out.append("constexpr const HeaterProfile& defaultProfile() { return kProfiles[kDefaultIndex]; }\n\n")
+    out.append("// Finds a row by its stable id, without <string.h>: this header is included by\n"
+               "// code that must stay framework-free, so the comparison is spelled out. Returns\n"
+               "// nullptr rather than a default on purpose - a board configured for a row this\n"
+               "// image does not carry must not silently run another model's setpoint limits.\n")
+    out.append("inline const HeaterProfile* profileById(const char* id) {\n"
+               "  if (!id || !*id) return nullptr;\n"
+               "  for (size_t i = 0; i < kProfileCount; i++) {\n"
+               "    const char* a = kProfiles[i].id;\n"
+               "    const char* b = id;\n"
+               "    while (*a && *a == *b) { a++; b++; }\n"
+               "    if (*a == 0 && *b == 0) return &kProfiles[i];\n"
+               "  }\n"
+               "  return nullptr;\n"
+               "}\n\n")
     out.append("}  // namespace profiles\n}  // namespace proto\n\n"
                "#endif  // BTWH_PROTO_PROFILES_GEN_H\n")
     return "".join(out)

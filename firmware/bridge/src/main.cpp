@@ -59,11 +59,23 @@
 #include "net/wifistat.h"
 #include "proto/a0.h"
 #include "proto/frame.h"
+#include "proto/profiles_gen.h"
 #include "proto/selftest.h"
 
 namespace pc = proto;
 
 static app::Config gCfg;
+
+// The panel code is both the BLE PIN and the application password, so every print goes through
+// this. The last two digits are enough to tell one code from another and useless to a reader;
+// the full value used to appear in four places, all of which end up pasted into bug reports.
+static const char* maskedPin() {
+  static char s[10];
+  const size_t n = strlen(gCfg.pin);
+  if (n == 0) return "(none)";
+  snprintf(s, sizeof(s), "****%s", n >= 2 ? gCfg.pin + n - 2 : gCfg.pin);
+  return s;
+}
 static String      gSerialLine;
 
 // Last snapshot rendered for MQTT, kept so a heartbeat can be published between A0 frames
@@ -278,7 +290,11 @@ static void onMqttCommand(void* /*ctx*/, const char* verb) {
     ble::clearBonds();
     gCfg.pin[0] = 0;
     gCfg.save();
-    Serial.println("[MQTT] done - clear pairing on the panel before pairing again");
+    // Close the session as well. Clearing the bond alone left an already-authorised BLE link
+    // serving setpoint writes until the heater timed it out, so "unpair" did not mean what a
+    // user would read into it: the bond was gone but the link still worked.
+    app::shutdown();
+    Serial.println("[MQTT] done - link closed; clear pairing on the panel before pairing again");
   }
 }
 
@@ -383,7 +399,7 @@ static void setPin(const String& code) {
   ble::setPasskey(gCfg.pinValue());
   if (changed) app::noteCodeChanged();   // a new code means a new window; the old bond is void
   Serial.printf("[CFG ] panel code = %s (both the BLE PIN and the app password)%s\n",
-                gCfg.pin, changed ? " [changed -> bond cleared on next connect]" : "");
+                maskedPin(), changed ? " [changed -> bond cleared on next connect]" : "");
   app::start(false);
 }
 
@@ -411,6 +427,7 @@ static void printHelp() {
   Serial.println("  loglevel LVL      error | warn | info | debug, for the ring and Serial");
   Serial.println("  log               dump the recent log ring (works without the network)");
   Serial.println("  heap              free / lowest / largest block, and PSRAM");
+  Serial.println("  profile [ID]      list or select the spec/profiles.json row this board uses");
   Serial.println("  reboot            reboot");
   Serial.println("  help              this help");
 }
@@ -429,7 +446,11 @@ static void printStatus() {
   banner("status");
   Serial.printf("  heater     : %s\n", gCfg.heater);
   Serial.printf("  login MAC  : %s\n", gCfg.login);
-  Serial.printf("  panel code : %s (PIN=%06u)\n", gCfg.pin, (unsigned)gCfg.pinValue());
+  // Last two digits only. This code is simultaneously the BLE PIN and the application password,
+  // and this line is exactly the kind of thing that gets pasted whole into a bug report - enough
+  // to confirm "yes, that is the one on the panel" without handing over the credential.
+  Serial.printf("  panel code : %s  (masked; it is also the BLE PIN)\n", maskedPin());
+  Serial.printf("  profile    : %s\n", gCfg.profile[0] ? gCfg.profile : "(built-in default)");
   Serial.printf("  phase      : %s\n", phaseText(s.phase));
   Serial.printf("  link       : %s / encrypted=%s\n",
                 s.linkUp ? "up" : "down", s.encrypted ? "yes" : "no");
@@ -506,6 +527,34 @@ static void doLogDump() {
                 (unsigned long)net::logring::lineCount(), (unsigned)n);
   if (n) Serial.write((const uint8_t*)buf, n);
   Serial.println("--- end of log ---");
+}
+
+// Names the profiles.json row this board should use. Before this, setSetpoint always read the
+// compiled-in default, so a second row in the spec changed nothing on the wire - the data was
+// there and nothing consumed it.
+static void setProfile(const String& arg) {
+  String id = arg;
+  id.trim();
+  if (!id.length()) {
+    Serial.printf("[CFG] this image carries %u row(s); current = %s\n",
+                  (unsigned)proto::profiles::kProfileCount,
+                  gCfg.profile[0] ? gCfg.profile : "(built-in default)");
+    for (size_t i = 0; i < proto::profiles::kProfileCount; i++) {
+      const auto& r = proto::profiles::kProfiles[i];
+      Serial.printf("  %-14s %-18s set %d..%d step %d\n", r.id, r.model, r.set_min, r.set_max,
+                    r.set_step);
+    }
+    return;
+  }
+  const proto::profiles::HeaterProfile* row = proto::profiles::profileById(id.c_str());
+  if (!row) {
+    Serial.printf("[CFG] no row '%s' in this image; type 'profile' alone to list them\n", id.c_str());
+    return;
+  }
+  snprintf(gCfg.profile, sizeof(gCfg.profile), "%s", id.c_str());
+  gCfg.save();
+  Serial.printf("[CFG] profile=%s (%s, set %d..%d)\n", gCfg.profile, row->model, row->set_min,
+                row->set_max);
 }
 
 // Runtime threshold for the ring. Serial follows the same threshold on purpose: two outputs
@@ -586,6 +635,10 @@ static void handleCommand(String line) {
   if (low.startsWith("loglevel "))  { setLogLevel(line.substring(9)); return; }
   if (low == "log")                 { doLogDump(); return; }
   if (low == "heap")                { printHeap(); return; }
+  if (low == "profile" || low.startsWith("profile ")) {
+    setProfile(line.length() > 7 ? line.substring(7) : String());
+    return;
+  }
   if (low.startsWith("broker")) {
     String arg = line.substring(6);
     arg.trim();
@@ -878,8 +931,10 @@ void setup() {
 
   Serial.printf("[BOOT] Chip=%s  Flash=%uMB  PSRAM=%u bytes\n",
                 ESP.getChipModel(), ESP.getFlashChipSize() / (1024 * 1024), ESP.getPsramSize());
+  // Same reasoning as the status line: mask it. Only the tail is needed to tell one code from
+  // another, and the boot banner is the first thing anyone pastes when asking for help.
   Serial.printf("[BOOT] heater=%s  loginMAC=%s  stored code=%s\n",
-                gCfg.heater, gCfg.login, gCfg.pin[0] ? gCfg.pin : "(none)");
+                gCfg.heater, gCfg.login, maskedPin());
 
   banner("ready");
   Serial.println("Order of operations:");
@@ -895,7 +950,7 @@ void setup() {
   // and still works after the window closes (A2/07=01 -> A2/08=01). On failure, fall back.
   if (gCfg.pinValid()) {
     Serial.printf("\n[BOOT] stored code %s, reconnecting automatically (type a new one if it fails)\n",
-                  gCfg.pin);
+                  maskedPin());
     app::start(false);
     Serial.println("[BOOT] if that fails, type a new code");
   } else if (net::portalNeeded(gCfg.ssid)) {

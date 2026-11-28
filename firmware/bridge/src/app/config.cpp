@@ -33,6 +33,7 @@ void Config::load() {
   copyTo(heater, sizeof(heater), h.c_str());
   copyTo(login, sizeof(login), l.c_str());
   copyTo(pin, sizeof(pin), p.c_str());
+  copyTo(profile, sizeof(profile), prefs().getString("profile", "").c_str());
 
   String s = prefs().getString("ssid", "");
   String w = prefs().getString("wifipass", "");
@@ -50,6 +51,7 @@ void Config::save() const {
   prefs().putString("devmac", heater);
   prefs().putString("loginmac", login);
   prefs().putString("pin", pin);
+  prefs().putString("profile", profile);
 }
 
 void Config::saveNetwork() const {

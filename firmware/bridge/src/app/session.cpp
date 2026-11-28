@@ -206,6 +206,11 @@ bool start(bool forceRebond) {
   // is what let a reconnect republish old heater readings as if they had just been measured.
   gLastA0Ms     = 0;
   gHaveState    = false;
+  // Drop the snapshot itself, not just the flag. Clearing only gHaveState left the plausibility
+  // guard with the previous session's temperature as its fallback, so the first frame after a
+  // reconnect could republish last night's reading under a fresh timestamp - precisely the
+  // "old heater readings as if just measured" that this comment block already warned about.
+  gLastState    = proto::A0State{};
   gEncrypted    = false;
   gLast         = auth::kOk;
 
@@ -340,7 +345,12 @@ bool setSetpoint(int celsius) {
     Serial.println("[CMD] setpoint refused: no authorised link");
     return false;
   }
-  const proto::profiles::HeaterProfile& p = proto::profiles::defaultProfile();
+  // The row named in config, not the compiled-in default. profiles.json has carried setpoint
+  // limits and the write-parameter triple per model since the contract was written, and this
+  // line never read any of it - so adding a second row changed nothing on the wire. Falling back
+  // to the default keeps every existing board working: its profile field is empty.
+  const proto::profiles::HeaterProfile* row = proto::profiles::profileById(gCfg->profile);
+  const proto::profiles::HeaterProfile& p = row ? *row : proto::profiles::defaultProfile();
   if (celsius < p.set_min || celsius > p.set_max) {
     Serial.printf("[CMD] setpoint %d refused: outside %d..%d C\n",
                   celsius, p.set_min, p.set_max);
