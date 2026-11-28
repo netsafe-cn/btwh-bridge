@@ -4,6 +4,7 @@
 #include <HTTPClient.h>
 #include <Update.h>
 #include <esp_ota_ops.h>
+#include <esp_task_wdt.h>
 #include <WiFi.h>
 #include <ctype.h>
 
@@ -97,6 +98,13 @@ bool install(const char* host, uint16_t port, const char* path) {
   uint32_t lastReportMs = 0;
 
   while (http.connected() && (len < 0 || (int)written < len)) {
+    // The task watchdog is armed for this loop task and install() owns it for the whole
+    // transfer, so a download slower than the watchdog period panics the board mid-write
+    // instead of ending at the budget below: the two timers are the same length and the panic
+    // wins the race. Measured on this project's link a 1.4 MB image can take 90 s, close enough
+    // that a bad minute on WiFi tips it over. Feeding here leaves the budget as the only thing
+    // that can stop a transfer - a clean abort with the running image untouched.
+    esp_task_wdt_reset();
     if (millis() - t0 > kBudgetMs) {
       Serial.printf("[OTA] x exceeded %lu ms budget at %u bytes\n",
                     (unsigned long)kBudgetMs, (unsigned)written);
